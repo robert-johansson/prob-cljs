@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "react": "^18.2.0",
+    "cli-spinners": "^2.9.0",
+    "ink": "^4.2.0",
+    "ink-task-list": "^2.0.0"
+  }
+}
