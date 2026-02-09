@@ -116,14 +116,13 @@
 
 <!-- User namespace: import everything for eval_string context -->
 <script type="application/x-scittle">
-(ns cljs.user
-  (:require [prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial
-                                sample-discrete beta gamma dirichlet exponential
-                                condition factor rejection-query-fn mh-query-fn
-                                enumeration-query-fn mem mean variance sum prod]]
-            [prob.builtins :refer [expt]]
-            [prob.macros :refer [rejection-query mh-query enumeration-query]]
-            [prob.viz :refer [hist density barplot display run-physics animate-physics]]))
+(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial
+                              sample-discrete beta gamma dirichlet exponential
+                              condition factor rejection-query-fn mh-query-fn
+                              enumeration-query-fn mem mean variance sum prod]])
+(require '[prob.builtins :refer [expt]])
+(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])
+(require '[prob.viz :refer [hist density barplot display run-physics animate-physics]])
 
 (defn abs' [x] (js/Math.abs x))
 </script>
@@ -364,55 +363,60 @@ C</code></pre>
   </div>
 </div>
 
-<!-- Interactive runner: must come after all content so pre>code elements exist -->
-<script type="application/x-scittle">
-(let [pres (array-seq (js/document.querySelectorAll "#chapter pre"))]
-  (doseq [pre pres]
-    (when-let [code-el (.-firstElementChild pre)]
-      (let [code (.trim (.-textContent code-el))
-            lines (inc (count (.split code "\n")))
+<!-- Interactive runner: plain JS to guarantee execution even if Scittle blocks error -->
+<script>
+document.querySelectorAll('#chapter pre').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+  var lines = code.split('\n').length;
 
-            container (doto (js/document.createElement "div")
-                        (-> .-className (set! "code-example")))
-            textarea (doto (js/document.createElement "textarea")
-                       (-> .-value (set! code))
-                       (.setAttribute "rows" (max 3 lines))
-                       (.setAttribute "spellcheck" "false"))
-            toolbar (doto (js/document.createElement "div")
-                      (-> .-className (set! "toolbar")))
-            run-btn (doto (js/document.createElement "button")
-                      (-> .-textContent (set! "Run")))
-            output (doto (js/document.createElement "div")
-                     (-> .-className (set! "output")))]
+  var container = document.createElement('div');
+  container.className = 'code-example';
 
-        (.appendChild toolbar run-btn)
-        (.appendChild container textarea)
-        (.appendChild container toolbar)
-        (.appendChild container output)
-        (.replaceWith pre container)
+  var textarea = document.createElement('textarea');
+  textarea.value = code;
+  textarea.setAttribute('rows', Math.max(3, lines + 1));
+  textarea.setAttribute('spellcheck', 'false');
 
-        (set! (.-onclick run-btn)
-          (fn []
-            (set! (.-innerHTML output) "")
-            ;; Wire up output hooks for viz functions
-            (set! js/window.__appendToOutput
-              (fn [el] (.appendChild output el)))
-            (set! js/window.__appendTextToOutput
-              (fn [text]
-                (.appendChild output
-                  (doto (js/document.createElement "span")
-                    (-> .-textContent (set! (str text "\n")))))))
-            (try
-              (let [result (js/scittle.core.eval_string (.trim (.-value textarea)))]
-                (when (some? result)
-                  (.appendChild output
-                    (doto (js/document.createElement "span")
-                      (-> .-textContent (set! (str result)))))))
-              (catch :default e
-                (.appendChild output
-                  (doto (js/document.createElement "span")
-                    (-> .-className (set! "error"))
-                    (-> .-textContent (set! (str "Error: " (.-message e))))))))))))))
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(textarea);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  btn.addEventListener('click', function() {
+    output.innerHTML = '';
+    window.__appendToOutput = function(el) { output.appendChild(el); };
+    window.__appendTextToOutput = function(text) {
+      var span = document.createElement('span');
+      span.textContent = text + '\n';
+      output.appendChild(span);
+    };
+    try {
+      var result = scittle.core.eval_string(textarea.value.trim());
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  });
+});
 </script>
 </body>
 </html>
