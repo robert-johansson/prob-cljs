@@ -1,0 +1,9 @@
+{
+  "devDependencies": {
+    "shadow-cljs": "^2.28.0"
+  },
+  "scripts": {
+    "build": "npx shadow-cljs release plugin",
+    "watch": "npx shadow-cljs watch plugin"
+  }
+}

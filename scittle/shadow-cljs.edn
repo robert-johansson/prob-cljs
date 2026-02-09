@@ -1,0 +1,16 @@
+{:deps {:aliases [:scittle]}
+
+ :builds
+ {:plugin
+  {:target :browser
+   :output-dir "public/js"
+   :modules
+   {:scittle
+    {:entries [scittle.core]
+     :append "globalThis.import = (x) => import(x);"}
+    :scittle.prob
+    {:entries [scittle.prob]
+     :init-fn scittle.prob/init
+     :depends-on #{:scittle}}}
+   :compiler-options
+   {:optimizations :advanced}}}}

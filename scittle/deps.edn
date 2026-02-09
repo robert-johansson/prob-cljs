@@ -1,0 +1,7 @@
+{:paths ["../src"]
+ :aliases
+ {:scittle
+  {:extra-deps
+   {io.github.babashka/scittle
+    {:git/url "https://github.com/babashka/scittle"
+     :git/sha "56dba2d9b2fc28680e8e2621f9a4cf0e0f4ceb7a"}}}}}
