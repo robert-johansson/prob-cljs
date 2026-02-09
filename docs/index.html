@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>prob-cljs: Probabilistic Programming in the Browser</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, system-ui, sans-serif;
+      max-width: 860px; margin: 0 auto; padding: 20px;
+      color: #1a1a1a; background: #fafafa;
+    }
+    h1 { margin-bottom: 4px; }
+    h1 a { color: inherit; text-decoration: none; }
+    .subtitle { color: #666; margin-top: 0; }
+    .card {
+      background: white; border: 1px solid #e0e0e0; border-radius: 8px;
+      padding: 20px; margin: 16px 0;
+    }
+    .card h3 { margin-top: 0; }
+    pre {
+      background: #f0f0f0; padding: 12px; border-radius: 4px;
+      overflow-x: auto; font-size: 13px; line-height: 1.5;
+    }
+    #output {
+      background: #1e1e2e; color: #cdd6f4; padding: 20px;
+      border-radius: 8px; font-family: 'SF Mono', 'Menlo', monospace;
+      font-size: 13px; line-height: 1.6; min-height: 100px;
+      white-space: pre-wrap;
+    }
+    #status { color: #888; font-style: italic; }
+    .run-btn {
+      background: #3b82f6; color: white; border: none; padding: 8px 20px;
+      border-radius: 4px; cursor: pointer; font-size: 14px; margin-top: 8px;
+    }
+    .run-btn:hover { background: #2563eb; }
+    .run-btn:disabled { background: #94a3b8; cursor: not-allowed; }
+    footer { margin-top: 40px; color: #888; font-size: 13px; text-align: center; }
+    footer a { color: #3b82f6; }
+  </style>
+</head>
+<body>
+  <h1><a href="https://github.com/robert-johansson/prob-cljs">prob-cljs</a></h1>
+  <p class="subtitle">Probabilistic programming as a ClojureScript library</p>
+
+  <div class="card">
+    <h3>Live Demo</h3>
+    <p>This page loads prob-cljs source files directly via
+       <a href="https://github.com/babashka/scittle">Scittle</a> —
+       no build step, no server, just ClojureScript in the browser.</p>
+    <button class="run-btn" id="run-btn" disabled>Loading Scittle...</button>
+    <p id="status"></p>
+  </div>
+
+  <div id="output"></div>
+
+  <div class="card">
+    <h3>Source code running above</h3>
+    <pre><code>(require '[prob.core :refer [flip gaussian beta uniform uniform-draw
+                              condition factor mem mean variance
+                              rejection-query-fn mh-query-fn
+                              enumeration-query-fn]])
+
+;; 1. Rejection query — conditioned coin flip
+(log "=== Rejection Query ===")
+(log "Conditioned flip: "
+  (rejection-query (let [x (flip)] (condition x) x)))
+
+;; 2. Estimate coin bias from observations
+(log "\n=== Bias Estimation (MH, 500 samples) ===")
+(let [data [true true true false true true false true true true]
+      samples (mh-query 500 1
+                (let [bias (beta 1 1)]
+                  (doseq [obs data]
+                    (condition (= obs (flip bias))))
+                  bias))]
+  (log "Observations: " data)
+  (log "Estimated bias: " (.toFixed (mean samples) 3) " (expected ~0.8)"))
+
+;; 3. Enumeration query
+(log "\n=== Enumeration Query ===")
+(let [[values probs] (enumeration-query
+                       (let [a (flip) b (flip)]
+                         (condition (or a b))
+                         (list a b)))]
+  (log "P(a,b | a or b):")
+  (doseq [[v p] (map vector values probs)]
+    (log "  " v " -> " (.toFixed p 3))))
+
+;; 4. Memoized stochastic function
+(log "\n=== Memoized Random Function ===")
+(let [eye-color (mem (fn [person]
+                       (uniform-draw ["blue" "brown" "green"])))]
+  (log "Alice: " (eye-color "alice"))
+  (log "Alice (same!): " (eye-color "alice"))
+  (log "Bob: " (eye-color "bob")))
+
+;; 5. Fair coin statistics
+(log "\n=== Fair Coin (1000 samples) ===")
+(let [samples (mh-query 1000 1 (if (flip) 1 0))]
+  (log "Mean: " (.toFixed (mean samples) 3) " (expected ~0.5)")
+  (log "Variance: " (.toFixed (variance samples) 3) " (expected ~0.25)"))</code></pre>
+  </div>
+
+  <div class="card">
+    <h3>How it works</h3>
+    <p>No compilation. The page loads four <code>.cljs</code> source files via Scittle
+       script tags in dependency order:</p>
+    <pre><code>&lt;script src="prob/erp.cljs" type="application/x-scittle"&gt;&lt;/script&gt;
+&lt;script src="prob/builtins.cljs" type="application/x-scittle"&gt;&lt;/script&gt;
+&lt;script src="prob/inference.cljs" type="application/x-scittle"&gt;&lt;/script&gt;
+&lt;script src="prob/core.cljs" type="application/x-scittle"&gt;&lt;/script&gt;</code></pre>
+    <p>Macros are defined inline via <code>defmacro</code> in SCI. Then the demo
+       code runs probabilistic inference right in your browser tab.</p>
+  </div>
+
+  <footer>
+    <a href="https://github.com/robert-johansson/prob-cljs">GitHub</a> · Based on
+    <a href="https://probmods.org/">Probabilistic Models of Cognition</a> ·
+    Powered by <a href="https://github.com/babashka/scittle">Scittle</a>
+  </footer>
+
+  <!-- Scittle base -->
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.6.17/dist/scittle.js"></script>
+
+  <!-- Load prob-cljs source files in dependency order -->
+  <script src="prob/erp.cljs" type="application/x-scittle"></script>
+  <script src="prob/builtins.cljs" type="application/x-scittle"></script>
+  <script src="prob/inference.cljs" type="application/x-scittle"></script>
+  <script src="prob/core.cljs" type="application/x-scittle"></script>
+
+  <!-- Define query macros (SCI supports defmacro directly) -->
+  <script type="application/x-scittle">
+  (ns prob.macros)
+
+  (defmacro rejection-query [& body]
+    `(prob.core/rejection-query-fn (fn [] ~@body)))
+
+  (defmacro mh-query [n lag & body]
+    `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))
+
+  (defmacro enumeration-query [& body]
+    `(prob.core/enumeration-query-fn (fn [] ~@body)))
+
+  (defmacro query [method & body]
+    `(prob.core/conditional-fn ~method (fn [] ~@body)))
+  </script>
+
+  <!-- Demo -->
+  <script type="application/x-scittle">
+  (require '[prob.core :refer [flip gaussian beta uniform uniform-draw
+                                condition factor mem mean variance
+                                rejection-query-fn mh-query-fn
+                                enumeration-query-fn]])
+  (require '[prob.macros :refer [rejection-query mh-query enumeration-query]])
+
+  (def out (js/document.getElementById "output"))
+  (def btn (js/document.getElementById "run-btn"))
+  (def status-el (js/document.getElementById "status"))
+
+  (defn log [& args]
+    (set! (.-textContent out)
+          (str (.-textContent out) (apply str args) "\n")))
+
+  (defn run-demo []
+    (set! (.-textContent out) "")
+    (set! (.-disabled btn) true)
+    (set! (.-textContent btn) "Running...")
+
+    ;; Use setTimeout to let the UI update before blocking on inference
+    (js/setTimeout
+      (fn []
+        (try
+          (log "=== Rejection Query ===")
+          (log "Conditioned flip: "
+            (rejection-query (let [x (flip)] (condition x) x)))
+
+          (log "\n=== Bias Estimation (MH, 500 samples) ===")
+          (let [data [true true true false true true false true true true]
+                samples (mh-query 500 1
+                          (let [bias (beta 1 1)]
+                            (doseq [obs data]
+                              (condition (= obs (flip bias))))
+                            bias))]
+            (log "Observations: " data)
+            (log "Estimated bias: " (.toFixed (mean samples) 3) " (expected ~0.8)"))
+
+          (log "\n=== Enumeration Query ===")
+          (let [[values probs] (enumeration-query
+                                 (let [a (flip) b (flip)]
+                                   (condition (or a b))
+                                   (list a b)))]
+            (log "P(a,b | a or b):")
+            (doseq [[v p] (map vector values probs)]
+              (log "  " v " -> " (.toFixed p 3))))
+
+          (log "\n=== Memoized Random Function ===")
+          (let [eye-color (mem (fn [person]
+                                 (uniform-draw ["blue" "brown" "green"])))]
+            (log "Alice: " (eye-color "alice"))
+            (log "Alice (same!): " (eye-color "alice"))
+            (log "Bob: " (eye-color "bob")))
+
+          (log "\n=== Fair Coin (1000 samples) ===")
+          (let [samples (mh-query 1000 1 (if (flip) 1 0))]
+            (log "Mean: " (.toFixed (mean samples) 3) " (expected ~0.5)")
+            (log "Variance: " (.toFixed (variance samples) 3) " (expected ~0.25)"))
+
+          (log "\nDone!")
+          (catch :default e
+            (log "\nError: " (.-message e))))
+
+        (set! (.-disabled btn) false)
+        (set! (.-textContent btn) "Run again"))
+      50))
+
+  ;; Ready
+  (set! (.-disabled btn) false)
+  (set! (.-textContent btn) "Run inference")
+  (set! (.-onclick btn) run-demo)
+  (set! (.-textContent status-el) "Library loaded. Click to run.")
+  </script>
+</body>
+</html>
