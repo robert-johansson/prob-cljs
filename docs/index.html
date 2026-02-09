@@ -2,39 +2,16 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>prob-cljs: Probabilistic Programming in the Browser</title>
+  <title>prob-cljs</title>
   <style>
-    * { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, system-ui, sans-serif;
-      max-width: 860px; margin: 0 auto; padding: 20px;
-      color: #1a1a1a; background: #fafafa;
-    }
-    h1 { margin-bottom: 4px; }
+    body { font-family: -apple-system, system-ui, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; }
     h1 a { color: inherit; text-decoration: none; }
-    .subtitle { color: #666; margin-top: 0; }
-    .card {
-      background: white; border: 1px solid #e0e0e0; border-radius: 8px;
-      padding: 20px; margin: 16px 0;
-    }
-    .card h3 { margin-top: 0; }
-    pre {
-      background: #f0f0f0; padding: 12px; border-radius: 4px;
-      overflow-x: auto; font-size: 13px; line-height: 1.5;
-    }
-    #output {
-      background: #1e1e2e; color: #cdd6f4; padding: 20px;
-      border-radius: 8px; font-family: 'SF Mono', 'Menlo', monospace;
-      font-size: 13px; line-height: 1.6; min-height: 100px;
-      white-space: pre-wrap;
-    }
-    #status { color: #888; font-style: italic; }
-    .run-btn {
-      background: #3b82f6; color: white; border: none; padding: 8px 20px;
-      border-radius: 4px; cursor: pointer; font-size: 14px; margin-top: 8px;
-    }
-    .run-btn:hover { background: #2563eb; }
-    .run-btn:disabled { background: #94a3b8; cursor: not-allowed; }
+    .subtitle { color: #666; }
+    pre { background: #f0f0f0; padding: 12px; border-radius: 4px; font-size: 13px; overflow-x: auto; }
+    #output { background: #1e1e2e; color: #cdd6f4; padding: 20px; border-radius: 8px; font-family: monospace; font-size: 13px; min-height: 100px; white-space: pre-wrap; }
+    .btn { background: #3b82f6; color: white; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; margin: 8px 0; }
+    .btn:hover { background: #2563eb; }
+    .btn:disabled { background: #94a3b8; cursor: not-allowed; }
     footer { margin-top: 40px; color: #888; font-size: 13px; text-align: center; }
     footer a { color: #3b82f6; }
   </style>
@@ -42,103 +19,243 @@
 <body>
   <h1><a href="https://github.com/robert-johansson/prob-cljs">prob-cljs</a></h1>
   <p class="subtitle">Probabilistic programming as a ClojureScript library</p>
+  <p>Running inference directly in your browser via <a href="https://github.com/babashka/scittle">Scittle</a>.</p>
 
-  <div class="card">
-    <h3>Live Demo</h3>
-    <p>This page loads prob-cljs source files directly via
-       <a href="https://github.com/babashka/scittle">Scittle</a> —
-       no build step, no server, just ClojureScript in the browser.</p>
-    <button class="run-btn" id="run-btn" disabled>Loading Scittle...</button>
-    <p id="status"></p>
-  </div>
-
+  <button class="btn" id="run-btn" disabled>Loading...</button>
   <div id="output"></div>
 
-  <div class="card">
-    <h3>Source code running above</h3>
-    <pre><code>(require '[prob.core :refer [flip gaussian beta uniform uniform-draw
-                              condition factor mem mean variance
-                              rejection-query-fn mh-query-fn
-                              enumeration-query-fn]])
-
-;; 1. Rejection query — conditioned coin flip
-(log "=== Rejection Query ===")
-(log "Conditioned flip: "
-  (rejection-query (let [x (flip)] (condition x) x)))
-
-;; 2. Estimate coin bias from observations
-(log "\n=== Bias Estimation (MH, 500 samples) ===")
-(let [data [true true true false true true false true true true]
-      samples (mh-query 500 1
-                (let [bias (beta 1 1)]
-                  (doseq [obs data]
-                    (condition (= obs (flip bias))))
-                  bias))]
-  (log "Observations: " data)
-  (log "Estimated bias: " (.toFixed (mean samples) 3) " (expected ~0.8)"))
-
-;; 3. Enumeration query
-(log "\n=== Enumeration Query ===")
-(let [[values probs] (enumeration-query
-                       (let [a (flip) b (flip)]
-                         (condition (or a b))
-                         (list a b)))]
-  (log "P(a,b | a or b):")
-  (doseq [[v p] (map vector values probs)]
-    (log "  " v " -> " (.toFixed p 3))))
-
-;; 4. Memoized stochastic function
-(log "\n=== Memoized Random Function ===")
-(let [eye-color (mem (fn [person]
-                       (uniform-draw ["blue" "brown" "green"])))]
-  (log "Alice: " (eye-color "alice"))
-  (log "Alice (same!): " (eye-color "alice"))
-  (log "Bob: " (eye-color "bob")))
-
-;; 5. Fair coin statistics
-(log "\n=== Fair Coin (1000 samples) ===")
-(let [samples (mh-query 1000 1 (if (flip) 1 0))]
-  (log "Mean: " (.toFixed (mean samples) 3) " (expected ~0.5)")
-  (log "Variance: " (.toFixed (variance samples) 3) " (expected ~0.25)"))</code></pre>
-  </div>
-
-  <div class="card">
-    <h3>How it works</h3>
-    <p>No compilation. The page loads four <code>.cljs</code> source files via Scittle
-       script tags in dependency order:</p>
-    <pre><code>&lt;script src="prob/erp.cljs" type="application/x-scittle"&gt;&lt;/script&gt;
-&lt;script src="prob/builtins.cljs" type="application/x-scittle"&gt;&lt;/script&gt;
-&lt;script src="prob/inference.cljs" type="application/x-scittle"&gt;&lt;/script&gt;
-&lt;script src="prob/core.cljs" type="application/x-scittle"&gt;&lt;/script&gt;</code></pre>
-    <p>Macros are defined inline via <code>defmacro</code> in SCI. Then the demo
-       code runs probabilistic inference right in your browser tab.</p>
-  </div>
-
   <footer>
-    <a href="https://github.com/robert-johansson/prob-cljs">GitHub</a> · Based on
-    <a href="https://probmods.org/">Probabilistic Models of Cognition</a> ·
-    Powered by <a href="https://github.com/babashka/scittle">Scittle</a>
+    <a href="https://github.com/robert-johansson/prob-cljs">GitHub</a>
   </footer>
 
-  <!-- Scittle base -->
+  <script>console.log("page loaded, loading scittle...")</script>
   <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+  <script>console.log("scittle script tag done")</script>
 
-  <!-- Debug: confirm Scittle works -->
+  <!-- ERPs -->
   <script type="application/x-scittle">
-  (js/console.log "Scittle loaded OK")
+  (ns prob.erp)
+
+  (defn- rand-uniform [] (js/Math.random))
+
+  (defn flip
+    ([] (< (rand-uniform) 0.5))
+    ([p] (< (rand-uniform) p)))
+
+  (defn uniform [a b]
+    (+ a (* (rand-uniform) (- b a))))
+
+  (defn uniform-draw [lst]
+    (let [items (vec lst)
+          n (count items)]
+      (nth items (js/Math.floor (* (rand-uniform) n)))))
+
+  (defn random-integer [n]
+    (js/Math.floor (* (rand-uniform) n)))
+
+  (defn multinomial [items probs]
+    (let [items (vec items)
+          probs (vec probs)
+          total (reduce + 0 probs)
+          r (* (rand-uniform) total)]
+      (loop [i 0, cumulative 0]
+        (if (>= i (count items))
+          (peek items)
+          (let [cumulative (+ cumulative (nth probs i))]
+            (if (< r cumulative)
+              (nth items i)
+              (recur (inc i) cumulative)))))))
+
+  (defn sample-discrete [weights]
+    (let [weights (vec weights)
+          indices (vec (range (count weights)))]
+      (multinomial indices weights)))
+
+  (defn gaussian
+    ([] (gaussian 0 1))
+    ([mu sigma]
+     (if (zero? sigma)
+       mu
+       (let [u1 (rand-uniform)
+             u2 (rand-uniform)
+             z (* (js/Math.sqrt (* -2 (js/Math.log u1)))
+                  (js/Math.cos (* 2 js/Math.PI u2)))]
+         (+ mu (* sigma z))))))
+
+  (defn gamma [a b]
+    (if (< a 1)
+      (* (gamma (inc a) b)
+         (js/Math.pow (rand-uniform) (/ 1 a)))
+      (let [d (- a (/ 1 3))
+            c (/ 1 (js/Math.sqrt (* 9 d)))]
+        (loop []
+          (let [x (gaussian 0 1)
+                v (js/Math.pow (+ 1 (* c x)) 3)]
+            (if (and (> v 0)
+                     (< (js/Math.log (rand-uniform))
+                        (+ (* 0.5 x x)
+                           (* d (- 1 v (js/Math.log v))))))
+              (* d v b)
+              (recur)))))))
+
+  (defn beta [a b]
+    (let [x (gamma a 1) y (gamma b 1)]
+      (/ x (+ x y))))
+
+  (defn dirichlet [alpha-vec]
+    (let [alpha (vec alpha-vec)
+          samples (mapv #(gamma % 1) alpha)
+          total (reduce + 0 samples)]
+      (mapv #(/ % total) samples)))
+
+  (defn exponential [rate]
+    (/ (- (js/Math.log (rand-uniform))) rate))
+
+  (js/console.log "prob.erp loaded")
   </script>
 
-  <!-- Load prob-cljs source files in dependency order -->
-  <script src="prob/erp.cljs" type="application/x-scittle"></script>
-  <script type="application/x-scittle">(js/console.log "erp loaded")</script>
-  <script src="prob/builtins.cljs" type="application/x-scittle"></script>
-  <script type="application/x-scittle">(js/console.log "builtins loaded")</script>
-  <script src="prob/inference.cljs" type="application/x-scittle"></script>
-  <script type="application/x-scittle">(js/console.log "inference loaded")</script>
-  <script src="prob/core.cljs" type="application/x-scittle"></script>
-  <script type="application/x-scittle">(js/console.log "core loaded")</script>
+  <!-- Inference -->
+  <script type="application/x-scittle">
+  (ns prob.inference
+    (:require [prob.erp :as erp]))
 
-  <!-- Define query macros (SCI supports defmacro directly) -->
+  (def ^:private rejection-sentinel ::rejection)
+
+  (defn condition [pred]
+    (when-not pred
+      (throw (ex-info "condition failed" {::type rejection-sentinel})))
+    nil)
+
+  (defn factor [log-weight]
+    (when (neg? log-weight)
+      (when (> (js/Math.log (js/Math.random)) log-weight)
+        (throw (ex-info "factor rejected" {::type rejection-sentinel}))))
+    nil)
+
+  (defn- rejection? [e]
+    (and (ex-data e)
+         (= (::type (ex-data e)) rejection-sentinel)))
+
+  (def ^:private max-rejection-attempts 10000)
+
+  (defn rejection-query-fn [thunk]
+    (loop [attempts 0]
+      (if (>= attempts max-rejection-attempts)
+        (throw (ex-info "rejection-query: exceeded max attempts" {}))
+        (let [result (try
+                       {:value (thunk)}
+                       (catch :default e
+                         (if (rejection? e)
+                           ::rejected
+                           (throw e))))]
+          (if (= result ::rejected)
+            (recur (inc attempts))
+            (:value result))))))
+
+  (defn mh-query-fn [num-samples lag thunk]
+    (let [sample-one (fn []
+                       (loop [attempts 0]
+                         (if (>= attempts max-rejection-attempts)
+                           (throw (ex-info "mh-query: exceeded max attempts" {}))
+                           (let [result (try
+                                          {:value (thunk)}
+                                          (catch :default e
+                                            (if (rejection? e)
+                                              ::rejected
+                                              (throw e))))]
+                             (if (= result ::rejected)
+                               (recur (inc attempts))
+                               (:value result))))))]
+      (loop [i 0, samples []]
+        (if (>= i num-samples)
+          samples
+          (do
+            (dotimes [_ lag] (sample-one))
+            (recur (inc i) (conj samples (sample-one))))))))
+
+  (defn enumeration-query-fn [thunk]
+    (let [n 1000
+          samples (loop [i 0, results []]
+                    (if (>= i n)
+                      results
+                      (let [result (try
+                                    {:value (thunk)}
+                                    (catch :default e
+                                      (if (rejection? e)
+                                        ::rejected
+                                        (throw e))))]
+                        (if (= result ::rejected)
+                          (recur (inc i) results)
+                          (recur (inc i) (conj results (:value result)))))))
+          freqs (frequencies samples)
+          total (count samples)
+          values (keys freqs)
+          probs (map #(/ (get freqs %) total) values)]
+      (list (apply list values) (apply list probs))))
+
+  (defn conditional-fn [params thunk]
+    (let [params-vec (vec params)
+          strategy (when (seq params-vec) (name (first params-vec)))]
+      (case strategy
+        "enumerate" (fn [] (let [[vs ps] (enumeration-query-fn thunk)]
+                             (erp/multinomial (vec vs) (vec ps))))
+        "rejection" (fn [] (rejection-query-fn thunk))
+        "mh" (let [lag (if (>= (count params-vec) 2) (second params-vec) 1)]
+               (fn [] (first (mh-query-fn 1 lag thunk))))
+        (fn [] (rejection-query-fn thunk)))))
+
+  (js/console.log "prob.inference loaded")
+  </script>
+
+  <!-- Core (public API) -->
+  <script type="application/x-scittle">
+  (ns prob.core
+    (:require [prob.erp :as erp]
+              [prob.inference :as inference]))
+
+  (def flip erp/flip)
+  (def gaussian erp/gaussian)
+  (def uniform erp/uniform)
+  (def uniform-draw erp/uniform-draw)
+  (def random-integer erp/random-integer)
+  (def multinomial erp/multinomial)
+  (def sample-discrete erp/sample-discrete)
+  (def beta erp/beta)
+  (def gamma erp/gamma)
+  (def dirichlet erp/dirichlet)
+  (def exponential erp/exponential)
+
+  (def condition inference/condition)
+  (def factor inference/factor)
+  (def rejection-query-fn inference/rejection-query-fn)
+  (def mh-query-fn inference/mh-query-fn)
+  (def enumeration-query-fn inference/enumeration-query-fn)
+  (def conditional-fn inference/conditional-fn)
+
+  (defn mem [f]
+    (let [cache (atom {})]
+      (fn [& args]
+        (if-let [cached (find @cache args)]
+          (val cached)
+          (let [result (apply f args)]
+            (swap! cache assoc args result)
+            result)))))
+
+  (defn mean [lst]
+    (let [a (vec lst) n (count a)]
+      (/ (reduce + 0 a) n)))
+
+  (defn variance [lst]
+    (let [a (vec lst) n (count a) m (/ (reduce + 0 a) n)]
+      (/ (reduce + 0 (map #(js/Math.pow (- % m) 2) a)) n)))
+
+  (defn sum [lst] (reduce + 0 lst))
+  (defn prod [lst] (reduce * 1 lst))
+
+  (js/console.log "prob.core loaded")
+  </script>
+
+  <!-- Macros -->
   <script type="application/x-scittle">
   (ns prob.macros)
 
@@ -151,8 +268,7 @@
   (defmacro enumeration-query [& body]
     `(prob.core/enumeration-query-fn (fn [] ~@body)))
 
-  (defmacro query [method & body]
-    `(prob.core/conditional-fn ~method (fn [] ~@body)))
+  (js/console.log "prob.macros loaded")
   </script>
 
   <!-- Demo -->
@@ -165,7 +281,6 @@
 
   (def out (js/document.getElementById "output"))
   (def btn (js/document.getElementById "run-btn"))
-  (def status-el (js/document.getElementById "status"))
 
   (defn log [& args]
     (set! (.-textContent out)
@@ -175,8 +290,6 @@
     (set! (.-textContent out) "")
     (set! (.-disabled btn) true)
     (set! (.-textContent btn) "Running...")
-
-    ;; Use setTimeout to let the UI update before blocking on inference
     (js/setTimeout
       (fn []
         (try
@@ -218,16 +331,14 @@
           (log "\nDone!")
           (catch :default e
             (log "\nError: " (.-message e))))
-
         (set! (.-disabled btn) false)
         (set! (.-textContent btn) "Run again"))
       50))
 
-  ;; Ready
   (set! (.-disabled btn) false)
   (set! (.-textContent btn) "Run inference")
   (set! (.-onclick btn) run-demo)
-  (set! (.-textContent status-el) "Library loaded. Click to run.")
+  (js/console.log "demo ready")
   </script>
 </body>
 </html>
