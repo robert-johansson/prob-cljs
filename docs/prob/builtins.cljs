@@ -9,29 +9,30 @@
 ;; Pair type (for non-list cons cells, e.g. (pair 1 2))
 ;; ---------------------------------------------------------------------------
 
-(defrecord Pair [car cdr])
+(defn- dotted-pair? [x]
+  (and (map? x) (= (:__type x) :pair)))
 
 (defn pair [a b]
   (if (or (seq? b) (vector? b) (list? b) (nil? b))
     (cons a b)
-    (->Pair a b)))
+    {:__type :pair :car a :cdr b}))
 
 (defn pair? [x]
   (boolean
-    (or (instance? Pair x)
+    (or (dotted-pair? x)
         (and (seq? x) (seq x))
         (and (vector? x) (seq x)))))
 
 (defn car [x]
   (cond
-    (instance? Pair x) (:car x)
+    (dotted-pair? x) (:car x)
     (seq? x) (first x)
     (vector? x) (first x)
     :else (throw (ex-info "car: not a pair" {:val x}))))
 
 (defn cdr [x]
   (cond
-    (instance? Pair x) (:cdr x)
+    (dotted-pair? x) (:cdr x)
     (and (seq? x) (= (count (rest x)) 0)) '()
     (seq? x) (rest x)
     (and (vector? x) (= (count (rest x)) 0)) '()
@@ -126,7 +127,7 @@
     (assoc v n value)))
 
 (defn list-index [lst x]
-  (.indexOf (to-array lst) x))
+  (.indexOf (vec lst) x))
 
 (defn repeat-fn [n f]
   (repeatedly n f))
@@ -230,7 +231,7 @@
       (let [xs (seq x) ys (seq y)]
         (and (= (count xs) (count ys))
              (every? true? (map equal? xs ys))))
-      (and (instance? Pair x) (instance? Pair y))
+      (and (dotted-pair? x) (instance? Pair y))
       (and (equal? (:car x) (:car y))
            (equal? (:cdr x) (:cdr y)))
       (and (nil? x) (nil? y)) true

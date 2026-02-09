@@ -26,7 +26,7 @@
   nil)
 
 (defn- rejection? [e]
-  (and (instance? ExceptionInfo e)
+  (and (ex-data e)
        (= (::type (ex-data e)) rejection-sentinel)))
 
 ;; ---------------------------------------------------------------------------
