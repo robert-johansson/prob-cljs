@@ -114,8 +114,9 @@
   (js/animatePhysics steps (cljs->js-world world) nil))
 </script>
 
-<!-- User namespace: import everything for eval_string context -->
+<!-- User namespace: import everything into cljs.user for eval_string context -->
 <script type="application/x-scittle">
+(in-ns 'cljs.user)
 (require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial
                               sample-discrete beta gamma dirichlet exponential
                               condition factor rejection-query-fn mh-query-fn
