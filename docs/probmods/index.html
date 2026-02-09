@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Probabilistic Models of Cognition — prob-cljs Edition</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Probabilistic Models of Cognition</a></div>
+    <ul id="nav"><li><a href="../index.html">prob-cljs home</a></li></ul>
+  </div>
+  <div id="chapter">
+<h1 id="chapter-title">Probabilistic Models of Cognition</h1>
+<p><em>An interactive textbook on probabilistic programming and Bayesian cognition, using <strong>prob-cljs</strong> (ClojureScript) instead of Church.</em></p>
+<p>This is a port of chapters 1&ndash;3 of <a href="https://v1.probmods.org">Probabilistic Models of Cognition v1</a> by Noah Goodman and Joshua Tenenbaum. All code examples are editable and runnable directly in the browser via <a href="https://github.com/babashka/scittle">Scittle</a>.</p>
+<h2>Chapters</h2>
+<ol>
+  <li><a href="01-introduction.html"><strong>Introduction</strong></a></li>
+  <li><a href="02-generative-models.html"><strong>Generative Models</strong></a></li>
+  <li><a href="03-conditioning.html"><strong>Conditioning</strong></a></li>
+</ol>
+<h2>Church &rarr; ClojureScript Quick Reference</h2>
+<table>
+<thead><tr><th>Church</th><th>ClojureScript</th></tr></thead>
+<tbody>
+<tr><td><code>(define x val)</code></td><td><code>(def x val)</code></td></tr>
+<tr><td><code>(define (f x) body)</code></td><td><code>(defn f [x] body)</code></td></tr>
+<tr><td><code>(lambda (x) body)</code></td><td><code>(fn [x] body)</code></td></tr>
+<tr><td><code>#t / #f</code></td><td><code>true / false</code></td></tr>
+<tr><td><code>(repeat n f)</code></td><td><code>(repeatedly n f)</code></td></tr>
+<tr><td><code>(equal? a b)</code></td><td><code>(= a b)</code></td></tr>
+</tbody>
+</table>
+  </div>
+</div>
+</body>
+</html>

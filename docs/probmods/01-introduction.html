@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ProbMods: Introduction</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Probabilistic Models of Cognition</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="02-generative-models.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+<h1 id="chapter-title">1. Introduction</h1>
+<p>What is thought? How can we describe the intelligent inferences made in everyday human reasoning and learning? How can we engineer intelligent machines? The computational theory of mind aims to answer these questions starting from the hypothesis that the mind is a computer, mental representations are computer programs, and thinking is a computational process &ndash; running a computer program.</p>
+<p>But what kind of program? A natural assumption is that these programs take the inputs &ndash; percepts from the senses, facts from memory, etc &ndash; and compute the outputs &ndash; the intelligent behaviors. Thus the mental representations that lead to thinking are functions from inputs to outputs. However, this input-output view suffers from a combinatorial explosion: we must posit an input-output program for each task in which humans draw intelligent inferences. A different approach is to assume that mental representations are more like theories in science: pieces of knowledge that can support many inferences in many different situations. The <em>generative</em> approach to cognition posits that some mental representations are more like theories in this way: they capture general descriptions of how the world <em>works</em>.</p>
+<p>A generative model describes a process, usually one by which observable data is generated. Generative models represent knowledge about the causal structure of the world &ndash; simplified, &ldquo;working models&rdquo; of a domain. These models may then be used to answer many different questions, by conditional inference.</p>
+<p>It is possible to use deterministic generative models to describe possible ways a process could unfold, but due to sparsity of observations or actual randomness there will often be many ways that our observations could have been generated. Probability theory provides a system for reasoning under exactly this kind of uncertainty. Probabilistic generative models describe processes which unfold with some amount of randomness, and probabilistic inference describes ways to ask questions of such processes.</p>
+<p>In order to make the idea of generative models precise we want a formal language that is designed to express the kinds of knowledge individuals have about the world. This language should be universal in the sense that it should be able to express any (computable) process. We build on the <span class="math">\(\lambda\)</span>-calculus (as realized in functional programming languages) because it describes computational processes and captures the idea that what is important is causal dependence. We introduce randomness into this language to construct a stochastic <span class="math">\(\lambda\)</span>-calculus, and describe conditional inferences in this language.</p>
+<p><em>Note: This edition uses <a href="https://clojure.org/guides/learn/syntax">ClojureScript</a> (via <a href="https://github.com/babashka/scittle">Scittle</a>) and the <strong>prob-cljs</strong> library rather than Church.</em></p>
+  </div>
+  <div class="chapter-nav">
+    <span></span>
+    <a href="02-generative-models.html">Chapter 2: Generative Models &rarr;</a>
+  </div>
+</div>
+</body>
+</html>

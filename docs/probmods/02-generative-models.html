@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ProbMods: Generative Models</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="box2d.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Probabilistic Models of Cognition</a></div>
+    <ul id="nav">
+      <li><a href="01-introduction.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+      <li><a href="03-conditioning.html">Next &rarr;</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+<!-- Load prob-cljs library from external files -->
+<script type="application/x-scittle" src="../prob/erp.cljs"></script>
+<script type="application/x-scittle" src="../prob/inference.cljs"></script>
+<script type="application/x-scittle" src="../prob/builtins.cljs"></script>
+<script type="application/x-scittle" src="../prob/core.cljs"></script>
+
+<script type="application/x-scittle">
+(ns prob.macros)
+(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))
+(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))
+(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))
+</script>
+
+<!-- Viz: histogram, density, barplot, display -->
+<script type="application/x-scittle">
+(ns prob.viz
+  (:require [prob.core :as core]))
+
+(defn hist [data label]
+  (let [data (vec data) freqs (frequencies data) ks (sort-by str (keys freqs))
+        n (count ks) mx (apply max (vals freqs))
+        bw (max 30 (min 60 (js/Math.floor (/ 500 (max n 1)))))
+        cw (+ (* n bw) 40) ch 200 mb 50 mt 20 ph (- ch mb mt)
+        c (doto (js/document.createElement "div") (-> .-className (set! "chart-container")))
+        t (doto (js/document.createElement "div") (-> .-className (set! "chart-title")) (-> .-textContent (set! (or label ""))))
+        _ (.appendChild c t)
+        svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "svg") (.setAttribute "width" cw) (.setAttribute "height" ch))
+        _ (.appendChild c svg)]
+    (doseq [[i k] (map-indexed vector ks)]
+      (let [cnt (get freqs k) bh (* (/ cnt mx) ph) x (+ 20 (* i bw)) y (+ mt (- ph bh))
+            r (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "rect") (.setAttribute "class" "bar") (.setAttribute "x" (+ x 2)) (.setAttribute "y" y) (.setAttribute "width" (- bw 4)) (.setAttribute "height" bh))
+            _ (.appendChild svg r)
+            tl (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text") (.setAttribute "class" "axis-label") (.setAttribute "x" (+ x (/ bw 2))) (.setAttribute "y" (- ch 5)) (.setAttribute "text-anchor" "middle") (-> .-textContent (set! (str k))))
+            _ (.appendChild svg tl)]))
+    (js/__appendToOutput c) nil))
+
+(defn density [data label]
+  (let [data (vec (sort data)) n (count data) mn (first data) mx (last data)
+        rng (let [r (- mx mn)] (if (zero? r) 1 r))
+        bw (max (* 1.06 (js/Math.pow n -0.2) (js/Math.sqrt (core/variance data))) (* rng 0.01))
+        steps 80 xs (mapv #(+ mn (* rng (/ % steps))) (range (inc steps)))
+        kde (fn [x] (/ (reduce + 0 (map (fn [d] (let [z (/ (- x d) bw)] (* 0.3989422804014327 (js/Math.exp (* -0.5 z z))))) data)) (* n bw)))
+        ys (mapv kde xs) my (apply max ys)
+        cw 500 ch 200 ml 20 mb 30 mt 10 pw (- cw ml 10) ph (- ch mb mt)
+        c (doto (js/document.createElement "div") (-> .-className (set! "chart-container")))
+        t (doto (js/document.createElement "div") (-> .-className (set! "chart-title")) (-> .-textContent (set! (or label ""))))
+        _ (.appendChild c t)
+        svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "svg") (.setAttribute "width" cw) (.setAttribute "height" ch))
+        _ (.appendChild c svg)
+        pts (mapv (fn [i] (let [x (+ ml (* (/ (- (nth xs i) mn) rng) pw)) y (+ mt (- ph (* (/ (nth ys i) my) ph)))] (str x "," y))) (range (count xs)))
+        lp (str "M" (clojure.string/join " L" pts))
+        ap (str lp " L" (+ ml pw) "," (+ mt ph) " L" ml "," (+ mt ph) " Z")
+        _ (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "path") (.setAttribute "class" "density-area") (.setAttribute "d" ap)))
+        _ (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "path") (.setAttribute "class" "density-line") (.setAttribute "d" lp)))]
+    (doseq [i (range 6)]
+      (let [v (+ mn (* rng (/ i 5))) x (+ ml (* (/ i 5) pw))
+            tl (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text") (.setAttribute "class" "axis-label") (.setAttribute "x" x) (.setAttribute "y" (- ch 5)) (.setAttribute "text-anchor" "middle") (-> .-textContent (set! (.toFixed v 2))))]
+        (.appendChild svg tl)))
+    (js/__appendToOutput c) nil))
+
+(defn barplot [[values probs] label]
+  (let [vs (vec values) ps (vec (map double probs)) n (count vs) mp (apply max ps)
+        bw (max 30 (min 60 (js/Math.floor (/ 500 (max n 1)))))
+        cw (+ (* n bw) 40) ch 200 mb 50 mt 20 ph (- ch mb mt)
+        c (doto (js/document.createElement "div") (-> .-className (set! "chart-container")))
+        t (doto (js/document.createElement "div") (-> .-className (set! "chart-title")) (-> .-textContent (set! (or label ""))))
+        _ (.appendChild c t)
+        svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "svg") (.setAttribute "width" cw) (.setAttribute "height" ch))
+        _ (.appendChild c svg)]
+    (doseq [[i v] (map-indexed vector vs)]
+      (let [p (nth ps i) bh (* (/ p mp) ph) x (+ 20 (* i bw)) y (+ mt (- ph bh))
+            _ (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "rect") (.setAttribute "class" "bar") (.setAttribute "x" (+ x 2)) (.setAttribute "y" y) (.setAttribute "width" (- bw 4)) (.setAttribute "height" bh)))
+            _ (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text") (.setAttribute "class" "axis-label") (.setAttribute "x" (+ x (/ bw 2))) (.setAttribute "y" (- ch 5)) (.setAttribute "text-anchor" "middle") (-> .-textContent (set! (str v)))))
+            _ (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text") (.setAttribute "class" "axis-label") (.setAttribute "x" (+ x (/ bw 2))) (.setAttribute "y" (- y 3)) (.setAttribute "text-anchor" "middle") (-> .-textContent (set! (.toFixed p 3)))))]))
+    (js/__appendToOutput c) nil))
+
+(defn display [& args]
+  (js/__appendTextToOutput (apply str (interpose " " args))))
+
+;; Physics bridge (requires box2d + phys.js)
+(defn cljs->js-world [world]
+  (let [to-vec (fn tv [x] (cond (or (seq? x) (list? x) (vector? x)) (mapv tv x) :else x))]
+    (clj->js (to-vec (vec world)))))
+
+(defn run-physics [steps world]
+  (let [result (js/runPhysics steps (cljs->js-world world))]
+    (map (fn [obj] (let [o (js->clj obj)] (list (list (nth (first o) 0) (nth (first o) 1) (apply list (nth (first o) 2))) (apply list (second o))))) result)))
+
+(defn animate-physics [steps world]
+  (js/animatePhysics steps (cljs->js-world world) nil))
+</script>
+
+<!-- User namespace with all imports + interactive runner -->
+<script type="application/x-scittle">
+(ns cljs.user
+  (:require [prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial
+                                sample-discrete beta gamma dirichlet exponential
+                                condition factor rejection-query-fn mh-query-fn
+                                enumeration-query-fn mem mean variance sum prod]]
+            [prob.builtins :refer [expt]]
+            [prob.macros :refer [rejection-query mh-query enumeration-query]]
+            [prob.viz :refer [hist density barplot display run-physics animate-physics]]))
+
+(defn abs' [x] (js/Math.abs x))
+
+;; Transform every pre>code block into an interactive editor
+(let [pres (array-seq (js/document.querySelectorAll "#chapter pre"))]
+  (doseq [pre pres]
+    (when-let [code-el (.-firstElementChild pre)]
+      (let [code (.trim (.-textContent code-el))
+            lines (inc (count (.split code "\n")))
+
+            container (doto (js/document.createElement "div")
+                        (-> .-className (set! "code-example")))
+            textarea (doto (js/document.createElement "textarea")
+                       (-> .-value (set! code))
+                       (.setAttribute "rows" (max 3 lines))
+                       (.setAttribute "spellcheck" "false"))
+            toolbar (doto (js/document.createElement "div")
+                      (-> .-className (set! "toolbar")))
+            run-btn (doto (js/document.createElement "button")
+                      (-> .-textContent (set! "Run")))
+            output (doto (js/document.createElement "div")
+                     (-> .-className (set! "output")))]
+
+        (.appendChild toolbar run-btn)
+        (.appendChild container textarea)
+        (.appendChild container toolbar)
+        (.appendChild container output)
+        (.replaceWith pre container)
+
+        (set! (.-onclick run-btn)
+          (fn []
+            (set! (.-innerHTML output) "")
+            ;; Wire up output hooks for viz functions
+            (set! js/window.__appendToOutput
+              (fn [el] (.appendChild output el)))
+            (set! js/window.__appendTextToOutput
+              (fn [text]
+                (.appendChild output
+                  (doto (js/document.createElement "span")
+                    (-> .-textContent (set! (str text "\n")))))))
+            (try
+              (let [result (js/scittle.core.eval_string (.trim (.-value textarea)))]
+                (when (some? result)
+                  (.appendChild output
+                    (doto (js/document.createElement "span")
+                      (-> .-textContent (set! (str result)))))))
+              (catch :default e
+                (.appendChild output
+                  (doto (js/document.createElement "span")
+                    (-> .-className (set! "error"))
+                    (-> .-textContent (set! (str "Error: " (.-message e))))))))))))))
+</script>
+
+<h1 id="chapter-title">2. Generative Models</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#building-generative-models">Building Generative Models</a><ul><li><a href="#example-flipping-coins">Example: Flipping Coins</a></li></ul></li>
+<li><a href="#example-causal-models-in-medical-diagnosis">Example: Causal Models in Medical Diagnosis</a></li>
+<li><a href="#prediction-simulation-and-probabilities">Prediction, Simulation, and Probabilities</a></li>
+<li><a href="#stochastic-recursion">Stochastic recursion</a></li>
+<li><a href="#persistent-randomness-mem">Persistent Randomness: <code>mem</code></a></li>
+<li><a href="#example-bayesian-tug-of-war">Example: Bayesian Tug of War</a></li>
+<li><a href="#example-intuitive-physics">Example: Intuitive physics</a></li>
+<li><a href="#exercises">Exercises</a></li>
+</ul>
+</div>
+
+<h1 id="building-generative-models"><a href="#building-generative-models">Building Generative Models</a></h1>
+
+<p>We wish to describe in formal terms how to generate states of the world &mdash; computations that involve random choices to capture uncertainty about the process. The simplest random primitive is <code>flip</code> which returns <code>true</code> or <code>false</code>:</p>
+
+<pre><code>(flip)</code></pre>
+
+<p>Each time you run a program you get a <em>sample</em>. Collect many samples in a histogram:</p>
+
+<pre><code>(hist (repeatedly 1000 flip) "Flips")</code></pre>
+
+<p>Other random primitives include <code>gaussian</code>, <code>gamma</code>, <code>dirichlet</code>, etc. Here we multiply two Gaussians:</p>
+
+<pre><code>(* (gaussian 0 1) (gaussian 0 1))</code></pre>
+
+<p>We can build stochastic functions with <code>fn</code>:</p>
+
+<pre><code>(def two-gaussians (fn [] (* (gaussian 0 1) (gaussian 0 1))))
+(density (repeatedly 100 two-gaussians) "two-gaussians")</code></pre>
+
+<p>A stochastic function that only sometimes doubles its input:</p>
+
+<pre><code>(defn noisy-double [x] (if (flip) x (+ x x)))
+(noisy-double 3)</code></pre>
+
+<h2 id="example-flipping-coins"><a href="#example-flipping-coins">Example: Flipping Coins</a></h2>
+
+<pre><code>(def fair-coin (fn [] (if (flip 0.5) 'h 't)))
+(hist (repeatedly 20 fair-coin) "fair coin")</code></pre>
+
+<pre><code>(def trick-coin (fn [] (if (flip 0.95) 'h 't)))
+(hist (repeatedly 20 trick-coin) "trick coin")</code></pre>
+
+<pre><code>(defn make-coin [weight] (fn [] (if (flip weight) 'h 't)))
+(def fair-coin (make-coin 0.5))
+(def trick-coin (make-coin 0.95))
+(def bent-coin (make-coin 0.25))
+(hist (repeatedly 20 fair-coin) "20 fair coin flips")
+(hist (repeatedly 20 trick-coin) "20 trick coin flips")
+(hist (repeatedly 20 bent-coin) "20 bent coin flips")</code></pre>
+
+<pre><code>(defn make-coin [weight] (fn [] (if (flip weight) 'h 't)))
+(defn bend [coin]
+  (fn [] (if (= (coin) 'h)
+           ((make-coin 0.7))
+           ((make-coin 0.1)))))
+(def fair-coin (make-coin 0.5))
+(def bent-coin (bend fair-coin))
+(hist (repeatedly 100 bent-coin) "bent coin")</code></pre>
+
+<pre><code>(def make-coin (fn [weight] (fn [] (flip weight))))
+(def coin (make-coin 0.8))
+(def data (repeatedly 1000 (fn [] (sum (map (fn [x] (if x 1 0)) (repeatedly 10 coin))))))
+(hist data "Distribution of coin flips")</code></pre>
+
+<h1 id="example-causal-models-in-medical-diagnosis"><a href="#example-causal-models-in-medical-diagnosis">Example: Causal Models in Medical Diagnosis</a></h1>
+
+<pre><code>(def lung-cancer (flip 0.01))
+(def cold (flip 0.2))
+(def cough (or cold lung-cancer))
+cough</code></pre>
+
+<pre><code>(def lung-cancer (flip 0.01))
+(def TB (flip 0.005))
+(def stomach-flu (flip 0.1))
+(def cold (flip 0.2))
+(def other (flip 0.1))
+(def cough (or (and cold (flip 0.5)) (and lung-cancer (flip 0.3)) (and TB (flip 0.7)) (and other (flip 0.01))))
+(def fever (or (and cold (flip 0.3)) (and stomach-flu (flip 0.5)) (and TB (flip 0.1)) (and other (flip 0.01))))
+(def chest-pain (or (and lung-cancer (flip 0.5)) (and TB (flip 0.5)) (and other (flip 0.01))))
+(def shortness-of-breath (or (and lung-cancer (flip 0.5)) (and TB (flip 0.2)) (and other (flip 0.01))))
+(list "cough" cough "fever" fever "chest-pain" chest-pain "shortness-of-breath" shortness-of-breath)</code></pre>
+
+<h1 id="prediction-simulation-and-probabilities"><a href="#prediction-simulation-and-probabilities">Prediction, Simulation, and Probabilities</a></h1>
+
+<pre><code>(list (flip) (flip))</code></pre>
+
+<pre><code>(defn random-pair [] (list (flip) (flip)))
+(hist (repeatedly 1000 random-pair) "return values")</code></pre>
+
+<pre><code>(def A (flip))
+(def B (flip))
+(def C (list A B))
+C</code></pre>
+
+<pre><code>(def A (flip))
+(def B (flip (if A 0.3 0.7)))
+(list A B)</code></pre>
+
+<pre><code>(or (flip) (flip))</code></pre>
+
+<h1 id="stochastic-recursion"><a href="#stochastic-recursion">Stochastic recursion</a></h1>
+
+<pre><code>(defn geometric [p]
+  (if (flip p) 0 (+ 1 (geometric p))))
+(hist (repeatedly 1000 (fn [] (geometric 0.6))) "Geometric of 0.6")</code></pre>
+
+<h1 id="persistent-randomness-mem"><a href="#persistent-randomness-mem">Persistent Randomness: <code>mem</code></a></h1>
+
+<pre><code>(defn eye-color [person] (uniform-draw '(blue green brown)))
+(list (eye-color 'bob) (eye-color 'alice) (eye-color 'bob))</code></pre>
+
+<pre><code>(= (flip) (flip))</code></pre>
+
+<pre><code>(def mem-flip (mem flip))
+(= (mem-flip) (mem-flip))</code></pre>
+
+<pre><code>(def eye-color (mem (fn [person] (uniform-draw '(blue green brown)))))
+(list (eye-color 'bob) (eye-color 'alice) (eye-color 'bob))</code></pre>
+
+<pre><code>(def flip-n (mem (fn [n] (flip))))
+(list (list (flip-n 1) (flip-n 12) (flip-n 47) (flip-n 1548))
+      (list (flip-n 1) (flip-n 12) (flip-n 47) (flip-n 1548)))</code></pre>
+
+<h1 id="example-bayesian-tug-of-war"><a href="#example-bayesian-tug-of-war">Example: Bayesian Tug of War</a></h1>
+
+<pre><code>(def strength (mem (fn [person] (gaussian 0 1))))
+(defn lazy [person] (flip 0.25))
+(defn pulling [person] (if (lazy person) (/ (strength person) 2) (strength person)))
+(defn total-pulling [team] (sum (map pulling team)))
+(defn winner [team1 team2] (if (< (total-pulling team1) (total-pulling team2)) team2 team1))
+(list "Tournament results:"
+      (winner '(alice bob) '(sue tom))
+      (winner '(alice bob) '(sue tom))
+      (winner '(alice sue) '(bob tom))
+      (winner '(alice sue) '(bob tom))
+      (winner '(alice tom) '(bob sue))
+      (winner '(alice tom) '(bob sue)))</code></pre>
+
+<h1 id="example-intuitive-physics"><a href="#example-intuitive-physics">Example: Intuitive physics</a></h1>
+
+<p>We have a 2D physics simulator via Box2D. <code>animate-physics</code> shows an animation; <code>run-physics</code> returns the final world state.</p>
+
+<canvas id="plinkocanvas" width="10" height="10" style="background-color:#333333;"></canvas>
+<button id="makeplinko" onclick="initPlinko('plinkocanvas'); this.style.display='none';">Set-up Plinko!</button>
+
+<pre><code>(defn dim [] (uniform 5 20))
+(defn static-dim [] (uniform 10 50))
+(defn shape [] (if (flip) "circle" "rect"))
+(defn xpos [] (uniform 100 (- js/worldWidth 100)))
+(defn ypos [] (uniform 100 (- js/worldHeight 100)))
+(defn make-falling-shape [] (list (list (shape) false (list (dim) (dim))) (list (xpos) 0)))
+(defn make-static-shape [] (list (list (shape) true (list (static-dim) (static-dim))) (list (xpos) (ypos))))
+(def ground (list (list "rect" true (list js/worldWidth 10)) (list (/ js/worldWidth 2) js/worldHeight)))
+(def falling-world (list ground (make-falling-shape) (make-falling-shape) (make-falling-shape) (make-static-shape) (make-static-shape)))
+(animate-physics 1000 falling-world)</code></pre>
+
+<pre><code>(def x-center (/ js/worldWidth 2))
+(defn get-width [obj] (first (nth (vec (first obj)) 2)))
+(defn get-height [obj] (second (nth (vec (first obj)) 2)))
+(defn get-x [obj] (first (second obj)))
+(defn get-y [obj] (second (second obj)))
+(def ground (list (list "rect" true (list js/worldWidth 10)) (list (/ js/worldWidth 2) js/worldHeight)))
+(defn dim [] (uniform 10 50))
+(defn xpos-block [prev] (uniform (- (get-x prev) (get-width prev)) (+ (get-x prev) (get-width prev))))
+(defn ypos-block [prev h] (- (get-y prev) (get-height prev) h))
+(defn add-block [prev first?]
+  (let [w (dim) h (dim)]
+    (list (list "rect" false (list w h)) (list (if first? x-center (xpos-block prev)) (ypos-block prev h)))))
+(defn make-tower-world []
+  (let [b1 (add-block ground true) b2 (add-block b1 false) b3 (add-block b2 false) b4 (add-block b3 false) b5 (add-block b4 false)]
+    (list ground b1 b2 b3 b4 b5)))
+(animate-physics 1000 (make-tower-world))</code></pre>
+
+<pre><code>(defn get-width [obj] (first (nth (vec (first obj)) 2)))
+(defn get-height [obj] (second (nth (vec (first obj)) 2)))
+(defn get-x [obj] (first (second obj)))
+(defn get-y [obj] (second (second obj)))
+(defn static? [obj] (second (first obj)))
+(def ground (list (list "rect" true (list js/worldWidth 10)) (list (/ js/worldWidth 2) (+ js/worldHeight 6))))
+(def stable-world (list ground (list (list "rect" false (list 60 22)) (list 175 473)) (list (list "rect" false (list 50 38)) (list 160 413)) (list (list "rect" false (list 40 35)) (list 167 340)) (list (list "rect" false (list 30 29)) (list 177 276)) (list (list "rect" false (list 11 17)) (list 169 230))))
+(def almost-unstable-world (list ground (list (list "rect" false (list 24 22)) (list 175 473)) (list (list "rect" false (list 15 38)) (list 160 413)) (list (list "rect" false (list 11 35)) (list 167 340)) (list (list "rect" false (list 11 29)) (list 177 276)) (list (list "rect" false (list 11 17)) (list 169 230))))
+(def unstable-world (list ground (list (list "rect" false (list 60 22)) (list 175 473)) (list (list "rect" false (list 50 38)) (list 90 413)) (list (list "rect" false (list 40 35)) (list 140 340)) (list (list "rect" false (list 10 29)) (list 177 276)) (list (list "rect" false (list 50 17)) (list 140 230))))
+(defn does-tower-fall [iw fw] (let [hy (fn [w] (apply min (map get-y w)))] (not (< (abs' (- (hy iw) (hy fw))) 1))))
+(defn noisify [world] (map (fn [obj] (if (static? obj) obj (list (first obj) (list (uniform (- (get-x obj) 10) (+ (get-x obj) 10)) (get-y obj))))) world))
+(defn run-stable [] (let [i (noisify stable-world) f (run-physics 1000 i)] (does-tower-fall i f)))
+(defn run-almost [] (let [i (noisify almost-unstable-world) f (run-physics 1000 i)] (does-tower-fall i f)))
+(defn run-unstable [] (let [i (noisify unstable-world) f (run-physics 1000 i)] (does-tower-fall i f)))
+(hist (repeatedly 10 run-stable) "stable")
+(hist (repeatedly 10 run-almost) "almost unstable")
+(hist (repeatedly 10 run-unstable) "unstable")</code></pre>
+
+<h1 id="exercises"><a href="#exercises">Exercises</a></h1>
+
+<ol type="1">
+<li><p>Show these three programs have the same marginal distribution:</p>
+<pre><code>(if (flip) (flip 0.7) (flip 0.1))</code></pre>
+<pre><code>(flip (if (flip) 0.7 0.1))</code></pre>
+<pre><code>(flip 0.4)</code></pre>
+</li>
+<li><p>Explain why these two programs give different distributions:</p>
+<pre><code>(def foo (flip))
+(list foo foo foo)</code></pre>
+<pre><code>(defn foo [] (flip))
+(list (foo) (foo) (foo))</code></pre>
+</li>
+<li><p>Why doesn't this work for complex medical diagnosis? How to fix it?</p>
+<pre><code>(defn lung-cancer [person] (flip 0.01))
+(defn cold [person] (flip 0.2))
+(defn cough [person] (or (cold person) (lung-cancer person)))
+(list (cough 'bob) (cough 'alice))</code></pre>
+</li>
+<li><p>Work through the <code>bend</code> function evaluation:</p>
+<pre><code>(defn make-coin [weight] (fn [] (if (flip weight) 'h 't)))
+(defn bend [coin] (fn [] (if (= (coin) 'h) ((make-coin 0.7)) ((make-coin 0.1)))))
+(def fair-coin (make-coin 0.5))
+(def bent-coin (bend fair-coin))
+(hist (repeatedly 100 bent-coin) "bent coin")</code></pre>
+</li>
+<li><p>Compute the probability that the geometric distribution returns 5:</p>
+<pre><code>(defn geometric [p] (if (flip p) 0 (+ 1 (geometric p))))</code></pre>
+</li>
+</ol>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="01-introduction.html">&larr; Chapter 1: Introduction</a>
+    <a href="03-conditioning.html">Chapter 3: Conditioning &rarr;</a>
+  </div>
+</div>
+</body>
+</html>
