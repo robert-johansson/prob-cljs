@@ -231,7 +231,7 @@
       (let [xs (seq x) ys (seq y)]
         (and (= (count xs) (count ys))
              (every? true? (map equal? xs ys))))
-      (and (dotted-pair? x) (instance? Pair y))
+      (and (dotted-pair? x) (dotted-pair? y))
       (and (equal? (:car x) (:car y))
            (equal? (:cdr x) (:cdr y)))
       (and (nil? x) (nil? y)) true
