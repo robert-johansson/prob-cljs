@@ -22,97 +22,6 @@
   </div>
   <div id="chapter">
 
-<!-- Load prob-cljs library from external files -->
-<script type="application/x-scittle" src="../prob/erp.cljs"></script>
-<script type="application/x-scittle" src="../prob/inference.cljs"></script>
-<script type="application/x-scittle" src="../prob/builtins.cljs"></script>
-<script type="application/x-scittle" src="../prob/core.cljs"></script>
-
-<script type="application/x-scittle">
-(ns prob.macros)
-(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))
-(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))
-(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))
-</script>
-
-<!-- Viz: histogram, density, barplot, display -->
-<script type="application/x-scittle">
-(ns prob.viz
-  (:require [prob.core :as core]))
-
-(defn hist [data label]
-  (let [data (vec data) freqs (frequencies data) ks (sort-by str (keys freqs))
-        n (count ks) mx (apply max (vals freqs))
-        bw (max 30 (min 60 (js/Math.floor (/ 500 (max n 1)))))
-        cw (+ (* n bw) 40) ch 200 mb 50 mt 20 ph (- ch mb mt)
-        c (doto (js/document.createElement "div") (-> .-className (set! "chart-container")))
-        t (doto (js/document.createElement "div") (-> .-className (set! "chart-title")) (-> .-textContent (set! (or label ""))))
-        _ (.appendChild c t)
-        svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "svg") (.setAttribute "width" cw) (.setAttribute "height" ch))
-        _ (.appendChild c svg)]
-    (doseq [[i k] (map-indexed vector ks)]
-      (let [cnt (get freqs k) bh (* (/ cnt mx) ph) x (+ 20 (* i bw)) y (+ mt (- ph bh))
-            r (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "rect") (.setAttribute "class" "bar") (.setAttribute "x" (+ x 2)) (.setAttribute "y" y) (.setAttribute "width" (- bw 4)) (.setAttribute "height" bh))
-            _ (.appendChild svg r)
-            tl (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text") (.setAttribute "class" "axis-label") (.setAttribute "x" (+ x (/ bw 2))) (.setAttribute "y" (- ch 5)) (.setAttribute "text-anchor" "middle") (-> .-textContent (set! (str k))))
-            _ (.appendChild svg tl)]))
-    (js/__appendToOutput c) nil))
-
-(defn density [data label]
-  (let [data (vec (sort data)) n (count data) mn (first data) mx (last data)
-        rng (let [r (- mx mn)] (if (zero? r) 1 r))
-        bw (max (* 1.06 (js/Math.pow n -0.2) (js/Math.sqrt (core/variance data))) (* rng 0.01))
-        steps 80 xs (mapv #(+ mn (* rng (/ % steps))) (range (inc steps)))
-        kde (fn [x] (/ (reduce + 0 (map (fn [d] (let [z (/ (- x d) bw)] (* 0.3989422804014327 (js/Math.exp (* -0.5 z z))))) data)) (* n bw)))
-        ys (mapv kde xs) my (apply max ys)
-        cw 500 ch 200 ml 20 mb 30 mt 10 pw (- cw ml 10) ph (- ch mb mt)
-        c (doto (js/document.createElement "div") (-> .-className (set! "chart-container")))
-        t (doto (js/document.createElement "div") (-> .-className (set! "chart-title")) (-> .-textContent (set! (or label ""))))
-        _ (.appendChild c t)
-        svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "svg") (.setAttribute "width" cw) (.setAttribute "height" ch))
-        _ (.appendChild c svg)
-        pts (mapv (fn [i] (let [x (+ ml (* (/ (- (nth xs i) mn) rng) pw)) y (+ mt (- ph (* (/ (nth ys i) my) ph)))] (str x "," y))) (range (count xs)))
-        lp (str "M" (clojure.string/join " L" pts))
-        ap (str lp " L" (+ ml pw) "," (+ mt ph) " L" ml "," (+ mt ph) " Z")
-        _ (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "path") (.setAttribute "class" "density-area") (.setAttribute "d" ap)))
-        _ (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "path") (.setAttribute "class" "density-line") (.setAttribute "d" lp)))]
-    (doseq [i (range 6)]
-      (let [v (+ mn (* rng (/ i 5))) x (+ ml (* (/ i 5) pw))
-            tl (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text") (.setAttribute "class" "axis-label") (.setAttribute "x" x) (.setAttribute "y" (- ch 5)) (.setAttribute "text-anchor" "middle") (-> .-textContent (set! (.toFixed v 2))))]
-        (.appendChild svg tl)))
-    (js/__appendToOutput c) nil))
-
-(defn barplot [[values probs] label]
-  (let [vs (vec values) ps (vec (map double probs)) n (count vs) mp (apply max ps)
-        bw (max 30 (min 60 (js/Math.floor (/ 500 (max n 1)))))
-        cw (+ (* n bw) 40) ch 200 mb 50 mt 20 ph (- ch mb mt)
-        c (doto (js/document.createElement "div") (-> .-className (set! "chart-container")))
-        t (doto (js/document.createElement "div") (-> .-className (set! "chart-title")) (-> .-textContent (set! (or label ""))))
-        _ (.appendChild c t)
-        svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "svg") (.setAttribute "width" cw) (.setAttribute "height" ch))
-        _ (.appendChild c svg)]
-    (doseq [[i v] (map-indexed vector vs)]
-      (let [p (nth ps i) bh (* (/ p mp) ph) x (+ 20 (* i bw)) y (+ mt (- ph bh))
-            _ (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "rect") (.setAttribute "class" "bar") (.setAttribute "x" (+ x 2)) (.setAttribute "y" y) (.setAttribute "width" (- bw 4)) (.setAttribute "height" bh)))
-            _ (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text") (.setAttribute "class" "axis-label") (.setAttribute "x" (+ x (/ bw 2))) (.setAttribute "y" (- ch 5)) (.setAttribute "text-anchor" "middle") (-> .-textContent (set! (str v)))))
-            _ (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text") (.setAttribute "class" "axis-label") (.setAttribute "x" (+ x (/ bw 2))) (.setAttribute "y" (- y 3)) (.setAttribute "text-anchor" "middle") (-> .-textContent (set! (.toFixed p 3)))))]))
-    (js/__appendToOutput c) nil))
-
-(defn display [& args]
-  (js/__appendTextToOutput (apply str (interpose " " args))))
-
-;; Physics bridge (requires box2d + phys.js)
-(defn cljs->js-world [world]
-  (let [to-vec (fn tv [x] (cond (or (seq? x) (list? x) (vector? x)) (mapv tv x) :else x))]
-    (clj->js (to-vec (vec world)))))
-
-(defn run-physics [steps world]
-  (let [result (js/runPhysics steps (cljs->js-world world))]
-    (map (fn [obj] (let [o (js->clj obj)] (list (list (nth (first o) 0) (nth (first o) 1) (apply list (nth (first o) 2))) (apply list (second o))))) result)))
-
-(defn animate-physics [steps world]
-  (js/animatePhysics steps (cljs->js-world world) nil))
-</script>
 
 
 <h1 id="chapter-title">2. Generative Models</h1>
@@ -351,22 +260,56 @@ C</code></pre>
   </div>
 </div>
 
-<!-- Interactive runner -->
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
 <script>
 var _scittleReady = false;
+var _scittleLoading = null;
+
 function ensureScittleImports() {
-  if (_scittleReady) return;
-  scittle.core.eval_string(
-    "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
-    "                              sample-discrete beta gamma dirichlet exponential" +
-    "                              condition factor rejection-query-fn mh-query-fn" +
-    "                              enumeration-query-fn mem mean variance sum prod]])" +
-    "(require '[prob.builtins :refer [expt]])" +
-    "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
-    "(require '[prob.viz :refer [hist density barplot display run-physics animate-physics]])" +
-    "(defn abs' [x] (js/Math.abs x))"
-  );
-  _scittleReady = true;
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/erp.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    // Eval each file in order
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    // Macros
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    // Import everything into eval_string's default namespace
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              condition factor rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod]])" +
+      "(require '[prob.builtins :refer [expt]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density barplot display run-physics animate-physics]])" +
+      "(defn abs' [x] (js/Math.abs x))"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
 }
 
 document.querySelectorAll('#chapter pre').forEach(function(pre) {
@@ -406,20 +349,32 @@ document.querySelectorAll('#chapter pre').forEach(function(pre) {
       span.textContent = text + '\n';
       output.appendChild(span);
     };
-    try {
-      ensureScittleImports();
-      var result = scittle.core.eval_string(textarea.value.trim());
-      if (result != null) {
+    btn.disabled = true;
+    btn.textContent = 'Loading...';
+    ensureScittleImports().then(function() {
+      btn.disabled = false;
+      btn.textContent = 'Run';
+      try {
+        var result = scittle.core.eval_string(textarea.value.trim());
+        if (result != null) {
+          var span = document.createElement('span');
+          span.textContent = '' + result;
+          output.appendChild(span);
+        }
+      } catch(e) {
         var span = document.createElement('span');
-        span.textContent = '' + result;
+        span.className = 'error';
+        span.textContent = 'Error: ' + e.message;
         output.appendChild(span);
       }
-    } catch(e) {
+    }).catch(function(e) {
+      btn.disabled = false;
+      btn.textContent = 'Run';
       var span = document.createElement('span');
       span.className = 'error';
-      span.textContent = 'Error: ' + e.message;
+      span.textContent = 'Load error: ' + e.message;
       output.appendChild(span);
-    }
+    });
   });
 });
 </script>
