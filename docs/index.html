@@ -123,11 +123,20 @@
   <!-- Scittle base -->
   <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
 
+  <!-- Debug: confirm Scittle works -->
+  <script type="application/x-scittle">
+  (js/console.log "Scittle loaded OK")
+  </script>
+
   <!-- Load prob-cljs source files in dependency order -->
   <script src="prob/erp.cljs" type="application/x-scittle"></script>
+  <script type="application/x-scittle">(js/console.log "erp loaded")</script>
   <script src="prob/builtins.cljs" type="application/x-scittle"></script>
+  <script type="application/x-scittle">(js/console.log "builtins loaded")</script>
   <script src="prob/inference.cljs" type="application/x-scittle"></script>
+  <script type="application/x-scittle">(js/console.log "inference loaded")</script>
   <script src="prob/core.cljs" type="application/x-scittle"></script>
+  <script type="application/x-scittle">(js/console.log "core loaded")</script>
 
   <!-- Define query macros (SCI supports defmacro directly) -->
   <script type="application/x-scittle">
