@@ -114,7 +114,7 @@
   (js/animatePhysics steps (cljs->js-world world) nil))
 </script>
 
-<!-- User namespace with all imports + interactive runner -->
+<!-- User namespace: import everything for eval_string context -->
 <script type="application/x-scittle">
 (ns cljs.user
   (:require [prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial
@@ -126,55 +126,6 @@
             [prob.viz :refer [hist density barplot display run-physics animate-physics]]))
 
 (defn abs' [x] (js/Math.abs x))
-
-;; Transform every pre>code block into an interactive editor
-(let [pres (array-seq (js/document.querySelectorAll "#chapter pre"))]
-  (doseq [pre pres]
-    (when-let [code-el (.-firstElementChild pre)]
-      (let [code (.trim (.-textContent code-el))
-            lines (inc (count (.split code "\n")))
-
-            container (doto (js/document.createElement "div")
-                        (-> .-className (set! "code-example")))
-            textarea (doto (js/document.createElement "textarea")
-                       (-> .-value (set! code))
-                       (.setAttribute "rows" (max 3 lines))
-                       (.setAttribute "spellcheck" "false"))
-            toolbar (doto (js/document.createElement "div")
-                      (-> .-className (set! "toolbar")))
-            run-btn (doto (js/document.createElement "button")
-                      (-> .-textContent (set! "Run")))
-            output (doto (js/document.createElement "div")
-                     (-> .-className (set! "output")))]
-
-        (.appendChild toolbar run-btn)
-        (.appendChild container textarea)
-        (.appendChild container toolbar)
-        (.appendChild container output)
-        (.replaceWith pre container)
-
-        (set! (.-onclick run-btn)
-          (fn []
-            (set! (.-innerHTML output) "")
-            ;; Wire up output hooks for viz functions
-            (set! js/window.__appendToOutput
-              (fn [el] (.appendChild output el)))
-            (set! js/window.__appendTextToOutput
-              (fn [text]
-                (.appendChild output
-                  (doto (js/document.createElement "span")
-                    (-> .-textContent (set! (str text "\n")))))))
-            (try
-              (let [result (js/scittle.core.eval_string (.trim (.-value textarea)))]
-                (when (some? result)
-                  (.appendChild output
-                    (doto (js/document.createElement "span")
-                      (-> .-textContent (set! (str result)))))))
-              (catch :default e
-                (.appendChild output
-                  (doto (js/document.createElement "span")
-                    (-> .-className (set! "error"))
-                    (-> .-textContent (set! (str "Error: " (.-message e))))))))))))))
 </script>
 
 <h1 id="chapter-title">2. Generative Models</h1>
@@ -412,5 +363,56 @@ C</code></pre>
     <a href="03-conditioning.html">Chapter 3: Conditioning &rarr;</a>
   </div>
 </div>
+
+<!-- Interactive runner: must come after all content so pre>code elements exist -->
+<script type="application/x-scittle">
+(let [pres (array-seq (js/document.querySelectorAll "#chapter pre"))]
+  (doseq [pre pres]
+    (when-let [code-el (.-firstElementChild pre)]
+      (let [code (.trim (.-textContent code-el))
+            lines (inc (count (.split code "\n")))
+
+            container (doto (js/document.createElement "div")
+                        (-> .-className (set! "code-example")))
+            textarea (doto (js/document.createElement "textarea")
+                       (-> .-value (set! code))
+                       (.setAttribute "rows" (max 3 lines))
+                       (.setAttribute "spellcheck" "false"))
+            toolbar (doto (js/document.createElement "div")
+                      (-> .-className (set! "toolbar")))
+            run-btn (doto (js/document.createElement "button")
+                      (-> .-textContent (set! "Run")))
+            output (doto (js/document.createElement "div")
+                     (-> .-className (set! "output")))]
+
+        (.appendChild toolbar run-btn)
+        (.appendChild container textarea)
+        (.appendChild container toolbar)
+        (.appendChild container output)
+        (.replaceWith pre container)
+
+        (set! (.-onclick run-btn)
+          (fn []
+            (set! (.-innerHTML output) "")
+            ;; Wire up output hooks for viz functions
+            (set! js/window.__appendToOutput
+              (fn [el] (.appendChild output el)))
+            (set! js/window.__appendTextToOutput
+              (fn [text]
+                (.appendChild output
+                  (doto (js/document.createElement "span")
+                    (-> .-textContent (set! (str text "\n")))))))
+            (try
+              (let [result (js/scittle.core.eval_string (.trim (.-value textarea)))]
+                (when (some? result)
+                  (.appendChild output
+                    (doto (js/document.createElement "span")
+                      (-> .-textContent (set! (str result)))))))
+              (catch :default e
+                (.appendChild output
+                  (doto (js/document.createElement "span")
+                    (-> .-className (set! "error"))
+                    (-> .-textContent (set! (str "Error: " (.-message e))))))))))))))
+</script>
 </body>
 </html>
