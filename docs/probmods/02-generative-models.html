@@ -114,19 +114,6 @@
   (js/animatePhysics steps (cljs->js-world world) nil))
 </script>
 
-<!-- User namespace: import everything into cljs.user for eval_string context -->
-<script type="application/x-scittle">
-(in-ns 'cljs.user)
-(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial
-                              sample-discrete beta gamma dirichlet exponential
-                              condition factor rejection-query-fn mh-query-fn
-                              enumeration-query-fn mem mean variance sum prod]])
-(require '[prob.builtins :refer [expt]])
-(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])
-(require '[prob.viz :refer [hist density barplot display run-physics animate-physics]])
-
-(defn abs' [x] (js/Math.abs x))
-</script>
 
 <h1 id="chapter-title">2. Generative Models</h1>
 
@@ -364,8 +351,24 @@ C</code></pre>
   </div>
 </div>
 
-<!-- Interactive runner: plain JS to guarantee execution even if Scittle blocks error -->
+<!-- Interactive runner -->
 <script>
+var _scittleReady = false;
+function ensureScittleImports() {
+  if (_scittleReady) return;
+  scittle.core.eval_string(
+    "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+    "                              sample-discrete beta gamma dirichlet exponential" +
+    "                              condition factor rejection-query-fn mh-query-fn" +
+    "                              enumeration-query-fn mem mean variance sum prod]])" +
+    "(require '[prob.builtins :refer [expt]])" +
+    "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+    "(require '[prob.viz :refer [hist density barplot display run-physics animate-physics]])" +
+    "(defn abs' [x] (js/Math.abs x))"
+  );
+  _scittleReady = true;
+}
+
 document.querySelectorAll('#chapter pre').forEach(function(pre) {
   var codeEl = pre.querySelector('code');
   if (!codeEl) return;
@@ -404,6 +407,7 @@ document.querySelectorAll('#chapter pre').forEach(function(pre) {
       output.appendChild(span);
     };
     try {
+      ensureScittleImports();
       var result = scittle.core.eval_string(textarea.value.trim());
       if (result != null) {
         var span = document.createElement('span');
