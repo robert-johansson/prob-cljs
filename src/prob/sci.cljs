@@ -8,6 +8,8 @@
             [prob.erp :as erp]
             [prob.inference :as inference]
             [prob.builtins :as builtins]
+            [prob.dist :as dist]
+            [prob.math :as math]
             [prob.core :as core]))
 
 ;; ---------------------------------------------------------------------------
@@ -17,6 +19,8 @@
 (def erp-ns (sci/create-ns 'prob.erp nil))
 (def inference-ns (sci/create-ns 'prob.inference nil))
 (def builtins-ns (sci/create-ns 'prob.builtins nil))
+(def dist-ns (sci/create-ns 'prob.dist nil))
+(def math-ns (sci/create-ns 'prob.math nil))
 (def core-ns (sci/create-ns 'prob.core nil))
 (def macros-ns (sci/create-ns 'prob.macros nil))
 
@@ -36,6 +40,38 @@
    'gamma          (sci/copy-var erp/gamma erp-ns)
    'dirichlet      (sci/copy-var erp/dirichlet erp-ns)
    'exponential    (sci/copy-var erp/exponential erp-ns)})
+
+;; ---------------------------------------------------------------------------
+;; prob.dist
+;; ---------------------------------------------------------------------------
+
+(def dist-namespace
+  {'sample*             (sci/copy-var dist/sample* dist-ns)
+   'observe*            (sci/copy-var dist/observe* dist-ns)
+   'dist?               (sci/copy-var dist/dist? dist-ns)
+   'bernoulli-dist      (sci/copy-var dist/bernoulli-dist dist-ns)
+   'gaussian-dist       (sci/copy-var dist/gaussian-dist dist-ns)
+   'uniform-dist        (sci/copy-var dist/uniform-dist dist-ns)
+   'beta-dist           (sci/copy-var dist/beta-dist dist-ns)
+   'gamma-dist          (sci/copy-var dist/gamma-dist dist-ns)
+   'exponential-dist    (sci/copy-var dist/exponential-dist dist-ns)
+   'dirichlet-dist      (sci/copy-var dist/dirichlet-dist dist-ns)
+   'uniform-draw-dist   (sci/copy-var dist/uniform-draw-dist dist-ns)
+   'random-integer-dist (sci/copy-var dist/random-integer-dist dist-ns)
+   'multinomial-dist    (sci/copy-var dist/multinomial-dist dist-ns)
+   'sample-discrete-dist (sci/copy-var dist/sample-discrete-dist dist-ns)})
+
+;; ---------------------------------------------------------------------------
+;; prob.math
+;; ---------------------------------------------------------------------------
+
+(def math-namespace
+  {'log-gamma-fn (sci/copy-var math/log-gamma-fn math-ns)
+   'log-beta-fn  (sci/copy-var math/log-beta-fn math-ns)
+   'log-fact     (sci/copy-var math/log-fact math-ns)
+   'log-sum-exp  (sci/copy-var math/log-sum-exp math-ns)
+   'digamma      (sci/copy-var math/digamma math-ns)
+   'erf          (sci/copy-var math/erf math-ns)})
 
 ;; ---------------------------------------------------------------------------
 ;; prob.inference
@@ -158,6 +194,26 @@
    'gamma              (sci/copy-var core/gamma core-ns)
    'dirichlet          (sci/copy-var core/dirichlet core-ns)
    'exponential        (sci/copy-var core/exponential core-ns)
+   'sample*            (sci/copy-var core/sample* core-ns)
+   'observe*           (sci/copy-var core/observe* core-ns)
+   'dist?              (sci/copy-var core/dist? core-ns)
+   'bernoulli-dist     (sci/copy-var core/bernoulli-dist core-ns)
+   'gaussian-dist      (sci/copy-var core/gaussian-dist core-ns)
+   'uniform-dist       (sci/copy-var core/uniform-dist core-ns)
+   'beta-dist          (sci/copy-var core/beta-dist core-ns)
+   'gamma-dist         (sci/copy-var core/gamma-dist core-ns)
+   'exponential-dist   (sci/copy-var core/exponential-dist core-ns)
+   'dirichlet-dist     (sci/copy-var core/dirichlet-dist core-ns)
+   'uniform-draw-dist  (sci/copy-var core/uniform-draw-dist core-ns)
+   'random-integer-dist (sci/copy-var core/random-integer-dist core-ns)
+   'multinomial-dist   (sci/copy-var core/multinomial-dist core-ns)
+   'sample-discrete-dist (sci/copy-var core/sample-discrete-dist core-ns)
+   'log-gamma-fn       (sci/copy-var core/log-gamma-fn core-ns)
+   'log-beta-fn        (sci/copy-var core/log-beta-fn core-ns)
+   'log-fact           (sci/copy-var core/log-fact core-ns)
+   'log-sum-exp        (sci/copy-var core/log-sum-exp core-ns)
+   'digamma            (sci/copy-var core/digamma core-ns)
+   'erf                (sci/copy-var core/erf core-ns)
    'condition          (sci/copy-var core/condition core-ns)
    'factor             (sci/copy-var core/factor core-ns)
    'rejection-query-fn (sci/copy-var core/rejection-query-fn core-ns)
@@ -202,5 +258,7 @@
    {'prob.erp       erp-namespace
     'prob.inference inference-namespace
     'prob.builtins  builtins-namespace
+    'prob.dist      dist-namespace
+    'prob.math      math-namespace
     'prob.core      core-namespace
     'prob.macros    macros-namespace}})

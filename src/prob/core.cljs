@@ -10,7 +10,9 @@
    see prob.macros."
   (:require [prob.erp :as erp]
             [prob.inference :as inference]
-            [prob.builtins :as builtins]))
+            [prob.builtins :as builtins]
+            [prob.dist :as dist]
+            [prob.math :as math]))
 
 ;; ---------------------------------------------------------------------------
 ;; Elementary Random Primitives
@@ -27,6 +29,37 @@
 (def gamma erp/gamma)
 (def dirichlet erp/dirichlet)
 (def exponential erp/exponential)
+
+;; ---------------------------------------------------------------------------
+;; Distribution protocol
+;; ---------------------------------------------------------------------------
+
+(def sample* dist/sample*)
+(def observe* dist/observe*)
+(def dist? dist/dist?)
+
+(def bernoulli-dist dist/bernoulli-dist)
+(def gaussian-dist dist/gaussian-dist)
+(def uniform-dist dist/uniform-dist)
+(def beta-dist dist/beta-dist)
+(def gamma-dist dist/gamma-dist)
+(def exponential-dist dist/exponential-dist)
+(def dirichlet-dist dist/dirichlet-dist)
+(def uniform-draw-dist dist/uniform-draw-dist)
+(def random-integer-dist dist/random-integer-dist)
+(def multinomial-dist dist/multinomial-dist)
+(def sample-discrete-dist dist/sample-discrete-dist)
+
+;; ---------------------------------------------------------------------------
+;; Math
+;; ---------------------------------------------------------------------------
+
+(def log-gamma-fn math/log-gamma-fn)
+(def log-beta-fn math/log-beta-fn)
+(def log-fact math/log-fact)
+(def log-sum-exp math/log-sum-exp)
+(def digamma math/digamma)
+(def erf math/erf)
 
 ;; ---------------------------------------------------------------------------
 ;; Inference
