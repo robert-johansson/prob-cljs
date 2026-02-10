@@ -1,0 +1,69 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+prob-cljs is a probabilistic programming library for ClojureScript. It lets users write probabilistic inference programs as native ClojureScript code (no DSL strings or wrappers). It runs on:
+- **nbb** (Node.js ClojureScript) for CLI/Node usage
+- **Scittle** (browser SCI interpreter) for in-browser probabilistic programming
+
+Zero external dependencies for the core library.
+
+## Commands
+
+### Run tests
+```bash
+nbb -cp src:test test/prob_tests.cljs
+```
+
+### Run demo
+```bash
+nbb -cp src examples/prob-demo.cljs
+```
+
+### Build Scittle plugin (browser)
+```bash
+cd scittle && npm install && npm run build
+```
+
+### Run Ink example
+```bash
+cd examples/ink-task-list && npm install && npx nbb -cp ../../src task-list.cljs
+```
+
+## Architecture
+
+### Source layout (`src/prob/`)
+
+- **core.cljs** — Public API. Thin re-export layer over erp, inference, and builtins.
+- **erp.cljs** — Elementary Random Primitives (flip, gaussian, beta, gamma, dirichlet, etc.). Pure sampling functions using `js/Math.random()`. No log-probability scoring yet.
+- **inference.cljs** — Inference algorithms: rejection sampling, MH query (currently implemented as repeated rejection, not actual Metropolis-Hastings), and enumeration query (approximate via 1000 samples, not exact).
+- **builtins.cljs** — Utility functions: Lisp-style list operations (pair/car/cdr), math, string ops, set operations, memoization (`mem`), and type predicates. Designed for webchurch compatibility.
+- **macros.clj** — Clojure macros (`rejection-query`, `mh-query`, `enumeration-query`, `query`) that wrap body in thunks and delegate to the `-fn` variants in inference.
+- **sci.cljs** — SCI configuration for Scittle. Registers all prob namespaces with `sci/copy-var`. Defines SCI-compatible macros with `^:macro` metadata.
+
+### Scittle plugin (`src/scittle/prob.cljs`)
+
+Entry point that calls `scittle/register-plugin!` to make prob namespaces available in `<script type="application/x-scittle">` tags.
+
+### Key design patterns
+
+**Exception-based rejection**: `condition` throws `ExceptionInfo` with a `::rejection` sentinel. `rejection-query-fn` catches these and retries (up to 10,000 attempts). `factor` does probabilistic rejection based on log-weights.
+
+**Macro → function delegation**: Macros like `(rejection-query ...)` wrap body in `(fn [] ...)` and call `rejection-query-fn`. The `-fn` variants are what SCI and direct callers use.
+
+**Three execution contexts**: nbb loads `.cljs` files directly; Scittle uses SCI via the sci.cljs config; the `docs/` directory inlines source directly in HTML for GitHub Pages.
+
+### docs/
+
+GitHub Pages deployment. `docs/index.html` has all prob source inlined for browser execution via Scittle CDN. `docs/probmods/` contains ProbMods tutorial adaptations.
+
+## Known Limitations
+
+See `GAPS.md` for a detailed comparison with webchurch. Key gaps:
+- ERPs are sampling-only (no log-probability scoring)
+- No execution trace system or structural addresses
+- MH query is repeated rejection, not actual Metropolis-Hastings
+- Enumeration is approximate (Monte Carlo), not exact
+- Missing distributions: binomial, Poisson
