@@ -28,9 +28,22 @@
 (def px-h (* rows 4))  ; pixel height (120)
 
 (def framebuf (js/Uint8Array. (* cols rows)))
+(def colorbuf (js/Uint8Array. (* cols rows)))  ; ANSI color per cell
+
+;; ANSI color codes
+(def color-reset  0)
+(def color-white  37)
+(def color-gray   90)
+(def color-yellow 93)
+(def color-cyan   36)
+(def color-blue   34)
+(def color-red    91)
+
+(def ^:dynamic *draw-color* color-white)
 
 (defn clear! []
-  (.fill framebuf 0))
+  (.fill framebuf 0)
+  (.fill colorbuf 0))
 
 (defn set-pixel!
   "Set a pixel at (px, py) in the braille framebuffer."
@@ -42,23 +55,34 @@
           dy  (mod py 4)
           idx (+ (* row cols) col)
           bit (get pixel-bits [dx dy])]
-      (aset framebuf idx (bit-or (aget framebuf idx) (bit-shift-left 1 bit))))))
+      (aset framebuf idx (bit-or (aget framebuf idx) (bit-shift-left 1 bit)))
+      (aset colorbuf idx *draw-color*))))
 
 (defn render
-  "Return the framebuffer as a string of braille characters."
+  "Return the framebuffer as a string of braille characters with ANSI colors."
   []
-  (let [sb (array)]
+  (let [sb (array)
+        prev-color (atom 0)]
     (dotimes [r rows]
       (dotimes [c cols]
-        (let [v (aget framebuf (+ (* r cols) c))]
+        (let [idx (+ (* r cols) c)
+              v   (aget framebuf idx)
+              clr (aget colorbuf idx)]
+          (when (and (pos? v) (not= clr @prev-color))
+            (.push sb (str "\033[" clr "m"))
+            (reset! prev-color clr))
+          (when (and (zero? v) (pos? @prev-color))
+            (.push sb "\033[0m")
+            (reset! prev-color 0))
           (.push sb (.fromCharCode js/String (+ 0x2800 v)))))
       (.push sb "\n"))
+    (.push sb "\033[0m")
     (.join sb "")))
 
 ;; --- Drawing helpers ---
 
 (defn draw-circle!
-  "Rasterize a filled circle at world coords (cx, cy) with radius r."
+  "Rasterize a filled circle at pixel coords (cx, cy) with radius r."
   [cx cy r]
   (let [x0 (js/Math.round (- cx r))
         x1 (js/Math.round (+ cx r))
@@ -145,29 +169,34 @@
   (clear!)
 
   ;; Draw ground
+  (set! *draw-color* color-blue)
   (let [x0 (world->px-x -7) y0 (world->px-y 0.2)
         x1 (world->px-x 7)  y1 (world->px-y -0.2)]
     (draw-rect! x0 y0 x1 y1))
 
   ;; Draw walls
+  (set! *draw-color* color-blue)
   (let [lx (world->px-x -7)]
     (draw-rect! (- lx 1.5) (world->px-y 14.5) (+ lx 1.5) (world->px-y -0.5)))
   (let [rx (world->px-x 7)]
     (draw-rect! (- rx 1.5) (world->px-y 14.5) (+ rx 1.5) (world->px-y -0.5)))
 
   ;; Draw bin dividers
+  (set! *draw-color* color-gray)
   (doseq [bx (range -6 7 2)]
     (let [cx (world->px-x bx)]
       (draw-rect! (- cx 0.8) (world->px-y 2.0) (+ cx 0.8) (world->px-y 0.0))))
 
   ;; Draw pegs
+  (set! *draw-color* color-cyan)
   (doseq [peg @peg-bodies]
     (let [pos (.getPosition peg)
           px (world->px-x (.-x pos))
           py (world->px-y (.-y pos))]
       (draw-circle! px py (* 0.25 world-scale))))
 
-  ;; Draw ball
+  ;; Draw ball (last = highest priority color)
+  (set! *draw-color* color-yellow)
   (let [pos (.getPosition ball)
         px (world->px-x (.-x pos))
         py (world->px-y (.-y pos))]
