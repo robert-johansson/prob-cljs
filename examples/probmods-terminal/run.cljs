@@ -58,9 +58,17 @@
 
 (defn execute-page
   "Run the page's function. Returns a promise."
-  [page]
+  [page page-num]
   (if (:run-fn page)
-    (let [result (try
+    (let [_ (when (:async? page)
+              (term/clear-screen!)
+              (term/print-progress
+               (str (:chapter-title page) ": " (:chapter-name page))
+               (:section page)
+               page-num
+               total-pages)
+              (println))
+          result (try
                    ((:run-fn page))
                    (catch :default e
                      (println (term/red (str "Error: " (.-message e))))
@@ -85,7 +93,7 @@
   [page-idx]
   (let [page (nth all-pages page-idx)]
     (render-page page (inc page-idx))
-    (-> (execute-page page)
+    (-> (execute-page page (inc page-idx))
         (.then (fn [_] (term/wait-for-key!))))))
 
 (defn page-loop
