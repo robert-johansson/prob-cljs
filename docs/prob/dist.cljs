@@ -41,18 +41,46 @@
   (satisfies? IDistribution x))
 
 ;; ---------------------------------------------------------------------------
+;; Discrete proposal helper
+;; ---------------------------------------------------------------------------
+
+(defn- exclude-current-proposal
+  "Propose a new value from support by excluding the current value.
+   Returns [new-value fwd-lp rev-lp]."
+  [support current-value]
+  (let [other (filterv #(not= % current-value) support)
+        n-other (count other)]
+    (if (zero? n-other)
+      [current-value 0.0 0.0]
+      (let [new-value (nth other (js/Math.floor (* (erp/rand) n-other)))
+            n-rev-other (count (filterv #(not= % new-value) support))
+            fwd-lp (- (js/Math.log n-other))
+            rev-lp (- (js/Math.log n-rev-other))]
+        [new-value fwd-lp rev-lp]))))
+
+;; ---------------------------------------------------------------------------
 ;; Bernoulli (flip)
 ;; ---------------------------------------------------------------------------
 
 (defrecord Bernoulli [p]
   IDistribution
-  (sample* [_] (erp/flip p))
+  (sample* [this]
+    (if erp/*trace-state*
+      (erp/trace-choice! :flip
+        #(binding [erp/*trace-state* nil] (erp/flip p))
+        #(if % (js/Math.log p) (js/Math.log (- 1.0 p)))
+        [true false]
+        this)
+      (erp/flip p)))
   (observe* [_ value]
     (if value
       (js/Math.log p)
       (js/Math.log (- 1.0 p))))
   IEnumerable
-  (enumerate* [_] [true false]))
+  (enumerate* [_] [true false])
+  IProposable
+  (propose* [_ cv] [(not cv) 0.0 0.0])
+  (propose-lp [_ _from _to] 0.0))
 
 (defn bernoulli-dist
   "Bernoulli distribution. (bernoulli-dist) defaults to p=0.5."
@@ -227,7 +255,16 @@
 
 (defrecord UniformDraw [items]
   IDistribution
-  (sample* [_] (erp/uniform-draw items))
+  (sample* [this]
+    (if erp/*trace-state*
+      (erp/trace-choice! :uniform-draw
+        #(binding [erp/*trace-state* nil] (erp/uniform-draw items))
+        #(let [n (count items)
+               k (count (filter (fn [i] (= i %)) items))]
+           (if (zero? k) ##-Inf (js/Math.log (/ (double k) (double n)))))
+        (vec (distinct items))
+        this)
+      (erp/uniform-draw items)))
   (observe* [_ value]
     (let [n (count items)
           k (count (filter #(= % value) items))]
@@ -235,7 +272,10 @@
         ##-Inf
         (js/Math.log (/ (double k) (double n))))))
   IEnumerable
-  (enumerate* [_] (vec (distinct items))))
+  (enumerate* [_] (vec (distinct items)))
+  IProposable
+  (propose* [_ cv] (exclude-current-proposal (vec (distinct items)) cv))
+  (propose-lp [_ _from _to] 0.0))
 
 (defn uniform-draw-dist
   "Discrete uniform distribution over items."
@@ -248,13 +288,27 @@
 
 (defrecord RandomInteger [n]
   IDistribution
-  (sample* [_] (erp/random-integer n))
+  (sample* [this]
+    (if erp/*trace-state*
+      (erp/trace-choice! :random-integer
+        #(binding [erp/*trace-state* nil] (erp/random-integer n))
+        #(if (and (integer? %) (>= % 0) (< % n))
+           (- (js/Math.log n))
+           ##-Inf)
+        (vec (range n))
+        this)
+      (erp/random-integer n)))
   (observe* [_ x]
     (if (and (integer? x) (>= x 0) (< x n))
       (- (js/Math.log n))
       ##-Inf))
   IEnumerable
-  (enumerate* [_] (vec (range n))))
+  (enumerate* [_] (vec (range n)))
+  IProposable
+  (propose* [_ cv]
+    (let [support (vec (range n))]
+      (exclude-current-proposal support cv)))
+  (propose-lp [_ _from _to] 0.0))
 
 (defn random-integer-dist
   "Discrete uniform distribution over integers [0, n)."
@@ -267,7 +321,19 @@
 
 (defrecord Multinomial [items probs]
   IDistribution
-  (sample* [_] (erp/multinomial items probs))
+  (sample* [this]
+    (if erp/*trace-state*
+      (erp/trace-choice! :multinomial
+        #(binding [erp/*trace-state* nil] (erp/multinomial items probs))
+        #(let [total (reduce + 0.0 probs)
+               value-prob (reduce + 0.0
+                            (map (fn [item prob]
+                                   (if (= item %) prob 0.0))
+                                 items probs))]
+           (if (zero? value-prob) ##-Inf (js/Math.log (/ value-prob total))))
+        (vec (distinct items))
+        this)
+      (erp/multinomial items probs)))
   (observe* [_ value]
     (let [total (reduce + 0.0 probs)
           value-prob (reduce + 0.0
@@ -278,7 +344,10 @@
         ##-Inf
         (js/Math.log (/ value-prob total)))))
   IEnumerable
-  (enumerate* [_] (vec (distinct items))))
+  (enumerate* [_] (vec (distinct items)))
+  IProposable
+  (propose* [_ cv] (exclude-current-proposal (vec (distinct items)) cv))
+  (propose-lp [_ _from _to] 0.0))
 
 (defn multinomial-dist
   "Weighted discrete distribution over labeled items."
@@ -351,7 +420,19 @@
 
 (defrecord Categorical [categories weights]
   IDistribution
-  (sample* [_] (erp/categorical categories weights))
+  (sample* [this]
+    (if erp/*trace-state*
+      (erp/trace-choice! :categorical
+        #(binding [erp/*trace-state* nil] (erp/categorical categories weights))
+        #(let [total (reduce + 0.0 weights)
+               value-prob (reduce + 0.0
+                            (map (fn [cat w]
+                                   (if (= cat %) w 0.0))
+                                 categories weights))]
+           (if (zero? value-prob) ##-Inf (js/Math.log (/ value-prob total))))
+        (vec (distinct categories))
+        this)
+      (erp/categorical categories weights)))
   (observe* [_ value]
     (let [total (reduce + 0.0 weights)
           value-prob (reduce + 0.0
@@ -362,7 +443,10 @@
         ##-Inf
         (js/Math.log (/ value-prob total)))))
   IEnumerable
-  (enumerate* [_] (vec (distinct categories))))
+  (enumerate* [_] (vec (distinct categories)))
+  IProposable
+  (propose* [_ cv] (exclude-current-proposal (vec (distinct categories)) cv))
+  (propose-lp [_ _from _to] 0.0))
 
 (defn categorical-dist
   "Categorical distribution. Accepts either a map {category weight ...}
@@ -373,3 +457,43 @@
      (->Categorical cats ws)))
   ([categories weights]
    (->Categorical (vec categories) (vec weights))))
+
+;; ---------------------------------------------------------------------------
+;; Marginal (cached marginal distribution via inner inference)
+;; ---------------------------------------------------------------------------
+
+(defn- ensure-marginal-cache!
+  "Compute and cache the marginal distribution on first use.
+   Inner inference runs isolated from any outer trace."
+  [marginal]
+  (let [c @(:cache marginal)]
+    (if c
+      c
+      (let [result (binding [erp/*trace-state* nil]
+                     ((:method marginal) (:thunk marginal)))]
+        (vreset! (:cache marginal) result)
+        result))))
+
+(defrecord Marginal [method thunk cache]
+  IDistribution
+  (sample* [this]
+    (let [[values probs] (ensure-marginal-cache! this)
+          vs (vec values)
+          ps (vec probs)]
+      (erp/multinomial vs ps)))
+  (observe* [this value]
+    (let [[values probs] (ensure-marginal-cache! this)
+          prob-map (zipmap (seq values) (seq probs))
+          p (get prob-map value 0.0)]
+      (if (zero? p) ##-Inf (js/Math.log p))))
+  IEnumerable
+  (enumerate* [this]
+    (let [[values _probs] (ensure-marginal-cache! this)]
+      (vec values))))
+
+(defn marginal-dist
+  "Create a marginal distribution by running inner inference.
+   method is an inference function like enumeration-query-fn.
+   thunk is a zero-arg function defining the model."
+  [method thunk]
+  (->Marginal method thunk (volatile! nil)))

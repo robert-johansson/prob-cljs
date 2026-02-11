@@ -360,6 +360,53 @@
               result)))))))
 
 ;; ---------------------------------------------------------------------------
+;; DPmem (Dirichlet Process memoization)
+;; ---------------------------------------------------------------------------
+
+(defn DPmem
+  "Dirichlet Process memoization. Returns [memoized-fn get-tables-fn].
+   alpha is the concentration parameter. f is the function to memoize.
+   Uses Chinese Restaurant Process for table selection."
+  [alpha f]
+  (let [dp-id (gensym "dp")
+        local-state (volatile! {})]
+    [(fn [& args]
+       (let [key [dp-id (vec args)]
+             state (if erp/*trace-state*
+                     (get (:mem-cache @erp/*trace-state*) key)
+                     (get @local-state args))
+             {:keys [tables counts]
+              :or {tables [] counts []}} state
+             n (reduce + 0 counts)
+             ;; CRP probabilities: existing tables proportional to count,
+             ;; new table proportional to alpha
+             crp-items (conj (vec (range (count tables))) :new)
+             crp-probs (conj (vec (map double counts)) (double alpha))
+             choice (erp/multinomial crp-items crp-probs)
+             [result new-state]
+             (if (= choice :new)
+               ;; Seat at new table: call f to get result
+               (let [r (apply f args)]
+                 [r {:tables (conj tables r)
+                     :counts (conj counts 1)}])
+               ;; Seat at existing table
+               [(nth tables choice)
+                {:tables tables
+                 :counts (update counts choice inc)}])]
+         (if erp/*trace-state*
+           (vswap! erp/*trace-state* assoc-in [:mem-cache key] new-state)
+           (vswap! local-state assoc args new-state))
+         result))
+     (fn []
+       (if erp/*trace-state*
+         (let [cache (:mem-cache @erp/*trace-state*)]
+           (into {} (keep (fn [[k v]]
+                            (when (and (vector? k) (= (first k) dp-id))
+                              [(second k) v]))
+                          cache)))
+         @local-state))]))
+
+;; ---------------------------------------------------------------------------
 ;; Gensym
 ;; ---------------------------------------------------------------------------
 

@@ -5,20 +5,23 @@
                                 binomial poisson categorical
                                 condition factor rejection-query-fn mh-query-fn
                                 enumeration-query-fn importance-query-fn conditional-fn
+                                mh-query-scored-fn map-query-fn condition-equal
                                 observe
                                 sample* observe* dist? enumerate*
                                 bernoulli-dist gaussian-dist uniform-dist beta-dist
                                 gamma-dist exponential-dist dirichlet-dist
                                 uniform-draw-dist random-integer-dist multinomial-dist
                                 sample-discrete-dist binomial-dist poisson-dist
-                                categorical-dist
+                                categorical-dist marginal-dist
                                 set-seed! rand
-                                mem mean variance sum prod repeat-fn
+                                mem DPmem mean variance sum prod repeat-fn
                                 weighted-mean weighted-variance
                                 empirical-distribution expectation]]
-            [prob.erp :as erp])
+            [prob.erp :as erp]
+            [prob.dist :as dist])
   (:require-macros [prob.macros :refer [rejection-query mh-query enumeration-query
-                                        importance-query query]]))
+                                        importance-query mh-query-scored map-query
+                                        query]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Test harness (volatile-based, no atoms)
@@ -667,6 +670,184 @@
 
 (test-assert "expectation: with transform"
   (approx= (expectation [1 2 3 4] #(* % %)) 7.5 0.001))
+
+;; ---------------------------------------------------------------------------
+;; Discrete proposals
+;; ---------------------------------------------------------------------------
+
+(println "=== Discrete Proposals ===")
+
+(test-assert "proposal: bernoulli toggle"
+  (let [d (bernoulli-dist 0.5)
+        [new-val fwd rev] (dist/propose* d true)]
+    (and (= new-val false) (= fwd 0.0) (= rev 0.0))))
+
+(test-assert "proposal: bernoulli toggle false->true"
+  (let [d (bernoulli-dist 0.3)
+        [new-val _ _] (dist/propose* d false)]
+    (= new-val true)))
+
+(test-assert "proposal: categorical explores all values"
+  (let [d (categorical-dist {:a 0.3 :b 0.5 :c 0.2})
+        proposals (set (map (fn [_] (first (dist/propose* d :a))) (range 50)))]
+    ;; Should have proposed both :b and :c at some point
+    (and (contains? proposals :b) (contains? proposals :c))))
+
+(test-assert "proposal: uniform-draw excludes current"
+  (let [d (uniform-draw-dist [:x :y :z])
+        [new-val _ _] (dist/propose* d :x)]
+    (not= new-val :x)))
+
+(test-assert "proposal: random-integer proposes different value"
+  (let [d (random-integer-dist 5)
+        [new-val _ _] (dist/propose* d 2)]
+    (and (not= new-val 2) (>= new-val 0) (< new-val 5))))
+
+(test-assert "proposal: bernoulli-dist mixes in mh-query via sample*"
+  ;; sample* from bernoulli-dist should now use toggle proposal inside MH
+  (let [samples (mh-query-fn 100 1
+                  (fn [] (let [x (sample* (bernoulli-dist 0.5))]
+                           x)))]
+    ;; Should see both true and false
+    (and (some true? samples) (some false? samples))))
+
+;; ---------------------------------------------------------------------------
+;; mh-query-scored
+;; ---------------------------------------------------------------------------
+
+(println "=== MH Query Scored ===")
+
+(test-assert "mh-query-scored-fn: returns maps with :value and :score"
+  (let [results (mh-query-scored-fn 10 1
+                  (fn [] (let [x (flip)] (condition x) x)))]
+    (and (= 10 (count results))
+         (every? #(contains? % :value) results)
+         (every? #(contains? % :score) results))))
+
+(test-assert "mh-query-scored: scores are finite"
+  (let [results (mh-query-scored 20 1
+                  (let [x (flip)] (condition x) x))]
+    (every? #(js/isFinite (:score %)) results)))
+
+;; ---------------------------------------------------------------------------
+;; MAP query
+;; ---------------------------------------------------------------------------
+
+(println "=== MAP Query ===")
+
+(test-assert "map-query-fn: returns single value"
+  (let [result (map-query-fn 200 1
+                 (fn [] (let [x (uniform-draw [:a :b :c])]
+                          (condition (not= x :c))
+                          x)))]
+    (contains? #{:a :b} result)))
+
+(test-assert "map-query: finds mode"
+  ;; With strong evidence for :a, MAP should return :a
+  (let [result (map-query 500 1
+                 (let [x (uniform-draw [:a :b :c])]
+                   (factor (if (= x :a) 0 -5))
+                   x))]
+    (= result :a)))
+
+;; ---------------------------------------------------------------------------
+;; condition-equal
+;; ---------------------------------------------------------------------------
+
+(println "=== condition-equal ===")
+
+(test-assert "condition-equal: soft conditioning works"
+  (let [samples (mh-query-fn 200 1
+                  (fn []
+                    (let [x (flip 0.5)]
+                      (condition-equal (fn [] (flip 0.9)) x)
+                      x)))]
+    ;; Should be biased toward true
+    (> (mean (map #(if % 1 0) samples)) 0.5)))
+
+(test-assert "condition-equal: deterministic enumeration"
+  ;; condition-equal on a deterministic thunk
+  (let [samples (mh-query-fn 50 1
+                  (fn []
+                    (let [x (uniform-draw [:a :b])]
+                      (condition-equal (fn [] :a) x)
+                      x)))]
+    (every? #(= % :a) samples)))
+
+;; ---------------------------------------------------------------------------
+;; Marginal distribution
+;; ---------------------------------------------------------------------------
+
+(println "=== Marginal Distribution ===")
+
+(test-assert "marginal: sample* returns valid value"
+  (let [d (marginal-dist enumeration-query-fn
+            (fn [] (uniform-draw [:a :b :c])))]
+    (contains? #{:a :b :c} (sample* d))))
+
+(test-assert "marginal: observe* correct log-prob"
+  (let [d (marginal-dist enumeration-query-fn
+            (fn [] (uniform-draw [:a :b])))]
+    (approx= (observe* d :a) (js/Math.log 0.5) 0.01)))
+
+(test-assert "marginal: impossible value -> -Inf"
+  (let [d (marginal-dist enumeration-query-fn
+            (fn [] (uniform-draw [:a :b])))]
+    (= ##-Inf (observe* d :c))))
+
+(test-assert "marginal: enumerate* returns support"
+  (let [d (marginal-dist enumeration-query-fn
+            (fn [] (uniform-draw [:x :y :z])))]
+    (= (set (enumerate* d)) #{:x :y :z})))
+
+(test-assert "marginal: works inside outer mh-query"
+  (let [inner-dist (marginal-dist enumeration-query-fn
+                     (fn [] (let [x (flip 0.9)] x)))
+        samples (mh-query-fn 100 1
+                  (fn []
+                    (let [y (sample* inner-dist)]
+                      y)))]
+    ;; inner distribution is biased toward true
+    (> (count (filter true? samples)) 50)))
+
+;; ---------------------------------------------------------------------------
+;; DPmem
+;; ---------------------------------------------------------------------------
+
+(println "=== DPmem ===")
+
+(test-assert "DPmem: returns [fn, get-tables-fn]"
+  (let [[f gt] (DPmem 1.0 (fn [x] (flip)))]
+    (and (fn? f) (fn? gt))))
+
+(test-assert "DPmem: consistent within same args (low alpha)"
+  ;; With very low alpha, should almost always return same value
+  (let [[f _] (DPmem 0.001 (fn [x] (random-integer 1000000)))]
+    ;; Call many times with same arg
+    (let [results (repeatedly 20 #(f "a"))]
+      ;; All should be the same (with overwhelming probability)
+      (= 1 (count (distinct results))))))
+
+(test-assert "DPmem: different args can differ"
+  (let [[f _] (DPmem 1.0 (fn [x] (random-integer 1000000)))]
+    (let [a (f "a") b (f "b")]
+      ;; At least they're numbers (might rarely be same)
+      (and (number? a) (number? b)))))
+
+(test-assert "DPmem: get-tables returns state"
+  (let [[f gt] (DPmem 1.0 (fn [x] (flip)))]
+    (f "a")
+    (f "a")
+    (let [tables (gt)]
+      (and (map? tables)
+           (some? (get tables ["a"]))))))
+
+(test-assert "DPmem: works inside mh-query"
+  (let [results (mh-query-fn 20 1
+                  (fn []
+                    (let [[f _] (DPmem 1.0 (fn [x] (uniform-draw [:x :y :z])))]
+                      (f "test"))))]
+    (every? #(contains? #{:x :y :z} %) results)))
 
 ;; ---------------------------------------------------------------------------
 ;; Summary

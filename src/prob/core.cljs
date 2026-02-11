@@ -83,12 +83,22 @@
 (def enumeration-query-fn inference/enumeration-query-fn)
 (def importance-query-fn inference/importance-query-fn)
 (def conditional-fn inference/conditional-fn)
+(def mh-query-scored-fn inference/mh-query-scored-fn)
+(def map-query-fn inference/map-query-fn)
+(def condition-equal inference/condition-equal)
+
+;; ---------------------------------------------------------------------------
+;; Distribution: Marginal
+;; ---------------------------------------------------------------------------
+
+(def marginal-dist dist/marginal-dist)
 
 ;; ---------------------------------------------------------------------------
 ;; Utilities
 ;; ---------------------------------------------------------------------------
 
 (def mem builtins/mem)
+(def DPmem builtins/DPmem)
 (def mean builtins/mean)
 (def variance builtins/variance)
 (def weighted-mean builtins/weighted-mean)

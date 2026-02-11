@@ -58,6 +58,29 @@
   [& body]
   `(prob.core/enumeration-query-fn (fn [] ~@body)))
 
+(defmacro mh-query-scored
+  "Like mh-query but returns {:value :score} maps.
+
+   Example:
+     (mh-query-scored 100 1
+       (let [x (flip 0.7)]
+         (condition x)
+         x))
+   ;=> ({:value true :score ...} ...)"
+  [n lag & body]
+  `(prob.core/mh-query-scored-fn ~n ~lag (fn [] ~@body)))
+
+(defmacro map-query
+  "MAP inference: return the highest-scoring value from MH samples.
+
+   Example:
+     (map-query 500 1
+       (let [x (uniform-draw [:a :b :c])]
+         (condition (not= x :c))
+         x))"
+  [n lag & body]
+  `(prob.core/map-query-fn ~n ~lag (fn [] ~@body)))
+
 (defmacro query
   "Create a reusable conditional sampler.
    method is a list like '(rejection), '(enumerate), or '(mh lag).

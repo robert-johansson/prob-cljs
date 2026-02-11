@@ -185,6 +185,36 @@
         (let [state' (advance state (inc lag))]
           (recur (inc i) state' (conj! samples (:value state'))))))))
 
+(defn mh-query-scored-fn
+  "Like mh-query-fn but returns a list of {:value v :score s} maps
+   instead of bare values."
+  [num-samples lag thunk]
+  (let [initial (loop [attempts 0]
+                  (if (>= attempts max-rejection-attempts)
+                    (throw (ex-info "mh-query-scored: no initial sample found"
+                                    {:attempts max-rejection-attempts}))
+                    (let [result (execute-traced thunk (make-fresh-state))]
+                      (if result
+                        result
+                        (recur (inc attempts))))))
+        advance (fn [state n]
+                  (loop [s state, i 0]
+                    (if (>= i n) s
+                      (recur (mh-step thunk s) (inc i)))))]
+    (loop [i 0, state initial, samples (transient [])]
+      (if (>= i num-samples)
+        (seq (persistent! samples))
+        (let [state' (advance state (inc lag))]
+          (recur (inc i) state'
+                 (conj! samples {:value (:value state')
+                                 :score (:score state')})))))))
+
+(defn map-query-fn
+  "MAP inference: return the single highest-scoring value from MH samples."
+  [num-samples lag thunk]
+  (let [scored (mh-query-scored-fn num-samples lag thunk)]
+    (:value (apply max-key :score scored))))
+
 ;; ---------------------------------------------------------------------------
 ;; Importance Sampling
 ;; ---------------------------------------------------------------------------
@@ -307,6 +337,21 @@
             values (keys grouped)
             probs (map #(js/Math.exp (- (get grouped %) log-z)) values)]
         (list (apply list values) (apply list probs))))))
+
+;; ---------------------------------------------------------------------------
+;; Soft conditioning via enumeration
+;; ---------------------------------------------------------------------------
+
+(defn condition-equal
+  "Soft conditioning: enumerate the thunk, find P(return=value),
+   and add log(P) as a factor score."
+  [thunk value]
+  (let [[values probs] (enumeration-query-fn thunk)
+        prob-map (zipmap (seq values) (seq probs))
+        p (get prob-map value 0.0)]
+    (if (zero? p)
+      (factor ##-Inf)
+      (factor (js/Math.log p)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Conditional (creates a reusable sampler)

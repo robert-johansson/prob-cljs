@@ -68,7 +68,8 @@
    'binomial-dist       (sci/copy-var dist/binomial-dist dist-ns)
    'poisson-dist        (sci/copy-var dist/poisson-dist dist-ns)
    'categorical-dist    (sci/copy-var dist/categorical-dist dist-ns)
-   'enumerate*          (sci/copy-var dist/enumerate* dist-ns)})
+   'enumerate*          (sci/copy-var dist/enumerate* dist-ns)
+   'marginal-dist       (sci/copy-var dist/marginal-dist dist-ns)})
 
 ;; ---------------------------------------------------------------------------
 ;; prob.math
@@ -94,7 +95,10 @@
    'mh-query-fn          (sci/copy-var inference/mh-query-fn inference-ns)
    'enumeration-query-fn (sci/copy-var inference/enumeration-query-fn inference-ns)
    'importance-query-fn  (sci/copy-var inference/importance-query-fn inference-ns)
-   'conditional-fn       (sci/copy-var inference/conditional-fn inference-ns)})
+   'conditional-fn       (sci/copy-var inference/conditional-fn inference-ns)
+   'mh-query-scored-fn  (sci/copy-var inference/mh-query-scored-fn inference-ns)
+   'map-query-fn        (sci/copy-var inference/map-query-fn inference-ns)
+   'condition-equal     (sci/copy-var inference/condition-equal inference-ns)})
 
 ;; ---------------------------------------------------------------------------
 ;; prob.builtins
@@ -186,6 +190,7 @@
    'compose        (sci/copy-var builtins/compose builtins-ns)
    'identity-fn    (sci/copy-var builtins/identity-fn builtins-ns)
    'mem            (sci/copy-var builtins/mem builtins-ns)
+   'DPmem          (sci/copy-var builtins/DPmem builtins-ns)
    'make-gensym    (sci/copy-var builtins/make-gensym builtins-ns)
    'gensym'        (sci/copy-var builtins/gensym' builtins-ns)
    'display        (sci/copy-var builtins/display builtins-ns)
@@ -246,7 +251,12 @@
    'enumeration-query-fn (sci/copy-var core/enumeration-query-fn core-ns)
    'importance-query-fn (sci/copy-var core/importance-query-fn core-ns)
    'conditional-fn     (sci/copy-var core/conditional-fn core-ns)
+   'mh-query-scored-fn (sci/copy-var core/mh-query-scored-fn core-ns)
+   'map-query-fn       (sci/copy-var core/map-query-fn core-ns)
+   'condition-equal    (sci/copy-var core/condition-equal core-ns)
+   'marginal-dist      (sci/copy-var core/marginal-dist core-ns)
    'mem                (sci/copy-var core/mem core-ns)
+   'DPmem              (sci/copy-var core/DPmem core-ns)
    'mean               (sci/copy-var core/mean core-ns)
    'variance           (sci/copy-var core/variance core-ns)
    'weighted-mean      (sci/copy-var core/weighted-mean core-ns)
@@ -273,12 +283,20 @@
 (defn ^:macro enumeration-query [_ _ & body]
   `(prob.core/enumeration-query-fn (fn [] ~@body)))
 
+(defn ^:macro mh-query-scored [_ _ n lag & body]
+  `(prob.core/mh-query-scored-fn ~n ~lag (fn [] ~@body)))
+
+(defn ^:macro map-query [_ _ n lag & body]
+  `(prob.core/map-query-fn ~n ~lag (fn [] ~@body)))
+
 (defn ^:macro query [_ _ method & body]
   `(prob.core/conditional-fn ~method (fn [] ~@body)))
 
 (def macros-namespace
   {'rejection-query   (sci/copy-var rejection-query macros-ns)
    'mh-query          (sci/copy-var mh-query macros-ns)
+   'mh-query-scored   (sci/copy-var mh-query-scored macros-ns)
+   'map-query         (sci/copy-var map-query macros-ns)
    'importance-query  (sci/copy-var importance-query macros-ns)
    'enumeration-query (sci/copy-var enumeration-query macros-ns)
    'query             (sci/copy-var query macros-ns)})
