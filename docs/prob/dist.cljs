@@ -459,6 +459,164 @@
    (->Categorical (vec categories) (vec weights))))
 
 ;; ---------------------------------------------------------------------------
+;; Delta (point mass)
+;; ---------------------------------------------------------------------------
+
+(defrecord Delta [v]
+  IDistribution
+  (sample* [_] v)
+  (observe* [_ x] (if (= x v) 0.0 ##-Inf))
+  IEnumerable
+  (enumerate* [_] [v]))
+
+(defn delta-dist
+  "Delta (point mass) distribution. Always returns v."
+  [v]
+  (->Delta v))
+
+;; ---------------------------------------------------------------------------
+;; Cauchy
+;; ---------------------------------------------------------------------------
+
+(defn- cauchy-log-prob [location scale x]
+  (let [z (/ (- x location) scale)]
+    (- (- (js/Math.log js/Math.PI))
+       (js/Math.log scale)
+       (js/Math.log (+ 1.0 (* z z))))))
+
+(defrecord Cauchy [location scale]
+  IDistribution
+  (sample* [this]
+    (let [raw-sample (fn []
+                       (+ location (* scale (js/Math.tan (* js/Math.PI (- (erp/rand) 0.5))))))]
+      (if erp/*trace-state*
+        (erp/trace-choice! :cauchy raw-sample #(cauchy-log-prob location scale %))
+        (raw-sample))))
+  (observe* [_ x] (cauchy-log-prob location scale x)))
+
+(defn cauchy-dist
+  "Cauchy distribution with given location and scale."
+  [location scale]
+  (->Cauchy location scale))
+
+;; ---------------------------------------------------------------------------
+;; Laplace
+;; ---------------------------------------------------------------------------
+
+(defn- laplace-log-prob [location scale x]
+  (- (- (js/Math.log (* 2.0 scale)))
+     (/ (js/Math.abs (- x location)) scale)))
+
+(defrecord Laplace [location scale]
+  IDistribution
+  (sample* [this]
+    (let [raw-sample (fn []
+                       (let [u (- (erp/rand) 0.5)]
+                         (- location (* scale (js/Math.sign u)
+                                       (js/Math.log (- 1.0 (* 2.0 (js/Math.abs u))))))))]
+      (if erp/*trace-state*
+        (erp/trace-choice! :laplace raw-sample #(laplace-log-prob location scale %))
+        (raw-sample))))
+  (observe* [_ x] (laplace-log-prob location scale x)))
+
+(defn laplace-dist
+  "Laplace distribution with given location and scale."
+  [location scale]
+  (->Laplace location scale))
+
+;; ---------------------------------------------------------------------------
+;; LogNormal
+;; ---------------------------------------------------------------------------
+
+(defn- lognormal-log-prob [mu sigma x]
+  (if (<= x 0)
+    ##-Inf
+    (- (gaussian-log-prob mu sigma (js/Math.log x))
+       (js/Math.log x))))
+
+(defrecord LogNormal [mu sigma]
+  IDistribution
+  (sample* [this]
+    (let [raw-sample (fn []
+                       (binding [erp/*trace-state* nil]
+                         (js/Math.exp (erp/gaussian mu sigma))))]
+      (if erp/*trace-state*
+        (erp/trace-choice! :lognormal raw-sample #(lognormal-log-prob mu sigma %))
+        (raw-sample))))
+  (observe* [_ x] (lognormal-log-prob mu sigma x)))
+
+(defn lognormal-dist
+  "Log-normal distribution. exp(Gaussian(mu, sigma))."
+  [mu sigma]
+  (->LogNormal mu sigma))
+
+;; ---------------------------------------------------------------------------
+;; Student-t
+;; ---------------------------------------------------------------------------
+
+(defn- student-t-log-prob [df location scale x]
+  (let [z (/ (- x location) scale)]
+    (+ (math/log-gamma-fn (/ (inc df) 2.0))
+       (- (math/log-gamma-fn (/ df 2.0)))
+       (* -0.5 (js/Math.log (* df js/Math.PI)))
+       (- (js/Math.log scale))
+       (* (/ (- (inc df)) 2.0) (js/Math.log (+ 1.0 (/ (* z z) df)))))))
+
+(defrecord StudentT [df location scale]
+  IDistribution
+  (sample* [this]
+    (let [raw-sample (fn []
+                       (binding [erp/*trace-state* nil]
+                         (let [z (erp/gaussian 0 1)
+                               v (erp/gamma (/ df 2.0) (/ 2.0 df))]
+                           (+ location (* scale (/ z (js/Math.sqrt v)))))))]
+      (if erp/*trace-state*
+        (erp/trace-choice! :student-t raw-sample #(student-t-log-prob df location scale %))
+        (raw-sample))))
+  (observe* [_ x] (student-t-log-prob df location scale x)))
+
+(defn student-t-dist
+  "Student's t-distribution with df degrees of freedom, location, and scale."
+  ([df] (->StudentT df 0 1))
+  ([df location scale] (->StudentT df location scale)))
+
+;; ---------------------------------------------------------------------------
+;; Mixture
+;; ---------------------------------------------------------------------------
+
+(defn- mixture-log-prob [dists weights x]
+  (let [log-total (js/Math.log (reduce + 0.0 weights))
+        log-terms (mapv (fn [d w]
+                          (+ (js/Math.log (double w)) (observe* d x)))
+                        dists weights)]
+    (- (math/log-sum-exp log-terms) log-total)))
+
+(defrecord Mixture [dists weights]
+  IDistribution
+  (sample* [this]
+    (let [raw-sample (fn []
+                       (binding [erp/*trace-state* nil]
+                         (let [total (reduce + 0.0 weights)
+                               r (* (erp/rand) total)]
+                           (loop [i 0, cumulative 0.0]
+                             (if (>= i (count dists))
+                               (sample* (peek dists))
+                               (let [cumulative (+ cumulative (nth weights i))]
+                                 (if (< r cumulative)
+                                   (sample* (nth dists i))
+                                   (recur (inc i) cumulative))))))))]
+      (if erp/*trace-state*
+        (erp/trace-choice! :mixture raw-sample #(mixture-log-prob dists weights %))
+        (raw-sample))))
+  (observe* [_ x] (mixture-log-prob dists weights x)))
+
+(defn mixture-dist
+  "Mixture distribution: weighted combination of component distributions.
+   dists is a seq of distributions, weights is a seq of non-negative weights."
+  [dists weights]
+  (->Mixture (vec dists) (vec weights)))
+
+;; ---------------------------------------------------------------------------
 ;; Marginal (cached marginal distribution via inner inference)
 ;; ---------------------------------------------------------------------------
 

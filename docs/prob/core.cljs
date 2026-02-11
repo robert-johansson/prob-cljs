@@ -88,6 +88,17 @@
 (def condition-equal inference/condition-equal)
 
 ;; ---------------------------------------------------------------------------
+;; New distributions
+;; ---------------------------------------------------------------------------
+
+(def delta-dist dist/delta-dist)
+(def cauchy-dist dist/cauchy-dist)
+(def laplace-dist dist/laplace-dist)
+(def lognormal-dist dist/lognormal-dist)
+(def student-t-dist dist/student-t-dist)
+(def mixture-dist dist/mixture-dist)
+
+;; ---------------------------------------------------------------------------
 ;; Distribution: Marginal
 ;; ---------------------------------------------------------------------------
 

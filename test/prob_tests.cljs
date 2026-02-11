@@ -12,7 +12,10 @@
                                 gamma-dist exponential-dist dirichlet-dist
                                 uniform-draw-dist random-integer-dist multinomial-dist
                                 sample-discrete-dist binomial-dist poisson-dist
-                                categorical-dist marginal-dist
+                                categorical-dist
+                                delta-dist cauchy-dist laplace-dist lognormal-dist
+                                student-t-dist mixture-dist
+                                marginal-dist
                                 set-seed! rand
                                 mem DPmem mean variance sum prod repeat-fn
                                 weighted-mean weighted-variance
@@ -840,6 +843,172 @@
                     (let [f (DPmem 1.0 (fn [x] (uniform-draw [:x :y :z])))]
                       (f "test"))))]
     (every? #(contains? #{:x :y :z} %) results)))
+
+;; ---------------------------------------------------------------------------
+;; MCMC burn-in
+;; ---------------------------------------------------------------------------
+
+(println "=== MCMC Burn-in ===")
+
+(test-assert "mh-query-fn: burn-in 4-arity works"
+  (let [samples (mh-query-fn 20 1 10 (fn [] (flip)))]
+    (= 20 (count samples))))
+
+(test-assert "mh-query-fn: burn-in 3-arity backward compatible"
+  (let [samples (mh-query-fn 20 1 (fn [] (flip)))]
+    (= 20 (count samples))))
+
+(test-assert "mh-query-scored-fn: burn-in 4-arity works"
+  (let [results (mh-query-scored-fn 10 1 10 (fn [] (flip)))]
+    (and (= 10 (count results))
+         (every? #(contains? % :value) results))))
+
+;; ---------------------------------------------------------------------------
+;; Delta distribution
+;; ---------------------------------------------------------------------------
+
+(println "=== Delta Distribution ===")
+
+(test-assert "delta-dist: always returns v"
+  (let [d (delta-dist 42)]
+    (every? #(= 42 %) (repeatedly 10 #(sample* d)))))
+
+(test-assert "delta-dist: observe* correct value -> 0.0"
+  (= 0.0 (observe* (delta-dist :foo) :foo)))
+
+(test-assert "delta-dist: observe* wrong value -> -Inf"
+  (= ##-Inf (observe* (delta-dist :foo) :bar)))
+
+(test-assert "delta-dist: enumerate*"
+  (= [42] (enumerate* (delta-dist 42))))
+
+;; ---------------------------------------------------------------------------
+;; Cauchy distribution
+;; ---------------------------------------------------------------------------
+
+(println "=== Cauchy Distribution ===")
+
+(test-assert "cauchy-dist: samples are numbers"
+  (every? number? (repeatedly 50 #(sample* (cauchy-dist 0 1)))))
+
+(test-assert "cauchy-dist: log-prob at location is max"
+  ;; f(x=0; loc=0, scale=1) = 1/(pi*1*(1+0)) = 1/pi
+  (approx= (observe* (cauchy-dist 0 1) 0) (- (js/Math.log js/Math.PI)) 0.001))
+
+(test-assert "cauchy-dist: log-prob decreases away from location"
+  (> (observe* (cauchy-dist 0 1) 0)
+     (observe* (cauchy-dist 0 1) 5)))
+
+;; ---------------------------------------------------------------------------
+;; Laplace distribution
+;; ---------------------------------------------------------------------------
+
+(println "=== Laplace Distribution ===")
+
+(test-assert "laplace-dist: samples are numbers"
+  (every? number? (repeatedly 50 #(sample* (laplace-dist 0 1)))))
+
+(test-assert "laplace-dist: log-prob at location"
+  ;; f(x=0; loc=0, scale=1) = 1/(2*1) * exp(0) = 0.5
+  (approx= (observe* (laplace-dist 0 1) 0) (js/Math.log 0.5) 0.001))
+
+(test-assert "laplace-dist: symmetric log-prob"
+  (approx= (observe* (laplace-dist 0 1) 2)
+           (observe* (laplace-dist 0 1) -2)
+           0.001))
+
+(test-assert "laplace-dist: mean near location"
+  (let [samples (repeatedly 2000 #(sample* (laplace-dist 3 1)))]
+    (approx= (mean samples) 3.0 0.3)))
+
+;; ---------------------------------------------------------------------------
+;; LogNormal distribution
+;; ---------------------------------------------------------------------------
+
+(println "=== LogNormal Distribution ===")
+
+(test-assert "lognormal-dist: samples are positive"
+  (every? pos? (repeatedly 50 #(sample* (lognormal-dist 0 1)))))
+
+(test-assert "lognormal-dist: observe* negative -> -Inf"
+  (= ##-Inf (observe* (lognormal-dist 0 1) -1)))
+
+(test-assert "lognormal-dist: observe* zero -> -Inf"
+  (= ##-Inf (observe* (lognormal-dist 0 1) 0)))
+
+(test-assert "lognormal-dist: log-prob known value"
+  ;; LN(0,1) at x=1: log(1)=0, gaussian-lp(0,1,0) = -0.9189, minus log(1) = 0
+  (approx= (observe* (lognormal-dist 0 1) 1) -0.9189 0.001))
+
+(test-assert "lognormal-dist: median near exp(mu)"
+  ;; Median of LogNormal(mu,sigma) = exp(mu)
+  (let [samples (sort (repeatedly 2000 #(sample* (lognormal-dist 1 0.5))))
+        median (nth samples 1000)]
+    (approx= median (js/Math.exp 1) 0.5)))
+
+;; ---------------------------------------------------------------------------
+;; Student-t distribution
+;; ---------------------------------------------------------------------------
+
+(println "=== Student-t Distribution ===")
+
+(test-assert "student-t-dist: samples are numbers"
+  (every? number? (repeatedly 50 #(sample* (student-t-dist 3)))))
+
+(test-assert "student-t-dist: log-prob at location is max"
+  (> (observe* (student-t-dist 5 0 1) 0)
+     (observe* (student-t-dist 5 0 1) 3)))
+
+(test-assert "student-t-dist: symmetric"
+  (approx= (observe* (student-t-dist 5 0 1) 2)
+           (observe* (student-t-dist 5 0 1) -2)
+           0.001))
+
+(test-assert "student-t-dist: mean near location (high df)"
+  ;; With high df, approaches Gaussian
+  (let [samples (repeatedly 2000 #(sample* (student-t-dist 30 5 1)))]
+    (approx= (mean samples) 5.0 0.3)))
+
+(test-assert "student-t-dist: location-scale"
+  ;; t(df=10, loc=3, scale=2) at x=3 should equal t(df=10, loc=0, scale=1) at x=0 minus log(scale)
+  (approx= (observe* (student-t-dist 10 3 2) 3)
+           (- (observe* (student-t-dist 10 0 1) 0) (js/Math.log 2))
+           0.001))
+
+;; ---------------------------------------------------------------------------
+;; Mixture distribution
+;; ---------------------------------------------------------------------------
+
+(println "=== Mixture Distribution ===")
+
+(test-assert "mixture-dist: samples are numbers"
+  (let [d (mixture-dist [(gaussian-dist 0 1) (gaussian-dist 5 1)] [0.5 0.5])]
+    (every? number? (repeatedly 50 #(sample* d)))))
+
+(test-assert "mixture-dist: log-prob correct"
+  ;; Mixture of two delta dists: 0.3 * delta(1) + 0.7 * delta(2)
+  (let [d (mixture-dist [(delta-dist 1) (delta-dist 2)] [0.3 0.7])]
+    (and (approx= (observe* d 1) (js/Math.log 0.3) 0.001)
+         (approx= (observe* d 2) (js/Math.log 0.7) 0.001)
+         (= ##-Inf (observe* d 3)))))
+
+(test-assert "mixture-dist: bimodal sampling"
+  ;; Mixture of N(-5,0.1) and N(5,0.1) should have samples near -5 and 5
+  (let [d (mixture-dist [(gaussian-dist -5 0.1) (gaussian-dist 5 0.1)] [0.5 0.5])
+        samples (repeatedly 200 #(sample* d))
+        neg (filter neg? samples)
+        pos (filter pos? samples)]
+    (and (> (count neg) 50)
+         (> (count pos) 50))))
+
+(test-assert "mixture-dist: observe in mh-query"
+  (let [d (mixture-dist [(gaussian-dist 0 1) (gaussian-dist 10 1)] [0.5 0.5])
+        samples (mh-query-fn 200 1
+                  (fn [] (let [x (gaussian 5 3)]
+                           (observe d x)
+                           x)))]
+    ;; Posterior should be pulled toward the mixture components
+    (number? (mean samples))))
 
 ;; ---------------------------------------------------------------------------
 ;; Summary
