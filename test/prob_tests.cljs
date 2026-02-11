@@ -816,36 +816,28 @@
 
 (println "=== DPmem ===")
 
-(test-assert "DPmem: returns [fn, get-tables-fn]"
-  (let [[f gt] (DPmem 1.0 (fn [x] (flip)))]
-    (and (fn? f) (fn? gt))))
+(test-assert "DPmem: returns function"
+  (let [f (DPmem 1.0 (fn [x] (flip)))]
+    (fn? f)))
 
 (test-assert "DPmem: consistent within same args (low alpha)"
   ;; With very low alpha, should almost always return same value
-  (let [[f _] (DPmem 0.001 (fn [x] (random-integer 1000000)))]
+  (let [f (DPmem 0.001 (fn [x] (random-integer 1000000)))]
     ;; Call many times with same arg
     (let [results (repeatedly 20 #(f "a"))]
       ;; All should be the same (with overwhelming probability)
       (= 1 (count (distinct results))))))
 
 (test-assert "DPmem: different args can differ"
-  (let [[f _] (DPmem 1.0 (fn [x] (random-integer 1000000)))]
+  (let [f (DPmem 1.0 (fn [x] (random-integer 1000000)))]
     (let [a (f "a") b (f "b")]
       ;; At least they're numbers (might rarely be same)
       (and (number? a) (number? b)))))
 
-(test-assert "DPmem: get-tables returns state"
-  (let [[f gt] (DPmem 1.0 (fn [x] (flip)))]
-    (f "a")
-    (f "a")
-    (let [tables (gt)]
-      (and (map? tables)
-           (some? (get tables ["a"]))))))
-
 (test-assert "DPmem: works inside mh-query"
   (let [results (mh-query-fn 20 1
                   (fn []
-                    (let [[f _] (DPmem 1.0 (fn [x] (uniform-draw [:x :y :z])))]
+                    (let [f (DPmem 1.0 (fn [x] (uniform-draw [:x :y :z])))]
                       (f "test"))))]
     (every? #(contains? #{:x :y :z} %) results)))
 

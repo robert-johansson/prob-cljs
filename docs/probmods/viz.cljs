@@ -103,6 +103,91 @@
                             (.setAttribute "fill" "#4a90d9") (.setAttribute "opacity" "0.6")))))
     (js/__appendToOutput c) nil))
 
+(defn lineplot [data label]
+  (let [;; Normalize to multi-series format: [{:data [[x y]...] :label "name"} ...]
+        series (if (and (seq data) (map? (first data)))
+                 (vec data)
+                 [{:data (vec data) :label ""}])
+        colors ["#4a90d9" "#e74c3c" "#2ecc71" "#f39c12" "#9b59b6" "#1abc9c"]
+        all-pts (mapcat :data series)
+        xs (map first all-pts) ys (map second all-pts)
+        x-min (apply min xs) x-max (apply max xs)
+        y-min (apply min ys) y-max (apply max ys)
+        x-rng (let [r (- x-max x-min)] (if (zero? r) 1 r))
+        y-rng (let [r (- y-max y-min)] (if (zero? r) 1 r))
+        cw 500 ch 300 ml 50 mr 20 mb 30 mt 20
+        pw (- cw ml mr) ph (- ch mb mt)
+        c (doto (js/document.createElement "div") (-> .-className (set! "chart-container")))
+        t (doto (js/document.createElement "div") (-> .-className (set! "chart-title")) (-> .-textContent (set! (or label ""))))
+        _ (.appendChild c t)
+        svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "svg") (.setAttribute "width" cw) (.setAttribute "height" ch))
+        _ (.appendChild c svg)
+        sx (fn [x] (+ ml (* (/ (- x x-min) x-rng) pw)))
+        sy (fn [y] (- (+ mt ph) (* (/ (- y y-min) y-rng) ph)))]
+    ;; axes
+    (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "line")
+                        (.setAttribute "x1" ml) (.setAttribute "y1" mt) (.setAttribute "x2" ml) (.setAttribute "y2" (+ mt ph))
+                        (.setAttribute "stroke" "#999") (.setAttribute "stroke-width" "1")))
+    (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "line")
+                        (.setAttribute "x1" ml) (.setAttribute "y1" (+ mt ph)) (.setAttribute "x2" (+ ml pw)) (.setAttribute "y2" (+ mt ph))
+                        (.setAttribute "stroke" "#999") (.setAttribute "stroke-width" "1")))
+    ;; x-axis labels
+    (doseq [i (range 6)]
+      (let [v (+ x-min (* x-rng (/ i 5))) x (sx v)]
+        (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text")
+                            (.setAttribute "class" "axis-label") (.setAttribute "x" x) (.setAttribute "y" (- ch 5))
+                            (.setAttribute "text-anchor" "middle") (-> .-textContent (set! (.toFixed v 2)))))))
+    ;; y-axis labels
+    (doseq [i (range 6)]
+      (let [v (+ y-min (* y-rng (/ i 5))) y (sy v)]
+        (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text")
+                            (.setAttribute "class" "axis-label") (.setAttribute "x" (- ml 5)) (.setAttribute "y" (+ y 4))
+                            (.setAttribute "text-anchor" "end") (-> .-textContent (set! (.toFixed v 2)))))))
+    ;; series lines
+    (doseq [[idx s] (map-indexed vector series)]
+      (let [pts (sort-by first (:data s))
+            color (nth colors (mod idx (count colors)))
+            path-d (str "M" (clojure.string/join " L" (map (fn [[x y]] (str (sx x) "," (sy y))) pts)))]
+        (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "path")
+                            (.setAttribute "d" path-d)
+                            (.setAttribute "fill" "none")
+                            (.setAttribute "stroke" color)
+                            (.setAttribute "stroke-width" "2")))))
+    ;; legend for multi-series
+    (when (> (count series) 1)
+      (doseq [[idx s] (map-indexed vector series)]
+        (let [color (nth colors (mod idx (count colors)))
+              ly (+ mt 5 (* idx 16))]
+          (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "line")
+                              (.setAttribute "x1" (+ ml pw -80)) (.setAttribute "y1" ly)
+                              (.setAttribute "x2" (+ ml pw -60)) (.setAttribute "y2" ly)
+                              (.setAttribute "stroke" color) (.setAttribute "stroke-width" "2")))
+          (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text")
+                              (.setAttribute "class" "axis-label") (.setAttribute "x" (+ ml pw -55)) (.setAttribute "y" (+ ly 4))
+                              (-> .-textContent (set! (or (:label s) ""))))))))
+    (js/__appendToOutput c) nil))
+
+(defn table [data label]
+  (let [c (doto (js/document.createElement "div") (-> .-className (set! "chart-container")))
+        t (doto (js/document.createElement "div") (-> .-className (set! "chart-title")) (-> .-textContent (set! (or label ""))))
+        _ (.appendChild c t)
+        tbl (doto (js/document.createElement "table")
+              (-> .-style .-borderCollapse (set! "collapse"))
+              (-> .-style .-margin (set! "8px auto"))
+              (-> .-style .-fontFamily (set! "monospace"))
+              (-> .-style .-fontSize (set! "13px")))]
+    (doseq [row data]
+      (let [tr (js/document.createElement "tr")]
+        (doseq [cell row]
+          (let [td (doto (js/document.createElement "td")
+                     (-> .-style .-padding (set! "4px 10px"))
+                     (-> .-style .-border (set! "1px solid #ddd"))
+                     (-> .-textContent (set! (str cell))))]
+            (.appendChild tr td)))
+        (.appendChild tbl tr)))
+    (.appendChild c tbl)
+    (js/__appendToOutput c) nil))
+
 (defn display [& args]
   (js/__appendTextToOutput (apply str (interpose " " args))))
 
