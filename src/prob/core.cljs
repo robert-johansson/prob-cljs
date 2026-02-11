@@ -18,6 +18,9 @@
 ;; Elementary Random Primitives
 ;; ---------------------------------------------------------------------------
 
+(def rand erp/rand)
+(def set-seed! erp/set-seed!)
+
 (def flip erp/flip)
 (def gaussian erp/gaussian)
 (def uniform erp/uniform)
@@ -78,6 +81,7 @@
 (def rejection-query-fn inference/rejection-query-fn)
 (def mh-query-fn inference/mh-query-fn)
 (def enumeration-query-fn inference/enumeration-query-fn)
+(def importance-query-fn inference/importance-query-fn)
 (def conditional-fn inference/conditional-fn)
 
 ;; ---------------------------------------------------------------------------
@@ -87,6 +91,10 @@
 (def mem builtins/mem)
 (def mean builtins/mean)
 (def variance builtins/variance)
+(def weighted-mean builtins/weighted-mean)
+(def weighted-variance builtins/weighted-variance)
+(def empirical-distribution builtins/empirical-distribution)
+(def expectation builtins/expectation)
 (def sum builtins/sum)
 (def prod builtins/prod)
 (def repeat-fn builtins/repeat-fn)

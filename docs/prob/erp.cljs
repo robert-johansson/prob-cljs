@@ -71,11 +71,66 @@
      value)))
 
 ;; ---------------------------------------------------------------------------
-;; Core random
+;; Seedable PRNG — xoshiro128**
 ;; ---------------------------------------------------------------------------
 
-(defn- rand-uniform []
-  (js/Math.random))
+(def ^:private prng-state (volatile! nil))
+
+(defn- u32 [x] (unsigned-bit-shift-right x 0))
+
+(defn- rotl32 [x k]
+  (u32 (bit-or (bit-shift-left x k)
+               (unsigned-bit-shift-right x (- 32 k)))))
+
+(defn- xoshiro128-next! []
+  (let [[s0 s1 s2 s3] @prng-state
+        result (u32 (js/Math.imul (rotl32 (u32 (js/Math.imul s1 5)) 7) 9))
+        t (u32 (bit-shift-left s1 9))
+        s2 (u32 (bit-xor s2 s0))
+        s3 (u32 (bit-xor s3 s1))
+        s1 (u32 (bit-xor s1 s2))
+        s0 (u32 (bit-xor s0 s3))
+        s2 (u32 (bit-xor s2 t))
+        s3 (rotl32 s3 11)]
+    (vreset! prng-state [s0 s1 s2 s3])
+    result))
+
+(defn- splitmix32 [seed]
+  (let [next-val (fn [z]
+                   (let [z (u32 (+ z 0x9e3779b9))
+                         z (u32 (js/Math.imul (bit-xor z (unsigned-bit-shift-right z 16)) 0x85ebca6b))
+                         z (u32 (js/Math.imul (bit-xor z (unsigned-bit-shift-right z 13)) 0xc2b2ae35))
+                         z (u32 (bit-xor z (unsigned-bit-shift-right z 16)))]
+                     z))
+        s0 (next-val (u32 seed))
+        s1 (next-val (u32 (+ seed 0x9e3779b9)))
+        s2 (next-val (u32 (+ seed 0x9e3779b9 0x9e3779b9)))
+        s3 (next-val (u32 (+ seed 0x9e3779b9 0x9e3779b9 0x9e3779b9)))]
+    [s0 s1 s2 s3]))
+
+(defn- init-prng-from-system! []
+  (vreset! prng-state
+           [(u32 (js/Math.floor (* (js/Math.random) 4294967296)))
+            (u32 (js/Math.floor (* (js/Math.random) 4294967296)))
+            (u32 (js/Math.floor (* (js/Math.random) 4294967296)))
+            (u32 (js/Math.floor (* (js/Math.random) 4294967296)))]))
+
+(defn- ensure-prng! []
+  (when (nil? @prng-state)
+    (init-prng-from-system!)))
+
+(defn rand
+  "Return a random double in [0, 1). Uses seedable xoshiro128** PRNG."
+  []
+  (ensure-prng!)
+  (/ (double (xoshiro128-next!)) 4294967296.0))
+
+(defn set-seed!
+  "Seed the PRNG for reproducible results. With no args, re-initializes from system entropy."
+  ([] (init-prng-from-system!))
+  ([n] (vreset! prng-state (splitmix32 n))))
+
+(defn- rand-uniform [] (rand))
 
 ;; ---------------------------------------------------------------------------
 ;; Raw (untraced) sampling — used internally by compound ERPs

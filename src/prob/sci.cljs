@@ -42,7 +42,9 @@
    'exponential    (sci/copy-var erp/exponential erp-ns)
    'binomial       (sci/copy-var erp/binomial erp-ns)
    'poisson        (sci/copy-var erp/poisson erp-ns)
-   'categorical    (sci/copy-var erp/categorical erp-ns)})
+   'categorical    (sci/copy-var erp/categorical erp-ns)
+   'rand           (sci/copy-var erp/rand erp-ns)
+   'set-seed!      (sci/copy-var erp/set-seed! erp-ns)})
 
 ;; ---------------------------------------------------------------------------
 ;; prob.dist
@@ -91,6 +93,7 @@
    'rejection-query-fn   (sci/copy-var inference/rejection-query-fn inference-ns)
    'mh-query-fn          (sci/copy-var inference/mh-query-fn inference-ns)
    'enumeration-query-fn (sci/copy-var inference/enumeration-query-fn inference-ns)
+   'importance-query-fn  (sci/copy-var inference/importance-query-fn inference-ns)
    'conditional-fn       (sci/copy-var inference/conditional-fn inference-ns)})
 
 ;; ---------------------------------------------------------------------------
@@ -155,6 +158,10 @@
    'prod           (sci/copy-var builtins/prod builtins-ns)
    'mean           (sci/copy-var builtins/mean builtins-ns)
    'variance       (sci/copy-var builtins/variance builtins-ns)
+   'weighted-mean  (sci/copy-var builtins/weighted-mean builtins-ns)
+   'weighted-variance (sci/copy-var builtins/weighted-variance builtins-ns)
+   'empirical-distribution (sci/copy-var builtins/empirical-distribution builtins-ns)
+   'expectation    (sci/copy-var builtins/expectation builtins-ns)
    'eq?            (sci/copy-var builtins/eq? builtins-ns)
    'equal?         (sci/copy-var builtins/equal? builtins-ns)
    'soft-equal     (sci/copy-var builtins/soft-equal builtins-ns)
@@ -191,7 +198,9 @@
 ;; ---------------------------------------------------------------------------
 
 (def core-namespace
-  {'flip               (sci/copy-var core/flip core-ns)
+  {'rand               (sci/copy-var core/rand core-ns)
+   'set-seed!          (sci/copy-var core/set-seed! core-ns)
+   'flip               (sci/copy-var core/flip core-ns)
    'gaussian           (sci/copy-var core/gaussian core-ns)
    'uniform            (sci/copy-var core/uniform core-ns)
    'uniform-draw       (sci/copy-var core/uniform-draw core-ns)
@@ -235,10 +244,15 @@
    'rejection-query-fn (sci/copy-var core/rejection-query-fn core-ns)
    'mh-query-fn        (sci/copy-var core/mh-query-fn core-ns)
    'enumeration-query-fn (sci/copy-var core/enumeration-query-fn core-ns)
+   'importance-query-fn (sci/copy-var core/importance-query-fn core-ns)
    'conditional-fn     (sci/copy-var core/conditional-fn core-ns)
    'mem                (sci/copy-var core/mem core-ns)
    'mean               (sci/copy-var core/mean core-ns)
    'variance           (sci/copy-var core/variance core-ns)
+   'weighted-mean      (sci/copy-var core/weighted-mean core-ns)
+   'weighted-variance  (sci/copy-var core/weighted-variance core-ns)
+   'empirical-distribution (sci/copy-var core/empirical-distribution core-ns)
+   'expectation        (sci/copy-var core/expectation core-ns)
    'sum                (sci/copy-var core/sum core-ns)
    'prod               (sci/copy-var core/prod core-ns)
    'repeat-fn          (sci/copy-var core/repeat-fn core-ns)})
@@ -253,6 +267,9 @@
 (defn ^:macro mh-query [_ _ n lag & body]
   `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))
 
+(defn ^:macro importance-query [_ _ n & body]
+  `(prob.core/importance-query-fn ~n (fn [] ~@body)))
+
 (defn ^:macro enumeration-query [_ _ & body]
   `(prob.core/enumeration-query-fn (fn [] ~@body)))
 
@@ -262,6 +279,7 @@
 (def macros-namespace
   {'rejection-query   (sci/copy-var rejection-query macros-ns)
    'mh-query          (sci/copy-var mh-query macros-ns)
+   'importance-query  (sci/copy-var importance-query macros-ns)
    'enumeration-query (sci/copy-var enumeration-query macros-ns)
    'query             (sci/copy-var query macros-ns)})
 

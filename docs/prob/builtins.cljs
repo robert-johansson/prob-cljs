@@ -202,6 +202,27 @@
         m (/ (reduce + 0 a) n)]
     (/ (reduce + 0 (map #(js/Math.pow (- % m) 2) a)) n)))
 
+(defn weighted-mean [values weights]
+  (let [vs (vec values) ws (vec weights)
+        tw (reduce + 0.0 ws)]
+    (if (zero? tw) 0.0
+      (/ (reduce + 0.0 (map * vs ws)) tw))))
+
+(defn weighted-variance [values weights]
+  (let [vs (vec values) ws (vec weights)
+        tw (reduce + 0.0 ws)
+        mu (weighted-mean vs ws)]
+    (if (zero? tw) 0.0
+      (/ (reduce + 0.0 (map (fn [v w] (* w (js/Math.pow (- v mu) 2))) vs ws)) tw))))
+
+(defn empirical-distribution [samples]
+  (let [n (count samples)]
+    (into {} (map (fn [[k v]] [k (/ (double v) n)]) (frequencies samples)))))
+
+(defn expectation
+  ([samples] (mean samples))
+  ([samples f] (mean (map f samples))))
+
 ;; ---------------------------------------------------------------------------
 ;; Comparison
 ;; ---------------------------------------------------------------------------

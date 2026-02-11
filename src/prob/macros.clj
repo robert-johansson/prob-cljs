@@ -33,6 +33,18 @@
   [n lag & body]
   `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))
 
+(defmacro importance-query
+  "Importance sampling with n samples.
+   Returns (values probs).
+
+   Example:
+     (importance-query 1000
+       (let [x (flip)]
+         (factor (if x 0 -2))
+         x))"
+  [n & body]
+  `(prob.core/importance-query-fn ~n (fn [] ~@body)))
+
 (defmacro enumeration-query
   "Approximate the conditional distribution by enumeration.
    Returns (values probs).

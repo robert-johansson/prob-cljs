@@ -27,7 +27,7 @@
     (vswap! erp/*trace-state* update :score + log-weight)
     ;; Rejection mode: probabilistic rejection
     (when (neg? log-weight)
-      (when (> (js/Math.log (js/Math.random)) log-weight)
+      (when (> (js/Math.log (erp/rand)) log-weight)
         (throw (ex-info "factor rejected" {::type rejection-sentinel})))))
   nil)
 
@@ -130,7 +130,7 @@
   (let [{old-trace :trace, old-score :score, old-size :size,
          old-mem-cache :mem-cache} old-state
         ;; Pick random address from the current trace
-        addr (js/Math.floor (* (js/Math.random) old-size))
+        addr (js/Math.floor (* (erp/rand) old-size))
         ;; Re-execute with proposal at chosen address
         ts (make-replay-state old-trace addr old-mem-cache drift-propose-fn)
         new-result (execute-traced thunk ts)]
@@ -155,7 +155,7 @@
                           (- (js/Math.log old-size)
                              (js/Math.log new-size))
                           proposal-correction)]
-        (if (< (js/Math.log (js/Math.random)) log-accept)
+        (if (< (js/Math.log (erp/rand)) log-accept)
           new-result
           old-state)))))
 
@@ -184,6 +184,33 @@
         (seq (persistent! samples))
         (let [state' (advance state (inc lag))]
           (recur (inc i) state' (conj! samples (:value state'))))))))
+
+;; ---------------------------------------------------------------------------
+;; Importance Sampling
+;; ---------------------------------------------------------------------------
+
+(defn importance-query-fn
+  "Importance sampling: run thunk n times, collect weighted samples,
+   normalize and aggregate. Returns (values probs) like enumeration-query-fn."
+  [n thunk]
+  (let [raw (loop [i 0, acc (transient [])]
+              (if (>= i n)
+                (persistent! acc)
+                (let [r (execute-traced thunk (make-fresh-state))]
+                  (recur (inc i)
+                         (if r
+                           (conj! acc {:value (:value r) :score (:score r)})
+                           acc)))))
+        _ (when (empty? raw)
+            (throw (ex-info "importance-query: all samples rejected" {:n n})))
+        log-z (math/log-sum-exp (mapv :score raw))
+        grouped (reduce (fn [m {:keys [value score]}]
+                          (update m value
+                                  (fnil #(math/log-sum-exp [% score]) ##-Inf)))
+                        {} raw)
+        values (keys grouped)
+        probs (map #(js/Math.exp (- (get grouped %) log-z)) values)]
+    (list (apply list values) (apply list probs))))
 
 ;; ---------------------------------------------------------------------------
 ;; Enumeration Query (exact, for finite-domain ERPs)
@@ -310,6 +337,16 @@
                   1)]
         (fn []
           (first (mh-query-fn 1 lag thunk))))
+
+      "importance"
+      (let [n (if (>= (count params-vec) 2)
+                (second params-vec)
+                1000)]
+        (fn []
+          (let [[values probs] (importance-query-fn n thunk)
+                vs (vec values)
+                ps (vec probs)]
+            (erp/multinomial vs ps))))
 
       ;; Default: rejection
       (fn []

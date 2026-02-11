@@ -4,7 +4,7 @@
                                 multinomial sample-discrete gamma dirichlet exponential
                                 binomial poisson categorical
                                 condition factor rejection-query-fn mh-query-fn
-                                enumeration-query-fn conditional-fn
+                                enumeration-query-fn importance-query-fn conditional-fn
                                 observe
                                 sample* observe* dist? enumerate*
                                 bernoulli-dist gaussian-dist uniform-dist beta-dist
@@ -12,9 +12,13 @@
                                 uniform-draw-dist random-integer-dist multinomial-dist
                                 sample-discrete-dist binomial-dist poisson-dist
                                 categorical-dist
-                                mem mean variance sum prod repeat-fn]]
+                                set-seed! rand
+                                mem mean variance sum prod repeat-fn
+                                weighted-mean weighted-variance
+                                empirical-distribution expectation]]
             [prob.erp :as erp])
-  (:require-macros [prob.macros :refer [rejection-query mh-query enumeration-query query]]))
+  (:require-macros [prob.macros :refer [rejection-query mh-query enumeration-query
+                                        importance-query query]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Test harness (volatile-based, no atoms)
@@ -527,6 +531,142 @@
                            (observe (binomial-dist 5 p) 3)
                            p)))]
     (every? #(and (>= % 0) (<= % 1)) samples)))
+
+;; ---------------------------------------------------------------------------
+;; Seedable PRNG
+;; ---------------------------------------------------------------------------
+
+(println "=== Seedable PRNG ===")
+
+(test-assert "set-seed!: same seed -> same sequence"
+  (do
+    (set-seed! 42)
+    (let [a (rand) b (rand) c (rand)]
+      (set-seed! 42)
+      (and (= a (rand)) (= b (rand)) (= c (rand))))))
+
+(test-assert "set-seed!: different seeds -> different sequences"
+  (do
+    (set-seed! 42)
+    (let [a (rand)]
+      (set-seed! 99)
+      (not= a (rand)))))
+
+(test-assert "rand: values in [0,1)"
+  (do
+    (set-seed! 123)
+    (every? #(and (>= % 0) (< % 1)) (repeatedly 100 rand))))
+
+(test-assert "set-seed!: reproducible flip"
+  (do
+    (set-seed! 42)
+    (let [a (flip)]
+      (set-seed! 42)
+      (= a (flip)))))
+
+(test-assert "set-seed!: reproducible gaussian"
+  (do
+    (set-seed! 42)
+    (let [a (gaussian 0 1)]
+      (set-seed! 42)
+      (= a (gaussian 0 1)))))
+
+(test-assert "set-seed!: no-arg resets to system entropy"
+  (do
+    (set-seed! 42)
+    (let [a (rand)]
+      (set-seed!)
+      (set-seed! 42)
+      (= a (rand)))))
+
+;; Restore system entropy for remaining tests
+(set-seed!)
+
+;; ---------------------------------------------------------------------------
+;; Importance Sampling
+;; ---------------------------------------------------------------------------
+
+(println "=== Importance Sampling ===")
+
+(test-assert "importance-query: returns (values probs) pair"
+  (let [result (importance-query 500
+                 (let [x (flip)]
+                   x))]
+    (and (seq? result)
+         (= 2 (count result))
+         (seq? (first result))
+         (seq? (second result)))))
+
+(test-assert "importance-query: probs sum to 1"
+  (let [[_values probs] (importance-query 500
+                           (let [x (flip)]
+                             x))]
+    (approx= (reduce + (seq probs)) 1.0 0.01)))
+
+(test-assert "importance-query: factor shifts posterior"
+  ;; P(true) ∝ 0.5 * exp(0) = 0.5, P(false) ∝ 0.5 * exp(-2) ≈ 0.0677
+  ;; P(true) ≈ 0.5/(0.5+0.0677) ≈ 0.881
+  (let [[values probs] (importance-query 2000
+                          (let [x (flip)]
+                            (factor (if x 0 -2))
+                            x))
+        prob-map (zipmap (seq values) (seq probs))]
+    (approx= (get prob-map true) 0.88 0.05)))
+
+(test-assert "importance-query-fn: direct call works"
+  (let [[values probs] (importance-query-fn 500
+                          (fn [] (let [x (uniform-draw [:a :b :c])]
+                                   x)))]
+    (and (= (count (seq values)) 3)
+         (approx= (reduce + (seq probs)) 1.0 0.01))))
+
+(test-assert "importance-query: observe shifts posterior"
+  (let [[values probs] (importance-query 2000
+                          (let [x (flip 0.5)]
+                            (observe (bernoulli-dist 0.9) x)
+                            x))
+        prob-map (zipmap (seq values) (seq probs))]
+    ;; P(true) ∝ 0.5 * 0.9 = 0.45, P(false) ∝ 0.5 * 0.1 = 0.05
+    ;; P(true) = 0.45/0.5 = 0.9
+    (approx= (get prob-map true) 0.9 0.05)))
+
+(test-assert "conditional with importance strategy"
+  (let [sampler (query '(importance 500)
+                  (let [x (flip)] (condition x) x))]
+    (= true (sampler))))
+
+;; ---------------------------------------------------------------------------
+;; Weighted Sample Utilities
+;; ---------------------------------------------------------------------------
+
+(println "=== Weighted Utilities ===")
+
+(test-assert "weighted-mean: uniform weights"
+  (approx= (weighted-mean [1 2 3] [1 1 1]) 2.0 0.001))
+
+(test-assert "weighted-mean: skewed weights"
+  (approx= (weighted-mean [1 2 3] [0 0 1]) 3.0 0.001))
+
+(test-assert "weighted-mean: non-unit weights"
+  (approx= (weighted-mean [10 20] [3 1]) 12.5 0.001))
+
+(test-assert "weighted-variance: uniform weights"
+  (approx= (weighted-variance [1 2 3] [1 1 1]) 0.6667 0.001))
+
+(test-assert "weighted-variance: single point"
+  (approx= (weighted-variance [5 10] [1 0]) 0.0 0.001))
+
+(test-assert "empirical-distribution: frequencies"
+  (let [d (empirical-distribution [:a :a :b :a :b :c])]
+    (and (approx= (get d :a) 0.5 0.001)
+         (approx= (get d :b) 0.3333 0.001)
+         (approx= (get d :c) 0.1667 0.001))))
+
+(test-assert "expectation: without transform"
+  (approx= (expectation [1 2 3 4]) 2.5 0.001))
+
+(test-assert "expectation: with transform"
+  (approx= (expectation [1 2 3 4] #(* % %)) 7.5 0.001))
 
 ;; ---------------------------------------------------------------------------
 ;; Summary
