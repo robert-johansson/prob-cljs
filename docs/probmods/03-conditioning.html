@@ -69,7 +69,7 @@
   (condition what-we-know)
   what-we-want-to-know)</code></pre>
 
-<p>The body of a query contains three kinds of expressions. First, a generative model expressed as a series of <code>def</code> and <code>defn</code> statements. Second, a call to <code>condition</code> which enforces that certain facts must hold&mdash;if the condition is not met, the query retries. Third, the final expression is the <em>query expression</em>, which represents the aspects of the computation that we are interested in. The value of this last expression is what gets returned.</p>
+<p>The body of a query contains three kinds of expressions. First, a generative model expressed as <code>let</code> bindings. Second, a call to <code>condition</code> which enforces that certain facts must hold&mdash;if the condition is not met, the query retries. Third, the final expression is the <em>query expression</em>, which represents the aspects of the computation that we are interested in. The value of this last expression is what gets returned.</p>
 
 <p>Consider the following simple generative process:</p>
 

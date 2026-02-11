@@ -219,12 +219,12 @@ A</code></pre>
 
 <pre class="norun"><code>;; Schematic explaining away:
 ;; (mh-query ...
-;;   (def a ...)
-;;   (def b ...)
-;;   (def data (... a ... b ...))
-;;   (condition (and (= data some-value)
-;;                   (= a some-other-value)))
-;;   b)</code></pre>
+;;   (let [a ...
+;;         b ...
+;;         data (... a ... b ...)]
+;;     (condition (and (= data some-value)
+;;                     (= a some-other-value)))
+;;     b))</code></pre>
 
 <p>We have defined two independent variables <code>a</code> and <code>b</code> both of which are used to define the value of our <code>data</code>. If we condition on the data and <code>a</code>, the posterior distribution on <code>b</code> will now be dependent on <code>a</code>: observing additional information about <code>a</code> changes our conclusions about <code>b</code>.</p>
 
