@@ -38,11 +38,11 @@ cd examples/ink-task-list && npm install && npx nbb -cp ../../src task-list.cljs
 
 - **core.cljs** — Public API. Thin re-export layer over erp, inference, and builtins.
 - **erp.cljs** — Elementary Random Primitives (flip, gaussian, beta, gamma, dirichlet, binomial, poisson, categorical, etc.). Trace-aware sampling with log-probability scoring via the distribution protocol.
-- **dist.cljs** — Distribution protocol (`IDistribution`: `sample*`/`observe*`), enumeration protocol (`IEnumerable`: `enumerate*`), and drift proposal protocol (`IProposable`: `propose*`). All distribution records with constructors.
+- **dist.cljs** — Distribution protocol (`IDistribution`: `sample*`/`observe*`), enumeration protocol (`IEnumerable`: `enumerate*`), and drift proposal protocol (`IProposable`: `propose*`). All distribution records with constructors. Includes `Marginal` record for nested inference as a distribution.
 - **math.cljs** — Mathematical special functions: `log-gamma-fn`, `log-sum-exp`, `digamma`, `erf`. Pure ClojureScript, zero deps.
-- **inference.cljs** — Inference algorithms: rejection sampling, real single-site trace-based MH with drift proposals, and exact enumeration (odometer over all discrete combinations). Uses `volatile!` with persistent hash-map traces.
-- **builtins.cljs** — Utility functions: Lisp-style list operations (pair/car/cdr), math, string ops, set operations, trace-aware memoization (`mem`), and type predicates. Designed for webchurch compatibility.
-- **macros.clj** — Clojure macros (`rejection-query`, `mh-query`, `enumeration-query`, `query`) that wrap body in thunks and delegate to the `-fn` variants in inference.
+- **inference.cljs** — Inference algorithms: rejection sampling, real single-site trace-based MH with drift proposals, exact enumeration, MAP inference (`map-query-fn`), scored MH (`mh-query-scored-fn`), and soft conditioning (`condition-equal`). Uses `volatile!` with persistent hash-map traces.
+- **builtins.cljs** — Utility functions: Lisp-style list operations (pair/car/cdr), math, string ops, set operations, trace-aware memoization (`mem`), Dirichlet Process memoization (`DPmem`), and type predicates. Designed for webchurch compatibility.
+- **macros.clj** — Clojure macros (`rejection-query`, `mh-query`, `mh-query-scored`, `map-query`, `enumeration-query`, `query`) that wrap body in thunks and delegate to the `-fn` variants in inference.
 - **sci.cljs** — SCI configuration for Scittle. Registers all prob namespaces with `sci/copy-var`. Defines SCI-compatible macros with `^:macro` metadata.
 
 ### Scittle plugin (`src/scittle/prob.cljs`)
@@ -69,5 +69,4 @@ See `GAPS.md` for a detailed comparison with webchurch and Anglican. Remaining g
 - No interruptible execution (CPS/generators) — blocks SMC/particle methods
 - Missing distributions: uniform-discrete, chi-squared, student-t, laplace, multivariate normal
 - No random process abstraction (CRP, DP, GP)
-- No DPmem
 - No gradient infrastructure (needed for variational inference)

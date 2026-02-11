@@ -48,7 +48,7 @@ prob-cljs implements a full distribution protocol matching Anglican's approach:
 - `IEnumerable`: `enumerate*` returns vector of support values for discrete distributions
 - `IProposable`: `propose*` returns `[new-value fwd-lp rev-lp]` for drift proposals in MH
 
-All existing distributions implement `IDistribution`. Discrete distributions implement `IEnumerable`. Gaussian and Beta implement `IProposable` with drift kernels (Gaussian: symmetric random walk; Beta: kappa=10 reparameterized proposal).
+All existing distributions implement `IDistribution`. Discrete distributions implement `IEnumerable`. Gaussian and Beta implement `IProposable` with continuous drift kernels (Gaussian: symmetric random walk; Beta: kappa=10 reparameterized proposal). Bernoulli, Multinomial, Categorical, UniformDraw, and RandomInteger implement `IProposable` with smart discrete proposals (deterministic toggle for Bernoulli, exclude-current-value for others). `Marginal` record wraps inner inference output as a full distribution (`sample*`, `observe*`, `enumerate*`).
 
 ---
 
@@ -88,9 +88,12 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 |---|---|---|---|---|
 | Rejection sampling | Trace-based, uses logprob | Supported | Exception-based rejection | **Done** |
 | MH / MCMC | Real single-site trace MH | LMH, RMH, ALMH | Real single-site trace MH with drift proposals | **Done** |
+| MH scored | — | Weighted samples | `mh-query-scored-fn` returns `{:value :score}` maps | **Done** |
+| MAP | — | Simulated annealing | `map-query-fn` returns highest-scoring MH sample | **Done** |
 | Exact enumeration | Trace-based, iterates all ERP combinations | Not emphasized | Trace-based, odometer over all combinations | **Done** |
 | Importance sampling | — | Weighted prior sampling | N runs with score normalization, aggregates duplicates | **Done** |
 | `condition` | Sets flag on trace | Via observe | Throws exception (rejection-style) | **Done** |
+| `condition-equal` | Soft conditioning via enumerate | — | Enumerate thunk, factor log(P(return=value)) | **Done** |
 | `factor` | Adds to trace logprob (exact) | Via observe log-weight | Exact in MH mode, probabilistic in rejection mode | **Done** |
 | `observe` | — | Via observe log-weight | Delegates to factor via dist protocol | **Done** |
 
@@ -134,7 +137,7 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 |---|---|
 | **LARJ** | Locally Annealed Reversible Jump MCMC for trans-dimensional models |
 | **Suwa-Todo** | Irreversible MCMC kernel for discrete variables |
-| **Marginalization** | Nested inference as ERP via `marginalize()` |
+| ~~**Marginalization**~~ | ~~Nested inference as ERP via `marginalize()`~~ — **Done** via `marginal-dist` |
 
 ---
 
@@ -181,9 +184,9 @@ prob-cljs has no random process abstraction.
 
 **Anglican-specific.** Per-particle state accessible from within the probabilistic program.
 
-### `conditional` -- Queries as distributions
+### `conditional` / `marginal-dist` -- Queries as distributions
 
-Anglican wraps an entire query into a distribution object that can be `sample`d, enabling **nested inference**. prob-cljs has `conditional-fn` which creates a reusable sampler from query parameters, but the result is a function, not a distribution object (no `observe*`).
+Anglican wraps an entire query into a distribution object that can be `sample`d, enabling **nested inference**. prob-cljs now has `marginal-dist` which wraps inner inference output as a full distribution object implementing `IDistribution` (`sample*`, `observe*`) and `IEnumerable` (`enumerate*`). Inner inference runs isolated from any outer trace. Additionally, `conditional-fn` creates a reusable sampler function from query parameters.
 
 ### Per-particle memoization
 
@@ -196,7 +199,7 @@ prob-cljs's `mem` is now **trace-aware**: during inference, the cache is stored 
 | Capability | webchurch | Anglican | prob-cljs | Status |
 |---|---|---|---|---|
 | `mem` | Deterministic memoization | Per-particle memoization | Trace-aware memoization (cache in trace state) | **Done** |
-| `DPmem` | Dirichlet Process memoization (CRP) | Via random process protocol | not implemented | **Missing** |
+| `DPmem` | Dirichlet Process memoization (CRP) | Via random process protocol | CRP table selection, trace-aware, returns `[fn get-tables-fn]` | **Done** |
 
 ---
 
@@ -283,11 +286,11 @@ Anglican's `stat.cljc` provides functions for working with weighted samples. pro
 
 ### Phase 4: Expressive Modeling
 
-6. **`DPmem`** -- Dirichlet Process memoization for nonparametric Bayesian models.
+6. ~~**`DPmem`**~~ -- **Done.** Dirichlet Process memoization with CRP table selection, trace-aware for MH compatibility.
 
 7. **Random processes** -- `produce`/`absorb` protocol for CRP, DP, GP.
 
-8. **`conditional`** -- Wrap query output as a full distribution for nested inference with `observe*`.
+8. ~~**`conditional` / `marginal-dist`**~~ -- **Done.** `marginal-dist` wraps inner inference as a full distribution object (`sample*`, `observe*`, `enumerate*`). `condition-equal` provides soft conditioning via enumeration. `mh-query-scored-fn` and `map-query-fn` provide scored samples and MAP inference.
 
 9. **`predict`** -- Labeled output collection alongside return value.
 
