@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ProbMods: Conditioning</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="../js/physics.js"></script>
+  <script>ProbPhysics.setup();</script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Probabilistic Models of Cognition</a></div>
+    <ul id="nav">
+      <li><a href="02-generative-models.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+      <li><a href="04-patterns-of-inference.html">Next &rarr;</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+
+
+<h1 id="chapter-title">3. Conditioning</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#cognition-and-conditioning">Cognition and conditioning</a></li>
+<li><a href="#hypothetical-reasoning-with-query">Hypothetical Reasoning with <code>query</code></a><ul>
+<li><a href="#rejection-sampling">Rejection Sampling</a></li>
+<li><a href="#conditional-distributions">Conditional Distributions</a></li>
+<li><a href="#bayes-rule">Bayes Rule</a></li>
+<li><a href="#implementations-of-query">Implementations of <code>query</code></a></li>
+</ul></li>
+<li><a href="#reasoning-with-arbitrary-propositions">Reasoning with Arbitrary Propositions</a><ul>
+<li><a href="#example-reasoning-about-the-tug-of-war">Example: Reasoning about the Tug of War</a></li>
+</ul></li>
+<li><a href="#example-inverse-intuitive-physics">Example: Inverse intuitive physics</a></li>
+<li><a href="#example-causal-inference-in-medical-diagnosis">Example: Causal Inference in Medical Diagnosis</a></li>
+<li><a href="#exercises">Exercises</a></li>
+<li><a href="#references">References</a></li>
+</ul>
+</div>
+
+<h1 id="cognition-and-conditioning"><a href="#cognition-and-conditioning">Cognition and conditioning</a></h1>
+
+<p>We have built up a tool set for constructing probabilistic generative models. These can represent knowledge about causal processes in the world: running one of these programs generates a particular outcome by sampling a &ldquo;history&rdquo; for that outcome. However, the power of a causal model lies in the flexible ways it can be used to reason about the world. In the <a href="02-generative-models.html">last chapter</a> we ran generative models <em>forward</em> to reason about outcomes from initial conditions. Generative models also enable reasoning in other directions. For instance, if we have a generative model in which <code>X</code> is the output of a process that depends on <code>Y</code> (say <code>(def X (f Y))</code>) we may ask: &ldquo;assuming I have observed <code>X</code>, how must <code>Y</code> have been?&rdquo; That is we can reason <em>backward</em> from outcomes to initial conditions. More generally, we can make hypothetical assumptions and reason about the generative history: &ldquo;assuming <em>something</em>, how must the generative model have run?&rdquo; In this section we describe how a wide variety of such hypothetical inferences can be made from a single generative model by <em>conditioning</em> the model on an assumed or observed fact.</p>
+
+<p>Much of cognition can be understood in terms of conditional inference. In its most basic form, <em>causal attribution</em> is conditional inference: given some observed effects, what were the likely causes? <em>Predictions</em> are conditional inferences in the opposite direction: given that I have observed some known cause, what are its likely effects? These inferences can be described by conditioning a probabilistic program that expresses a causal model, or understanding of how effects depend on causes. The acquisition of that causal model, or <em>learning</em>, is also conditional inference at a higher level of abstraction: given our general knowledge of how causal relations operate in the world, and some observed events in which candidate causes and effects co-occur in various ways, what specific causal relations are likely to hold between these observed variables?</p>
+
+<p>To see how the same concepts apply in a domain that is not usually thought of as causal, consider language. The core questions of interest in the study of natural language are all at heart conditional inference problems. Given beliefs about the syntactic structure of my language, and an observed sentence, what should I believe about the syntactic structure of that sentence? This is the <em>parsing</em> problem. The complementary problem of <em>speech production</em> is related: given some beliefs about the syntactic structure of my language (and beliefs about others&rsquo; beliefs about that), and a particular thought I want to express, how should I encode the thought syntactically? Finally, the discovery or <em>acquisition</em> problem: given general knowledge about universals of grammar and some data from a particular language, what should we believe about that language&rsquo;s structure? This problem is simultaneously the problem facing the linguist and the child trying to learn a language.</p>
+
+<p>Parallel problems of conditional inference arise in visual perception, social cognition, and virtually every other domain of cognition. In visual perception, we observe an image or image sequence that is the result of rendering a three-dimensional physical scene onto our two-dimensional retinas. A probabilistic program can model both the physical processes at work in the world that produce natural scenes, and the imaging processes (the &ldquo;graphics&rdquo;) that generate images from scenes. <em>Perception</em> can then be seen as conditioning this program on some observed output image and inferring the scenes most likely to have given rise to it.</p>
+
+<p>When interacting with other people, we observe their actions, which result from a planning process, and often want to guess their desires, beliefs, or future actions. Planning can be modeled as a program that takes as input an agent&rsquo;s mental states (beliefs and desires) and produces action sequences&mdash;for a rational agent, these will be actions that are likely to produce the agent&rsquo;s desired states as reliably or efficiently as possible, given the agent&rsquo;s beliefs. A rational agent can <em>plan</em> their actions by conditional inference to infer what steps would be most likely to achieve their desired state. <em>Action understanding</em>, or interpreting an agent&rsquo;s observed behavior, can be expressed as conditioning a planning program (a &ldquo;theory of mind&rdquo;) on observed actions to infer the mental states that most likely gave rise to those actions, and to predict how the agent is likely to act in the future.</p>
+
+<h1 id="hypothetical-reasoning-with-query"><a href="#hypothetical-reasoning-with-query">Hypothetical Reasoning with <code>query</code></a></h1>
+
+<p>Suppose that we know some fixed fact, and we wish to consider hypotheses about how a generative model could have given rise to that fact. In prob-cljs we can use the <code>rejection-query</code> macro (and related query forms) with the following pattern:</p>
+
+<pre class="norun"><code>(rejection-query
+  generative-model
+  (condition what-we-know)
+  what-we-want-to-know)</code></pre>
+
+<p>The body of a query contains three kinds of expressions. First, a generative model expressed as a series of <code>def</code> and <code>defn</code> statements. Second, a call to <code>condition</code> which enforces that certain facts must hold&mdash;if the condition is not met, the query retries. Third, the final expression is the <em>query expression</em>, which represents the aspects of the computation that we are interested in. The value of this last expression is what gets returned.</p>
+
+<p>Consider the following simple generative process:</p>
+
+<pre><code>(def A (if (flip) 1 0))
+(def B (if (flip) 1 0))
+(def C (if (flip) 1 0))
+(def D (+ A B C))
+D</code></pre>
+
+<p>This process samples three digits <code>0</code>/<code>1</code> and adds the result. The value of the final expression here is either 0, 1, 2 or 3. A priori, each of the variables <code>A</code>, <code>B</code>, <code>C</code> has .5 probability of being <code>1</code> or <code>0</code>. However, suppose that we know that the sum <code>D</code> is equal to 3. How does this change the space of possible values that variable <code>A</code> can take on? It is obvious that <code>A</code> must be equal to 1 for this result to happen. We can see this in the following query (which uses rejection sampling, described shortly):</p>
+
+<pre><code>(defn take-sample []
+  (rejection-query
+    (let [A (if (flip) 1 0)
+          B (if (flip) 1 0)
+          C (if (flip) 1 0)
+          D (+ A B C)]
+      (condition (= D 3))
+      A)))
+(hist (repeatedly 100 take-sample) "Value of A, given that D is 3")</code></pre>
+
+<p>The output of <code>rejection-query</code> is a &ldquo;guess&rdquo; about the likely value of <code>A</code>, conditioned on <code>D</code> being equal to 3. (We use <code>repeatedly</code> to take 100 guesses, which are then turned into a bar graph representing relative probabilities using the <code>hist</code> function.) Because <code>A</code> must necessarily equal <code>1</code>, the histogram shows 100% of the sampled values are <code>1</code>.</p>
+
+<p>Now suppose that we condition on <code>D</code> being greater than or equal to 2. Then <code>A</code> need not be 1, but it is more likely than not to be. (Why?) The corresponding histogram shows the appropriate distribution of &ldquo;guesses&rdquo; for <code>A</code> conditioned on this new fact:</p>
+
+<pre><code>(defn take-sample []
+  (rejection-query
+    (let [A (if (flip) 1 0)
+          B (if (flip) 1 0)
+          C (if (flip) 1 0)
+          D (+ A B C)]
+      (condition (>= D 2))
+      A)))
+(hist (repeatedly 100 take-sample) "Value of A, given that D >= 2")</code></pre>
+
+<p>Predicting the outcome of a generative process is simply a special case of querying, where we condition on no restrictions and ask about the outcome. Try changing the condition in the above program to <code>(condition true)</code>.</p>
+
+<p>Going beyond the basic intuition of &ldquo;hypothetical reasoning&rdquo;, the <code>query</code> operation can be understood in several, equivalent, ways. We focus on two: the process of <em>rejection sampling</em>, and the mathematical operation of <em>conditioning</em> a distribution.</p>
+
+<h2 id="rejection-sampling"><a href="#rejection-sampling">Rejection Sampling</a></h2>
+
+<p>How can we imagine answering a hypothetical such as those above? We have already seen how to get a sample from a generative model, without constraint, by simply running the evaluation process &ldquo;forward&rdquo; (i.e. simulating the process). We can get conditional samples by forward sampling the entire query, including both the query expression and conditioner, but only keeping the sample if the condition is <em>true</em>. For instance, to sample from the above model &ldquo;A given that D is greater than 2&rdquo; we could:</p>
+
+<pre><code>(defn take-sample []
+  (let [A (if (flip) 1 0)
+        B (if (flip) 1 0)
+        C (if (flip) 1 0)
+        D (+ A B C)]
+    (if (>= D 2) A (take-sample))))
+(hist (repeatedly 100 take-sample) "Value of A, given that D >= 2")</code></pre>
+
+<p>Notice that we have used a stochastic recursion to sample the definitions repeatedly until we get <code>(>= D 2)</code>, and we then return <code>A</code>: we generate and test until the condition is satisfied. This process is known as <em>rejection sampling</em>; we can use this technique to make a more general function that implements <code>query</code>&mdash;called <code>rejection-query</code>, schematically defined as:</p>
+
+<pre class="norun"><code>;; Schematic definition of rejection-query:
+;; (rejection-query ..model.. (condition c) ..query-expr..)
+;; expands roughly to:
+(defn rejection-query-fn [thunk]
+  (let [result (try (thunk) (catch :default e :rejected))]
+    (if (= result :rejected)
+      (rejection-query-fn thunk)
+      result)))</code></pre>
+
+<p>The body of <code>rejection-query</code> is wrapped in a function (a thunk). Each time it is called, the model runs forward: if <code>condition</code> fails it throws an exception which is caught, and we try again. If it succeeds, the value of the last expression (the query expression) is returned.</p>
+
+<p>While many implementations of <code>query</code> are possible, and others are discussed later, we can take the <code>rejection-query</code> process to <em>define</em> the distribution of values returned by a query expression.</p>
+
+<h2 id="conditional-distributions"><a href="#conditional-distributions">Conditional Distributions</a></h2>
+
+<p>The formal definition of <em>conditional probability</em> in probability theory is \[ P(A=a \mid B=b)=\frac{ P(A=a,B=b)}{P(B=b)} \] Here \(P(A=a \mid B=b)\) is the probability that &ldquo;event&rdquo; \(A\) has value \(a\) given that \(B\) has value \(b\). The <em>joint probability</em>, \(P(A=a,B=b)\), is the probability that \(A\) has value \(a\) and \(B\) has value \(b\). So the conditional probability is simply the ratio of the joint probability to the probability of the condition. In the case of a prob-cljs query, \(A=a\) is the &ldquo;event&rdquo; of the query expression returning value \(a\), while \(B=b\) will be the conditioner returning true (so \(b\) will be <em>true</em>).</p>
+
+<p>The above definition of conditional distribution in terms of rejection sampling is equivalent to this mathematical definition, when both are well-defined. Indeed, we can use the process of rejection sampling to understand this alternative definition of the conditional probability \(P(A=a \mid B=b)\). We imagine sampling many times, but only keeping those samples in which the condition is true. The frequency of the query expression returning a particular value \(a\) (i.e. \(A=a\)) <em>given</em> that the condition is true, will be the number of times that \(A=a\) <strong>and</strong> \(B=\text{true}\) divided by the number of times that \(B=\text{true}\). Since the frequency of the conditioner returning true will be \(P(B=\text{true})\) in the long run, and the frequency that the condition returns true <em>and</em> the query expression returns a given value \(a\) will be \(P(A=a, B=\text{true})\), we get the above formula for the conditional probability.</p>
+
+<p>Try using the above formula for conditional probability to compute the probability of the different return values in the above query examples. Check that you get the same probability that you observe when using rejection sampling.</p>
+
+<h2 id="bayes-rule"><a href="#bayes-rule">Bayes Rule</a></h2>
+
+<p>One of the most famous rules of probability is <em>Bayes&rsquo; rule</em>, which states: \[P(h \mid d) = \frac{P(d \mid h)P(h)}{P(d)}\] It is first worth noting that this follows immediately from the definition of conditional probability: \[P(h \mid d) = \frac{P(h,d)}{P(d)} = \frac{P(d \mid h)P(h)}{P(d)}\]</p>
+
+<p>Next we can ask what this rule means in terms of sampling processes. Consider the program:</p>
+
+<pre><code>(def observed-data true)
+(defn prior [] (flip))
+(defn observe-fn [h] (if h (flip 0.9) (flip 0.1)))
+(rejection-query
+  (let [hypothesis (prior)
+        data (observe-fn hypothesis)]
+    (condition (= data observed-data))
+    hypothesis))</code></pre>
+
+<p>We have generated a value, the <em>hypothesis</em>, from some distribution called the <em>prior</em>, then used an observation function which generates data given this hypothesis; the probability of such an observation function is called the <em>likelihood</em>. Finally we have queried the hypothesis conditioned on the observation being equal to some observed data&mdash;this conditional distribution is called the <em>posterior</em>. This is a typical setup in which Bayes&rsquo; rule is used. Notice that in this case the conditional distribution \(P(\text{data} \mid \text{hypothesis})\) is just the probability distribution on return values from the <code>observe-fn</code> function given an input value.</p>
+
+<p>Bayes&rsquo; rule simply says that, in special situations where the model decomposes nicely into a part &ldquo;before&rdquo; the query expression and a part &ldquo;after&rdquo; the query expression, then the conditional probability can be expressed in terms of these components of the model. This is often a useful way to think about conditional inference in simple settings. However, we will see examples as we go along where Bayes&rsquo; rule doesn&rsquo;t apply in a simple way, but the conditional distribution is equally well understood in terms of sampling.</p>
+
+<h2 id="implementations-of-query"><a href="#implementations-of-query">Implementations of <code>query</code></a></h2>
+
+<p>Much of the difficulty of implementing probabilistic programming (or probabilistic models in general) is in finding useful ways to do conditional inference&mdash;to implement <code>query</code>. prob-cljs has several different methods for query, each of which has its own limitations. We will explore the different algorithms used in these implementations in a later section on algorithms for inference; for now we just need to note a few differences in usage.</p>
+
+<p>As we have seen already, the method of rejection sampling is implemented in <code>rejection-query</code>. This is a very useful starting point, but is often not efficient: even if we are sure that our model can satisfy the condition, it will often take a very long time to find evaluations that do so.</p>
+
+<p>One implementation that we will often use is based on the <em>Metropolis Hastings</em> (MH) algorithm. The <code>mh-query</code> implementation takes two extra arguments and returns a list of samples (not just one sample):</p>
+
+<pre><code>(def baserate 0.1)
+(def samples
+  (mh-query 100 1
+    (let [A (if (flip baserate) 1 0)
+          B (if (flip baserate) 1 0)
+          C (if (flip baserate) 1 0)
+          D (+ A B C)]
+      (condition (>= D 2))
+      A)))
+(hist samples "Value of A, given that D >= 2")</code></pre>
+
+<p>The first extra argument is the number of samples to take, and the second controls the &ldquo;lag&rdquo; (the number of intermediate steps between kept samples). In prob-cljs the current <code>mh-query</code> implementation uses repeated rejection sampling, so a small lag (1) is sufficient. Each sample is one &ldquo;guess&rdquo; from the conditional distribution.</p>
+
+<h1 id="reasoning-with-arbitrary-propositions"><a href="#reasoning-with-arbitrary-propositions">Reasoning with Arbitrary Propositions</a></h1>
+
+<p>It is natural to condition a generative model on a value for one of the variables declared in this model. However, one may also wish to ask for more complex hypotheticals: &ldquo;what if P,&rdquo; where P is a complex proposition composed out of variables declared in the model. Consider the following query:</p>
+
+<pre><code>(def samples
+  (mh-query 100 1
+    (let [A (if (flip) 1 0)
+          B (if (flip) 1 0)
+          C (if (flip) 1 0)]
+      (condition (>= (+ A B C) 2))
+      A)))
+(hist samples "Value of A, given that the sum >= 2")</code></pre>
+
+<p>This query has the same meaning as the example above, but the formulation is importantly different. We have defined a generative model that samples 3 instances of <code>0</code>/<code>1</code> digits, then we have directly conditioned on the complex assumption that the sum of these random variables is greater than or equal to 2. This involves a new random variable, <code>(>= (+ A B C) 2)</code>. This latter random variable <em>did not appear</em> anywhere in the generative model (the definitions). In the traditional presentation of conditional probabilities we usually think of conditioning as <em>observation</em>: it explicitly enforces random variables to take on certain values. For example, when we say \(P(A \mid B=b)\) we explicitly require \(B = b\). In order to express the above query in this way, we could add the complex variable to the generative model, then condition on it. However this intertwines the hypothetical assumption (condition) with the generative model knowledge (definitions), and this is not what we want: we want a simple model which supports many queries, rather than a complex model in which only a prescribed set of queries is allowed.</p>
+
+<p>Writing models in prob-cljs allows the flexibility to build complex random expressions like this as needed, making assumptions that are phrased as complex propositions, rather than simple observations. Hence the effective number of queries we can construct for most programs will not merely be a large number but countably infinite, much like the sentences in a natural language. The <code>query</code> function (in principle, though with variable efficiency) supports correct conditional inference for this infinite array of situations.</p>
+
+<h2 id="example-reasoning-about-the-tug-of-war"><a href="#example-reasoning-about-the-tug-of-war">Example: Reasoning about the Tug of War</a></h2>
+
+<p>Returning to the earlier example of a series of tug-of-war matches, we can use query to ask a variety of different questions. For instance, how likely is it that Bob is strong, given that he&rsquo;s been in a series of winning teams? (Note that we have written the <code>winner</code> function slightly differently here, to return the labels <code>'team1</code> or <code>'team2</code> rather than the list of team members. This makes for more compact conditioning statements.)</p>
+
+<pre><code>(def samples
+  (mh-query 500 1
+    (let [strength (mem (fn [person] (gaussian 0 1)))
+          lazy (fn [person] (flip (/ 1 3)))
+          total-pulling (fn [team]
+                          (sum (map (fn [person] (if (lazy person) (/ (strength person) 2) (strength person))) team)))
+          winner (fn [team1 team2]
+                   (if (> (total-pulling team1) (total-pulling team2)) 'team1 'team2))]
+      (condition (and (= 'team1 (winner '(bob mary) '(tom sue)))
+                      (= 'team1 (winner '(bob sue) '(tom jim)))))
+      (strength 'bob))))
+(display "Expected strength:" (mean samples))
+(density samples "Bob strength")</code></pre>
+
+<p>Try varying the number of different teams and teammates that Bob plays with. How does this change the estimate of Bob&rsquo;s strength? Do these changes agree with your intuitions? Can you modify this example to make laziness a continuous quantity? Can you add a person-specific tendency toward laziness?</p>
+
+<p>A model very similar to this was used in Gerstenberg &amp; Goodman (2012) to predict human judgements about the strength of players in ping-pong tournaments. It achieved very accurate quantitative predictions without many free parameters.</p>
+
+<p>We can form many complex queries from this simple model. We could ask how likely a team of Bob and Mary is to win over a team of Jim and Sue, given that Mary is at least as strong as Sue, and Bob was on a team that won against Jim previously:</p>
+
+<pre><code>(def samples
+  (mh-query 100 1
+    (let [strength (mem (fn [person] (gaussian 0 1)))
+          lazy (fn [person] (flip (/ 1 3)))
+          total-pulling (fn [team]
+                          (sum (map (fn [person] (if (lazy person) (/ (strength person) 2) (strength person))) team)))
+          winner (fn [team1 team2]
+                   (if (< (total-pulling team1) (total-pulling team2)) 'team2 'team1))]
+      (condition (and (>= (strength 'mary) (strength 'sue))
+                      (= 'team1 (winner '(bob francis) '(tom jim)))))
+      (= 'team1 (winner '(bob mary) '(jim sue))))))
+(hist samples "Do bob and mary win against jim and sue")</code></pre>
+
+<h1 id="example-inverse-intuitive-physics"><a href="#example-inverse-intuitive-physics">Example: Inverse intuitive physics</a></h1>
+
+<p>We previously saw how a generative model of physics&mdash;a noisy, intuitive version of Newtonian mechanics&mdash;could be used to make judgements about the final state of physical worlds from initial conditions. We showed how this forward simulation could be used to model judgements about stability. We can also use a physics model to reason backward: from final to initial states.</p>
+
+<p>Imagine that we drop a block from a random position at the top of a world with two fixed obstacles:</p>
+
+<pre><code>;; Set up some bins on a floor
+(defn bins [xmin xmax width]
+  (if (< xmax (+ xmin width))
+    (list (list (list "rect" true (list 400 10)) (list 175 500)))
+    (cons (list (list "rect" true (list 1 10)) (list xmin 490))
+          (bins (+ xmin width) xmax width))))
+
+;; A world with two fixed circles and bins
+(def world
+  (cons (list (list "circle" true (list 60)) (list 60 200))
+    (cons (list (list "circle" true (list 30)) (list 300 300))
+          (bins -1000 1000 25))))
+
+;; A random block at the top
+(defn random-block [] (list (list "circle" false (list 10))
+                            (list (uniform 0 js/worldWidth) 0)))
+
+;; Add a random block to world, then animate
+(animate-physics 1000 (cons (random-block) world))</code></pre>
+
+<p>Assuming that the block comes to rest in the middle of the floor, where did it come from?</p>
+
+<pre><code>;; Set up some bins on a floor
+(defn bins [xmin xmax width]
+  (if (< xmax (+ xmin width))
+    (list (list (list "rect" true (list 400 10)) (list 175 500)))
+    (cons (list (list "rect" true (list 1 10)) (list xmin 490))
+          (bins (+ xmin width) xmax width))))
+
+;; A world with two fixed circles and bins
+(def world
+  (cons (list (list "circle" true (list 60)) (list 60 200))
+    (cons (list (list "circle" true (list 30)) (list 300 300))
+          (bins -1000 1000 25))))
+
+;; A random block at the top
+(defn random-block [] (list (list "circle" false (list 10))
+                            (list (uniform 0 js/worldWidth) 0)))
+
+;; Helper to get X position of the first movable block
+(defn get-x-movable [world]
+  (let [obj (first world)]
+    (if (second (first obj))
+      (get-x-movable (rest world))
+      (first (second obj)))))
+
+;; Given an observed final position, where did the block come from?
+(def observed-x 160)
+
+(def init-xs
+  (mh-query 50 5
+    (let [init-state (cons (random-block) world)
+          final-state (run-physics 1000 init-state)]
+      (condition (< (abs' (- (get-x-movable final-state) observed-x)) 30))
+      (get-x-movable init-state))))
+
+(density init-xs "Initial X position")</code></pre>
+
+<p>What if the ball comes to rest at the left side, under the large circle (x about 60)? The right side?</p>
+
+<h1 id="example-causal-inference-in-medical-diagnosis"><a href="#example-causal-inference-in-medical-diagnosis">Example: Causal Inference in Medical Diagnosis</a></h1>
+
+<p>This classic Bayesian inference task is a special case of conditioning. Kahneman and Tversky, and Gigerenzer and colleagues, have studied how people make simple judgments like the following:</p>
+
+<blockquote>
+<p>The probability of breast cancer is 1% for a woman at 40 who participates in a routine screening. If a woman has breast cancer, the probability is 80% that she will have a positive mammography. If a woman does not have breast cancer, the probability is 9.6% that she will also have a positive mammography. A woman in this age group had a positive mammography in a routine screening. What is the probability that she actually has breast cancer?</p>
+</blockquote>
+
+<p>What is your intuition? Many people without training in statistical inference judge the probability to be rather high, typically between 0.7 and 0.9. The correct answer is much lower, less than 0.1, as we can see by evaluating this query:</p>
+
+<pre><code>(def samples
+  (mh-query 100 1
+    (let [breast-cancer (flip 0.01)
+          positive-mammogram (if breast-cancer (flip 0.8) (flip 0.096))]
+      (condition positive-mammogram)
+      breast-cancer)))
+(hist samples "breast cancer")</code></pre>
+
+<p>Tversky &amp; Kahneman (1974) named this kind of judgment error <em>base rate neglect</em>, because in order to make the correct judgment, one must realize that the key contrast is between the <em>base rate</em> of the disease, 0.01 in this case, and the <em>false alarm rate</em> or probability of a positive mammogram given no breast cancer, 0.096. The false alarm rate seems low compared to the probability of a positive mammogram given breast cancer (the <em>likelihood</em>), but what matters is that it is almost ten times higher than the base rate of the disease. All three of these quantities are needed to compute the probability of having breast cancer given a positive mammogram using Bayes&rsquo; rule for posterior conditional probability:</p>
+
+<p>\[P(\text{cancer} \mid \text{positive mammogram}) = \frac{P(\text{positive mammogram} \mid \text{cancer} ) \times P(\text{cancer})}{P(\text{positive mammogram})}\] \[= \frac{0.8 \times 0.01}{0.8 \times 0.01 + 0.096 \times 0.99} = 0.078\]</p>
+
+<p>Gigerenzer &amp; Hoffrage (1995) showed that this kind of judgment can be made much more intuitive to untrained reasoners if the relevant probabilities are presented as &ldquo;natural frequencies&rdquo;, or the sizes of subsets of relevant possible outcomes:</p>
+
+<blockquote>
+<p>On average, ten out of every 1000 women at age 40 who come in for a routine screen have breast cancer. Eight out of those ten women will get a positive mammography. Of the 990 women without breast cancer, 95 will also get a positive mammography. We assembled a sample of 1000 women at age 40 who participated in a routine screening. How many of those who got a positive mammography do you expect to actually have breast cancer?</p>
+</blockquote>
+
+<p>Now one can practically read off the answer from the problem formulation: 8 out of 103 (95+8) women in this situation will have breast cancer.</p>
+
+<p>Gigerenzer (along with Cosmides, Tooby and other colleagues) has argued that this formulation is easier because of evolutionary and computational considerations: human minds have evolved to count and compare natural frequencies of discrete events in the world, not to add, multiply and divide decimal probabilities. But this argument alone cannot account for the very broad human capacity for causal reasoning. We routinely make inferences for which we haven&rsquo;t stored up sufficient frequencies of events observed <em>in the world.</em></p>
+
+<p>However, the basic idea that the mind is good at manipulating frequencies of situations, but bad at arithmetic on continuous probability values, can be extended to cope with novel situations if the frequencies that are manipulated can be frequencies of <em>imagined</em> situations. Recall that probabilistic programs explicitly give instructions for sampling imagined situations, and only implicitly specify probability distributions. If human inference is similar to a probabilistic query then it would readily create and manipulate imagined situations, and this could explain both why the frequency framing of Bayesian probability judgment is natural to people and how people cope with rarer and more novel situations.</p>
+
+<p>The numbers given in the frequency formulation (or close approximations thereof) can be read off a tree of evaluation histories for 1000 calls of the program that specifies the causal model for this problem. Each path from root to leaf of such a tree represents a sequence of random choices made in evaluating the program (the first <code>flip</code> for breast cancer, the second for positive mammogram), with the number of traversals and the sampled value labeling each edge. Selecting just the hypothetical cases of women with a positive mammogram, and computing the fraction of those who also have breast cancer, corresponds exactly to <code>rejection-query</code>. Thus, we have used the causal representation in the above program to manufacture frequencies which can be used to arrive at the inference that relatively few women with positive mammograms actually have breast cancer.</p>
+
+<p>Yet unlike the rejection sampler people are quite bad at reasoning in this scenario. Why? One answer is that people don&rsquo;t represent their knowledge in quite the form of this simple program. Indeed, Krynski &amp; Tenenbaum (2007) have argued that human statistical judgment is fundamentally based on conditioning more explicit causal models: they suggested that &ldquo;base rate neglect&rdquo; and other judgment errors may occur when people are given statistical information that cannot be easily mapped to the parameters of the causal models they intuitively adopt to describe the situation. In the above example, they suggested that the notion of a false alarm rate is not intuitive to many people&mdash;particularly when the false alarm rate is ten times higher than the base rate of the disease that the test is intended to diagnose! They showed that &ldquo;base rate neglect&rdquo; could be eliminated by reformulating the breast cancer problem in terms of more intuitive causal models. For example, consider their version of the breast cancer problem (the exact numbers and wording differed slightly):</p>
+
+<blockquote>
+<p>1% of women at age 40 who participate in a routine screening will have breast cancer. Of those with breast cancer, 80% will receive a positive mammogram. 20% of women at age 40 who participate in a routine screening will have a benign cyst. Of those with a benign cyst, 50% will receive a positive mammogram due to unusually dense tissue of the cyst. All others will receive a negative mammogram. Suppose that a woman in this age group has a positive mammography in a routine screening. What is the probability that she actually has breast cancer?</p>
+</blockquote>
+
+<p>This question is easy for people to answer&mdash;empirically, just as easy as the frequency-based formulation given above. We may conjecture this is because the relevant frequencies can be computed from a simple query on the following more intuitive causal model:</p>
+
+<pre><code>(def samples
+  (mh-query 100 1
+    (let [breast-cancer (flip 0.01)
+          benign-cyst (flip 0.2)
+          positive-mammogram (or (and breast-cancer (flip 0.8))
+                                 (and benign-cyst (flip 0.5)))]
+      (condition positive-mammogram)
+      breast-cancer)))
+(hist samples "breast cancer")</code></pre>
+
+<p>Because this causal model&mdash;this probabilistic program&mdash;is more intuitive to people, they can imagine the appropriate situations, despite having been given percentages rather than frequencies. What makes this causal model more intuitive than the one above with an explicitly specified false alarm rate? Essentially we have replaced probabilistic dependencies on the &ldquo;non-occurrence&rdquo; of events (e.g., the dependence of a positive mammogram on <em>not</em> having breast cancer) with dependencies on explicitly specified alternative causes for observed effects (e.g., the dependence of a positive mammogram on having a benign cyst).</p>
+
+<p>A causal model framed in this way can scale up to significantly more complex situations. Recall our more elaborate medical diagnosis network from the previous section, which was also framed in this way using noisy-logical functions to describe the dependence of symptoms on disease:</p>
+
+<pre><code>(def samples
+  (mh-query 200 1
+    (let [lung-cancer (flip 0.01)
+          TB (flip 0.005)
+          cold (flip 0.2)
+          stomach-flu (flip 0.1)
+          other (flip 0.1)
+          cough (or (and cold (flip 0.5)) (and lung-cancer (flip 0.3)) (and TB (flip 0.7)) (and other (flip 0.01)))
+          fever (or (and cold (flip 0.3)) (and stomach-flu (flip 0.5)) (and TB (flip 0.2)) (and other (flip 0.01)))
+          chest-pain (or (and lung-cancer (flip 0.4)) (and TB (flip 0.5)) (and other (flip 0.01)))
+          shortness-of-breath (or (and lung-cancer (flip 0.4)) (and TB (flip 0.5)) (and other (flip 0.01)))]
+      (condition (and cough fever chest-pain shortness-of-breath))
+      (list lung-cancer TB))))
+(hist samples "Joint inferences for lung cancer and TB")</code></pre>
+
+<p>You can use this model to infer conditional probabilities for any subset of diseases conditioned on any pattern of symptoms. Try varying the symptoms in the conditioning set or the diseases in the query, and see how the model&rsquo;s inferences compare with your intuitions. For example, what happens to inferences about lung cancer and TB in the above model if you remove chest pain and shortness of breath as symptoms? More generally, we can condition on any set of events&mdash;any combination of symptoms and diseases&mdash;and query any others. We can also condition on the negation of an event using <code>(not ...)</code>: e.g., how does the probability of lung cancer (versus TB) change if we observe that the patient does <em>not</em> have a fever, does <em>not</em> have a cough, or does not have either symptom?</p>
+
+<p>A probabilistic program thus effectively encodes the answers to a very large number of possible questions in a very compact form, where each question has the form, &ldquo;Suppose we observe X, what can we infer about Y?&rdquo;. In the program above, there are \(3^9=19683\) possible simple conditioners (possible X&rsquo;s) corresponding to conjunctions of events or their negations (because the program has 9 stochastic Boolean-valued functions, each of which can be observed true, observed false, or not observed). Then for each of those X&rsquo;s there are a roughly comparable number of Y&rsquo;s, corresponding to all the possible conjunctions of variables that can be in the query set Y, making the total number of simple questions encoded on the order of 100 million. In fact, as we described above when we introduced complex queries, the true number of possible questions encoded in just a short program like this one is very much larger than that; usually the set is infinite. With <code>query</code> we can in principle compute the answer to every one of these questions. We are beginning to see the sense in which probabilistic programming provides the foundations for constructing a <em>language of thought</em>, as described in the Introduction: a finite system of knowledge that compactly and efficiently supports an infinite number of inference and decision tasks.</p>
+
+<p>Expressing our knowledge as a probabilistic program of this form also makes it easy to add in new relevant knowledge we may acquire, without altering or interfering with what we already know. For instance, suppose we decide to consider behavioral and demographic factors that might contribute causally to whether a patient has a given disease:</p>
+
+<pre><code>(def samples
+  (mh-query 200 1
+    (let [works-in-hospital (flip 0.01)
+          smokes (flip 0.2)
+          lung-cancer (or (flip 0.01) (and smokes (flip 0.02)))
+          TB (or (flip 0.005) (and works-in-hospital (flip 0.01)))
+          cold (or (flip 0.2) (and works-in-hospital (flip 0.25)))
+          stomach-flu (flip 0.1)
+          other (flip 0.1)
+          cough (or (and cold (flip 0.5)) (and lung-cancer (flip 0.3)) (and TB (flip 0.7)) (and other (flip 0.01)))
+          fever (or (and cold (flip 0.3)) (and stomach-flu (flip 0.5)) (and TB (flip 0.2)) (and other (flip 0.01)))
+          chest-pain (or (and lung-cancer (flip 0.4)) (and TB (flip 0.5)) (and other (flip 0.01)))
+          shortness-of-breath (or (and lung-cancer (flip 0.4)) (and TB (flip 0.5)) (and other (flip 0.01)))]
+      (condition (and cough chest-pain shortness-of-breath))
+      (list lung-cancer TB))))
+(hist samples "Joint inferences for lung cancer and TB")</code></pre>
+
+<p>Under this model, a patient with coughing, chest pain and shortness of breath is likely to have either lung cancer or TB. Modify the above code to see how these conditional inferences shift if you also know that the patient smokes or works in a hospital (where they could be exposed to various infections, including many worse infections than the typical person encounters). More generally, the causal structure of knowledge representation in a probabilistic program allows us to model intuitive theories that can grow in complexity continually over a lifetime, adding new knowledge without bound.</p>
+
+<h1 id="exercises"><a href="#exercises">Exercises</a></h1>
+
+<ol type="1">
+<li>
+<p><strong>Conditioning and prior manipulation.</strong> In the earlier <a href="02-generative-models.html#example-causal-models-in-medical-diagnosis">Medical Diagnosis</a> section we suggested understanding the patterns of symptoms for a particular disease by changing the prior probability of the disease such that it is always true.</p>
+<ol type="A">
+<li><p>For this example, does this procedure give the same answers as using <code>query</code> to <em>condition</em> on the disease being true?</p></li>
+<li><p>Why would this procedure give different answers than conditioning for more general hypotheticals? Construct an example where these are different. Then translate this into a prob-cljs model and show that manipulating the prior gives different answers than conditioning on an observation. Hint: think about changing the prior versus observing a variable that has a causal parent.</p></li>
+</ol>
+</li>
+
+<li>
+<p><strong>Computing marginals.</strong> Use the rules for computing probabilities to compute the marginal distribution on return values from these programs.</p>
+<pre><code>(rejection-query
+  (let [a (flip)
+        b (flip)]
+    (condition (or a b))
+    a))</code></pre>
+<pre><code>(rejection-query
+  (let [nice (mem (fn [person] (flip 0.7)))
+        smiles (fn [person] (if (nice person) (flip 0.8) (flip 0.5)))]
+    (condition (and (smiles 'alice) (smiles 'bob) (smiles 'alice)))
+    (nice 'alice)))</code></pre>
+</li>
+
+<li>
+<p><strong>Extending the smiles model.</strong></p>
+<ol type="A">
+<li><p>Describe (using ordinary English) what the second program above means.</p></li>
+<li><p>Write a version of the model that captures these two intuitions: (1) people are more likely to smile if they want something and (2) <em>nice</em> people are less likely to want something.</p>
+<pre><code>;; Your model here</code></pre>
+</li>
+<li><p>Given your extended model, how would you ask whether someone wants something from you, given that they are smiling and have rarely smiled before? In your answer, show the query and a histogram of the answers&mdash;in what ways do these answers make intuitive sense or fail to?</p>
+<pre><code>;; Your query here</code></pre>
+</li>
+</ol>
+</li>
+
+<li>
+<p><strong>Casino game.</strong> Consider the following game. A machine randomly gives Bob a letter of the alphabet; it gives a, e, i, o, u, y (the vowels) with probability 0.01 each and the remaining letters (i.e., the consonants) with probability 0.047 each. The probability that Bob wins depends on which letter he got. Letting \(h\) denote the letter and letting \(Q(h)\) denote the numeric position of that letter (e.g., \(Q(\text{a}) = 1, Q(\text{b}) = 2\), and so on), the probability of winning is \(1/Q(h)^2\). Suppose that we observe Bob winning but we don&rsquo;t know what letter he got. How can we use the observation that he won to update our beliefs about which letter he got? Let&rsquo;s express this formally. Before we begin, a bit of terminology: the set of letters that Bob could have gotten, \(\{a, b, c, d, \ldots, y, z\}\), is called the <em>hypothesis space</em>&mdash;it&rsquo;s our set of hypotheses about the letter.</p>
+<ol type="A">
+<li>In English, what does the posterior probability \(p(h \mid \text{win})\) represent?</li>
+<li>Manually compute \(p(h \mid \text{win})\) for each hypothesis (a spreadsheet is helpful here). Remember to normalize&mdash;make sure that summing all your \(p(h \mid \text{win})\) values gives you 1.</li>
+</ol>
+
+<p>Now, we&rsquo;re going to write this model using <code>enumeration-query</code>. Here is some starter code:</p>
+
+<pre><code>(def letters '(a b c d e f g h i j k l m n o p q r s t u v w x y z))
+(defn vowel? [letter] (boolean (some #{letter} '(a e i o u y))))
+(def letter-probs (map (fn [l] (if (vowel? l) 0.01 0.047)) letters))
+
+(defn get-position [letter]
+  (loop [i 0 ls letters]
+    (cond
+      (empty? ls) nil
+      (= letter (first ls)) (+ i 1)
+      :else (recur (+ i 1) (rest ls)))))
+
+;; Compute p(h | win)
+(def distribution
+  (enumeration-query
+    (let [my-letter (multinomial letters letter-probs)
+          my-position (get-position my-letter)
+          my-win-prob (/ 1.0 (* my-position my-position))
+          win? (flip my-win-prob)]
+      (condition win?)
+      my-letter)))
+
+(barplot distribution "p(letter | win)")</code></pre>
+
+<p>Note that you don&rsquo;t use <code>hist</code> or <code>repeatedly</code> here. With <code>enumeration-query</code>, function calls directly correspond to <em>distributions</em> (whereas with <code>rejection-query</code> or <code>mh-query</code>, function calls correspond only to <em>samples</em> and you have to build the data for histograms manually). If you have a distribution, you call <code>barplot</code>.</p>
+
+<ol start="3" type="A">
+<li><p>What does the <code>get-position</code> function do? What would happen if you ran <code>(get-position 'mango)</code> with the given <code>letters</code> list?</p></li>
+<li><p>What does the <code>multinomial</code> function do? Use <code>multinomial</code> to express this distribution:</p>
+<table>
+<tr><th>x</th><th>P(x)</th></tr>
+<tr><td>red</td><td>0.5</td></tr>
+<tr><td>blue</td><td>0.05</td></tr>
+<tr><td>green</td><td>0.4</td></tr>
+<tr><td>black</td><td>0.05</td></tr>
+</table>
+<pre><code>(def x (multinomial '(red blue green black) '(0.5 0.05 0.4 0.05)))
+x</code></pre>
+</li>
+<li><p>Run the starter code above to compute \(p(h \mid \text{win})\). What letter has the highest posterior probability? In English, what does it mean that this letter has the highest posterior? Make sure that your prob-cljs answers and hand-computed answers agree&mdash;note that this demonstrates the equivalence between the program view of conditional probability and the distributional view.</p></li>
+<li><p>Which is higher, \(p(\text{vowel} \mid \text{win})\) or \(p(\text{consonant} \mid \text{win})\)? Answer this using the prob-cljs code you wrote (hint: use the <code>vowel?</code> function to transform <code>my-letter</code> in the query expression).</p></li>
+<li><p>What difference do you see between your code and the mathematical notation? What are the advantages and disadvantages of each? Which do you prefer?</p></li>
+</ol>
+</li>
+</ol>
+
+<h1 id="references"><a href="#references">References</a></h1>
+
+<p>Gerstenberg, T., &amp; Goodman, N. D. (2012). Ping pong in Church: Productive use of concepts in human probabilistic inference. In <em>Proceedings of the 34th Annual Conference of the Cognitive Science Society</em>.</p>
+<p>Gigerenzer, G., &amp; Hoffrage, U. (1995). How to improve Bayesian reasoning without instruction: Frequency formats. <em>Psychological Review</em>, <em>102</em>(4), 684.</p>
+<p>Krynski, T. R., &amp; Tenenbaum, J. B. (2007). The role of causality in judgment under uncertainty. <em>Journal of Experimental Psychology: General</em>, <em>136</em>(3), 430.</p>
+<p>Tversky, A., &amp; Kahneman, D. (1974). Judgment under uncertainty: Heuristics and biases. <em>Science</em>, <em>185</em>(4157), 1124&ndash;1131.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="02-generative-models.html">&larr; Chapter 2: Generative Models</a>
+    <a href="04-patterns-of-inference.html">Chapter 4: Patterns of Inference &rarr;</a>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt member]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot display run-physics animate-physics]])" +
+      "(defn abs' [x] (js/Math.abs x))"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre:not(.norun)').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>

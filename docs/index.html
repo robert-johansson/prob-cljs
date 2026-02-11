@@ -30,7 +30,9 @@
 
   <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
 
+  <script type="application/x-scittle" src="prob/math.cljs"></script>
   <script type="application/x-scittle" src="prob/erp.cljs"></script>
+  <script type="application/x-scittle" src="prob/dist.cljs"></script>
   <script type="application/x-scittle" src="prob/inference.cljs"></script>
   <script type="application/x-scittle" src="prob/builtins.cljs"></script>
   <script type="application/x-scittle" src="prob/core.cljs"></script>
@@ -51,9 +53,13 @@
   <!-- Demo -->
   <script type="application/x-scittle">
   (require '[prob.core :refer [flip gaussian beta uniform uniform-draw
-                                condition factor mem mean variance
+                                random-integer multinomial sample-discrete
+                                gamma dirichlet exponential
+                                binomial poisson categorical
+                                condition factor observe mem mean variance
                                 rejection-query-fn mh-query-fn
-                                enumeration-query-fn]])
+                                enumeration-query-fn
+                                sample* observe* dist? enumerate* sum prod]])
   (require '[prob.macros :refer [rejection-query mh-query enumeration-query]])
 
   (def out (js/document.getElementById "output"))

@@ -1,7 +1,8 @@
 (ns prob.builtins
   "Built-in functions for probabilistic programming.
    Includes list operations, math, string ops, comparisons, and more.
-   These are available for direct use or re-export through prob.core.")
+   These are available for direct use or re-export through prob.core."
+  (:require [prob.erp :as erp]))
 
 (declare equal?)
 
@@ -32,9 +33,9 @@
 (defn cdr [x]
   (cond
     (instance? Pair x) (:cdr x)
-    (and (seq? x) (= (count (rest x)) 0)) '()
+    (and (seq? x) (empty? (rest x))) '()
     (seq? x) (rest x)
-    (and (vector? x) (= (count (rest x)) 0)) '()
+    (and (vector? x) (empty? (rest x))) '()
     (vector? x) (rest x)
     :else (throw (ex-info "cdr: not a pair" {:val x}))))
 
@@ -47,11 +48,7 @@
        (empty? (seq x))))
 
 (defn list? [x]
-  (or (and (clojure.core/seq? x) true)
-      (and (vector? x) true)
-      (nil? x)
-      (and (clojure.core/list? x) true)
-      false))
+  (or (seq? x) (vector? x) (nil? x)))
 
 (defn length [lst]
   (count (seq lst)))
@@ -320,13 +317,26 @@
 ;; ---------------------------------------------------------------------------
 
 (defn mem [f]
-  (let [cache (atom {})]
+  (let [fn-id (gensym "mem")
+        local-cache (volatile! {})]
     (fn [& args]
-      (if-let [cached (find @cache args)]
-        (val cached)
-        (let [result (apply f args)]
-          (swap! cache assoc args result)
-          result)))))
+      (if erp/*trace-state*
+        ;; Trace-aware: cache in :mem-cache of trace state (rolls back on MH reject)
+        (let [key [fn-id args]
+              state @erp/*trace-state*
+              cached (get (:mem-cache state) key ::not-found)]
+          (if (not= cached ::not-found)
+            cached
+            (let [result (apply f args)]
+              (vswap! erp/*trace-state* assoc-in [:mem-cache key] result)
+              result)))
+        ;; Outside inference: closure-local volatile cache
+        (let [cached (get @local-cache args ::not-found)]
+          (if (not= cached ::not-found)
+            cached
+            (let [result (apply f args)]
+              (vswap! local-cache assoc args result)
+              result)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Gensym
@@ -335,10 +345,10 @@
 (defn make-gensym
   ([] (make-gensym "g"))
   ([prefix]
-   (let [counter (atom 0)]
+   (let [counter (volatile! 0)]
      (fn []
        (let [n @counter]
-         (swap! counter inc)
+         (vswap! counter inc)
          (symbol (str prefix n)))))))
 
 (def ^:private default-gensym (make-gensym "g"))

@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ProbMods: Inference about Inference</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="../js/physics.js"></script>
+  <script>ProbPhysics.setup();</script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Probabilistic Models of Cognition</a></div>
+    <ul id="nav">
+      <li><a href="05-observing-sequences.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+
+<h1 id="chapter-title">6. Inference about Inference</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#prelude-thinking-about-assembly-lines">Prelude: Thinking About Assembly Lines</a></li>
+<li><a href="#social-cognition">Social Cognition</a><ul>
+<li><a href="#goal-inference">Goal Inference</a></li>
+<li><a href="#preferences">Preferences</a></li>
+<li><a href="#epistemic-states">Epistemic States</a></li>
+</ul></li>
+<li><a href="#communication-and-language">Communication and Language</a><ul>
+<li><a href="#a-communication-game">A Communication Game</a></li>
+<li><a href="#communicating-with-words">Communicating with Words</a></li>
+</ul></li>
+<li><a href="#planning">Planning</a></li>
+<li><a href="#exercises">Exercises</a></li>
+<li><a href="#references">References</a></li>
+</ul>
+</div>
+
+<p>The <code>rejection-query</code> operator is an ordinary function, in the sense that it can occur anywhere that any other function can occur. In particular, we can construct a query with another query inside of it: this represents hypothetical inference <em>about</em> a hypothetical inference. Nested queries are particularly useful in modeling social cognition: reasoning about another agent, who is herself reasoning.</p>
+
+
+<h1 id="prelude-thinking-about-assembly-lines"><a href="#prelude-thinking-about-assembly-lines">Prelude: Thinking About Assembly Lines</a></h1>
+
+<p>Imagine a factory where the widget-maker makes a stream of widgets, and the widget-tester removes the faulty ones. You don&rsquo;t know what tolerance the widget tester is set to, and wish to infer it. We can write this as a model where the <code>next-good-widget</code> function uses stochastic recursion to keep sampling until a widget exceeds the threshold:</p>
+
+<pre><code>(defn take-sample []
+  (rejection-query
+    (let [widget-maker (fn [] (multinomial '(0.2 0.3 0.4 0.5 0.6 0.7 0.8)
+                                           '(0.05 0.1 0.2 0.3 0.2 0.1 0.05)))
+          threshold (multinomial '(0.3 0.4 0.5 0.6 0.7) '(0.1 0.2 0.4 0.2 0.1))]
+      (letfn [(next-good-widget []
+                (let [widget (widget-maker)]
+                  (if (> widget threshold)
+                    widget
+                    (next-good-widget))))]
+        (condition (= (vec (repeatedly 3 next-good-widget)) [0.6 0.7 0.8]))
+        threshold))))
+(hist (repeatedly 20 take-sample) "Threshold")</code></pre>
+
+<p>But notice that the definition of <code>next-good-widget</code> is exactly like the definition of rejection sampling! We can re-write this as a nested-query model:</p>
+
+<pre><code>(defn take-sample []
+  (rejection-query
+    (let [widget-maker (fn [] (multinomial '(0.2 0.3 0.4 0.5 0.6 0.7 0.8)
+                                           '(0.05 0.1 0.2 0.3 0.2 0.1 0.05)))
+          threshold (multinomial '(0.3 0.4 0.5 0.6 0.7) '(0.1 0.2 0.4 0.2 0.1))
+          next-good-widget (fn []
+                             (rejection-query
+                               (let [widget (widget-maker)]
+                                 (condition (> widget threshold))
+                                 widget)))]
+      (condition (= (vec (repeatedly 3 next-good-widget)) [0.6 0.7 0.8]))
+      threshold)))
+(hist (repeatedly 20 take-sample) "Threshold")</code></pre>
+
+<p>Rather than thinking about the details inside the widget tester, we are now abstracting to represent that the machine correctly chooses a good widget (by some means).</p>
+
+
+<h1 id="social-cognition"><a href="#social-cognition">Social Cognition</a></h1>
+
+<p>How can we capture our intuitive theory of other people? Central to our understanding is the principle of rationality: &ldquo;an agent tends to choose actions that she expects to lead to outcomes that satisfy her goals.&rdquo; This is a slight restatement of the principle as discussed in Baker, Saxe, &amp; Tenenbaum (2009), building on earlier work by Dennett (1989), among others. We can formalize this in a function <code>choose-action</code>:</p>
+
+<pre class="norun"><code>;; Schematic rational action:
+(defn choose-action [goal? transition state]
+  (rejection-query
+    (let [action (action-prior)]
+      (condition (goal? (transition state action)))
+      action)))</code></pre>
+
+<p>The function <code>transition</code> describes the outcome of taking a particular action in a particular state, the predicate <code>goal?</code> determines whether or not a state accomplishes the goal, the input <code>state</code> represents the current state of the world. The function <code>action-prior</code> used within <code>choose-action</code> represents an a priori tendency towards certain actions.</p>
+
+<p>For instance, imagine that Sally walks up to a vending machine wishing to have a cookie. Imagine also that we know the mapping between buttons (potential actions) and foods (outcomes). We can then predict Sally&rsquo;s action:</p>
+
+<pre><code>(defn action-prior [] (uniform-draw '(a b)))
+
+(defn choose-action [goal? transition state]
+  (rejection-query
+    (let [action (action-prior)]
+      (condition (goal? (transition state action)))
+      action)))
+
+(defn vending-machine [state action]
+  (case action
+    a 'bagel
+    b 'cookie
+    'nothing))
+
+(defn have-cookie? [object] (= object 'cookie))
+
+(hist (repeatedly 100 (fn [] (choose-action have-cookie? vending-machine 'state)))
+      "Action choice")</code></pre>
+
+<p>We see, unsurprisingly, that if Sally wants a cookie, she will always press button b. In a world that is not quite so deterministic Sally&rsquo;s actions will be more stochastic:</p>
+
+<pre><code>(defn action-prior [] (uniform-draw '(a b)))
+
+(defn choose-action [goal? transition state]
+  (rejection-query
+    (let [action (action-prior)]
+      (condition (goal? (transition state action)))
+      action)))
+
+(defn vending-machine [state action]
+  (case action
+    a (multinomial '(bagel cookie) '(0.9 0.1))
+    b (multinomial '(bagel cookie) '(0.1 0.9))
+    'nothing))
+
+(defn have-cookie? [object] (= object 'cookie))
+
+(hist (repeatedly 100 (fn [] (choose-action have-cookie? vending-machine 'state)))
+      "Action choice")</code></pre>
+
+<p>Technically, this method of making choices is not optimal, but rather it is <em>soft-max</em> optimal (also known as following the &ldquo;Boltzmann policy&rdquo;).</p>
+
+<h2 id="goal-inference"><a href="#goal-inference">Goal Inference</a></h2>
+
+<p>Now imagine that we don&rsquo;t know Sally&rsquo;s goal (which food she wants), but we observe her pressing button b. We can use a query to infer her goal (this is sometimes called &ldquo;inverse planning&rdquo;, since the outer query &ldquo;inverts&rdquo; the query inside <code>choose-action</code>):</p>
+
+<pre><code>(defn action-prior [] (uniform-draw '(a b)))
+
+(defn choose-action [goal? transition state]
+  (rejection-query
+    (let [action (action-prior)]
+      (condition (goal? (transition state action)))
+      action)))
+
+(defn vending-machine [state action]
+  (case action
+    a (multinomial '(bagel cookie) '(0.9 0.1))
+    b (multinomial '(bagel cookie) '(0.1 0.9))
+    'nothing))
+
+(defn take-sample []
+  (rejection-query
+    (let [goal-food (uniform-draw '(bagel cookie))
+          goal? (fn [outcome] (= outcome goal-food))]
+      (condition (= (choose-action goal? vending-machine 'state) 'b))
+      goal-food)))
+(hist (repeatedly 100 take-sample) "Inferred goal")</code></pre>
+
+<p>Now let&rsquo;s imagine a more ambiguous case: button b is &ldquo;broken&rdquo; and will (uniformly) randomly result in a food from the machine. If we see Sally press button b, what goal is she most likely to have?</p>
+
+<pre><code>(defn action-prior [] (uniform-draw '(a b)))
+
+(defn choose-action [goal? transition state]
+  (rejection-query
+    (let [action (action-prior)]
+      (condition (goal? (transition state action)))
+      action)))
+
+(defn vending-machine [state action]
+  (case action
+    a (multinomial '(bagel cookie) '(0.9 0.1))
+    b (multinomial '(bagel cookie) '(0.5 0.5))
+    'nothing))
+
+(defn take-sample []
+  (rejection-query
+    (let [goal-food (uniform-draw '(bagel cookie))
+          goal? (fn [outcome] (= outcome goal-food))]
+      (condition (= (choose-action goal? vending-machine 'state) 'b))
+      goal-food)))
+(hist (repeatedly 100 take-sample) "Inferred goal")</code></pre>
+
+<p>Despite the fact that button b is equally likely to result in either bagel or cookie, we have inferred that Sally probably wants a cookie. This is a result of the inference implicitly taking into account the counterfactual alternatives: if Sally had wanted a bagel, she would have likely pressed button a. The inner query takes these alternatives into account, adjusting the probability of the observed action based on alternative goals.</p>
+
+<h2 id="preferences"><a href="#preferences">Preferences</a></h2>
+
+<p>If we have some prior knowledge about Sally&rsquo;s preferences (which goals she is likely to have) we can incorporate this immediately into the prior over goals (which above was uniform).</p>
+
+<p>A more interesting situation is when we believe that Sally has <em>some</em> preferences, but we don&rsquo;t know what they are. We capture this by adding a higher level prior (a uniform) over preferences. Using this we can learn about Sally&rsquo;s preferences from her actions: after seeing Sally press button b several times, what will we expect her to want the next time?</p>
+
+<pre><code>(defn action-prior [] (uniform-draw '(a b)))
+
+(defn choose-action [goal? transition state]
+  (rejection-query
+    (let [action (action-prior)]
+      (condition (goal? (transition state action)))
+      action)))
+
+(defn vending-machine [state action]
+  (case action
+    a (multinomial '(bagel cookie) '(0.9 0.1))
+    b (multinomial '(bagel cookie) '(0.1 0.9))
+    'nothing))
+
+(defn take-sample []
+  (rejection-query
+    (let [food-preferences (uniform 0 1)
+          goal-food-prior (fn [] (if (flip food-preferences) 'bagel 'cookie))
+          make-goal (fn [food] (fn [outcome] (= outcome food)))]
+      (condition (and (= (choose-action (make-goal (goal-food-prior)) vending-machine 'state) 'b)
+                      (= (choose-action (make-goal (goal-food-prior)) vending-machine 'state) 'b)
+                      (= (choose-action (make-goal (goal-food-prior)) vending-machine 'state) 'b)))
+      (goal-food-prior))))
+(hist (repeatedly 50 take-sample) "Preferred food")</code></pre>
+
+<p>Try varying the amount and kind of evidence. For instance, if Sally one time says &ldquo;I want a cookie&rdquo; (so you have directly observed her goal that time) how much evidence does that give you about her preferences, relative to observing her actions?</p>
+
+<p>In the above preference inference, it is extremely important that Sally <em>could have</em> taken a different action if she had a different preference (i.e. she could have pressed button <em>a</em> if she preferred to have a bagel). What happens if both buttons produce the same thing?</p>
+
+<pre><code>(defn action-prior [] (uniform-draw '(a b)))
+
+(defn choose-action [goal? transition state]
+  (rejection-query
+    (let [action (action-prior)]
+      (condition (goal? (transition state action)))
+      action)))
+
+(defn vending-machine [state action]
+  (case action
+    a (multinomial '(bagel cookie) '(0.1 0.9))
+    b (multinomial '(bagel cookie) '(0.1 0.9))
+    'nothing))
+
+(defn take-sample []
+  (rejection-query
+    (let [food-preferences (uniform 0 1)
+          goal-food-prior (fn [] (if (flip food-preferences) 'bagel 'cookie))
+          make-goal (fn [food] (fn [outcome] (= outcome food)))]
+      (condition (and (= (choose-action (make-goal (goal-food-prior)) vending-machine 'state) 'b)
+                      (= (choose-action (make-goal (goal-food-prior)) vending-machine 'state) 'b)
+                      (= (choose-action (make-goal (goal-food-prior)) vending-machine 'state) 'b)))
+      (goal-food-prior))))
+(hist (repeatedly 50 take-sample) "Preferred food")</code></pre>
+
+<p>Now we can draw no conclusion about Sally&rsquo;s preferences. Try varying the machine probabilities, how does the preference inference change? This effect, that the strength of a preference inference depends on the context of alternative actions, has been demonstrated in young infants by Kushnir, Xu, &amp; Wellman (2010).</p>
+
+<h2 id="epistemic-states"><a href="#epistemic-states">Epistemic States</a></h2>
+
+<p>In the above models of goal and preference inference, we have assumed that the structure of the world (both the operation of the vending machine and the, irrelevant, initial state) were common knowledge&mdash;they were non-random constructs used by both the agent (Sally) selecting actions and the observer interpreting these actions. What if we (the observer) don&rsquo;t know how exactly the vending machine works, but think that however it works Sally knows? We can capture this by placing uncertainty on the vending machine, inside the overall query but &ldquo;outside&rdquo; of Sally&rsquo;s inference:</p>
+
+<pre><code>(defn action-prior [] (uniform-draw '(a b)))
+
+(defn choose-action [goal? transition state]
+  (rejection-query
+    (let [action (action-prior)]
+      (condition (goal? (transition state action)))
+      action)))
+
+(defn make-vending-machine [a-effects b-effects]
+  (fn [state action]
+    (case action
+      a (multinomial '(bagel cookie) a-effects)
+      b (multinomial '(bagel cookie) b-effects)
+      'nothing)))
+
+(defn take-sample []
+  (rejection-query
+    (let [a-effects (dirichlet '(1 1))
+          b-effects (dirichlet '(1 1))
+          vending-machine (make-vending-machine a-effects b-effects)
+          goal-food (uniform-draw '(bagel cookie))
+          goal? (fn [outcome] (= outcome goal-food))]
+      (condition (and (= goal-food 'cookie)
+                      (= (choose-action goal? vending-machine 'state) 'b)))
+      (second b-effects))))
+(def samples (repeatedly 100 take-sample))
+(display "mean:" (mean samples))
+(density samples "Probability that b gives cookie")</code></pre>
+
+<p>Here we have conditioned on Sally wanting the cookie and Sally choosing to press button b. Thus, we have no <em>direct</em> evidence of the effects of pressing the buttons on the machine. What happens if you condition instead on the action and outcome, but not the intentional choice of this outcome?</p>
+
+<p>Now imagine a vending machine that has only one button, but it can be pressed many times. We don&rsquo;t know what the machine will do in response to a given button sequence. We do know that pressing more buttons is less a priori likely:</p>
+
+<pre><code>(defn action-prior [] (if (flip 0.7) '(a) (cons 'a (action-prior))))
+
+(defn choose-action [goal? transition state]
+  (rejection-query
+    (let [action (action-prior)]
+      (condition (goal? (transition state action)))
+      action)))
+
+(defn take-sample []
+  (rejection-query
+    (let [buttons->outcome-probs (mem (fn [buttons] (dirichlet '(1 1))))
+          vending-machine (fn [state action]
+                            (multinomial '(bagel cookie) (buttons->outcome-probs action)))
+          goal-food (uniform-draw '(bagel cookie))
+          goal? (fn [outcome] (= outcome goal-food))]
+      (condition (and (= goal-food 'cookie)
+                      (= (choose-action goal? vending-machine 'state) '(a a))))
+      (list (second (buttons->outcome-probs '(a a)))
+            (second (buttons->outcome-probs '(a)))))))
+(def samples (repeatedly 100 take-sample))
+(density (map first samples) "Probability that (a a) gives cookie")
+(density (map second samples) "Probability that (a) gives cookie")</code></pre>
+
+<p>Compare the inferences that result if Sally presses the button twice to those if she only presses the button once. Why can we draw much stronger inferences about the machine when Sally chooses to press the button twice? When Sally does press the button twice, she could have done the &ldquo;easier&rdquo; (or rather, a priori more likely) action of pressing the button just once. Since she doesn&rsquo;t, a single press must have been unlikely to result in a cookie. This is an example of the <em>principle of efficiency</em>&mdash;all other things being equal, an agent will take the actions that require least effort (and hence, when an agent expends more effort all other things must not be equal).</p>
+
+<p>In these examples we have seen two important assumptions combining to allow us to infer something about the world from the indirect evidence of an agent&rsquo;s actions. The first assumption is the principle of rational action, the second is an assumption of <em>knowledgeability</em>&mdash;we assumed that Sally knows how the machine works, though we don&rsquo;t. Thus inference about inference can be a powerful way to learn what others already know, by observing their actions. (This example was inspired by Goodman, Baker, &amp; Tenenbaum (2009).)</p>
+
+<h3>Joint inference about beliefs and desires</h3>
+
+<p>In social cognition, we often make joint inferences about two kinds of mental states: agents&rsquo; beliefs about the world and their desires, goals or preferences. We can see an example of such a joint inference in the vending machine scenario. Suppose we condition on two observations: that Sally presses the button twice, and that this results in a cookie. Then, assuming that she knows how the machine works, we jointly infer that she wanted a cookie, that pressing the button twice is likely to give a cookie, and that pressing the button once is unlikely to give a cookie:</p>
+
+<pre><code>(defn action-prior [] (if (flip 0.7) '(a) (cons 'a (action-prior))))
+
+(defn choose-action [goal? transition state]
+  (rejection-query
+    (let [action (action-prior)]
+      (condition (goal? (transition state action)))
+      action)))
+
+(defn take-sample []
+  (rejection-query
+    (let [buttons->outcome-probs (mem (fn [buttons] (dirichlet '(1 1))))
+          vending-machine (fn [state action]
+                            (multinomial '(bagel cookie) (buttons->outcome-probs action)))
+          goal-food (uniform-draw '(bagel cookie))
+          goal? (fn [outcome] (= outcome goal-food))]
+      (condition (and (= (vending-machine 'state '(a a)) 'cookie)
+                      (= (choose-action goal? vending-machine 'state) '(a a))))
+      (list (second (buttons->outcome-probs '(a a)))
+            (second (buttons->outcome-probs '(a)))
+            goal-food))))
+(def samples (repeatedly 100 take-sample))
+(density (map first samples) "Probability that (a a) gives cookie")
+(density (map second samples) "Probability that (a) gives cookie")
+(hist (map #(nth % 2) samples) "Goal probabilities")</code></pre>
+
+<p>Notice the U-shaped distribution for the effect of pressing the button just once. Without any direct evidence about what happens when the button is pressed just once, we can infer that it probably won&rsquo;t give a cookie&mdash;because her goal is likely to have been a cookie but she didn&rsquo;t press the button just once&mdash;but there is a small chance that her goal was actually not to get a cookie, in which case pressing the button once could result in a cookie. This very complex (and hard to describe!) inference comes naturally from joint inference of goals and knowledge.</p>
+
+
+<h1 id="communication-and-language"><a href="#communication-and-language">Communication and Language</a></h1>
+
+<h2 id="a-communication-game"><a href="#a-communication-game">A Communication Game</a></h2>
+
+<p>Imagine playing the following two-player game. On each round the &ldquo;teacher&rdquo; pulls a die from a bag of weighted dice, and has to communicate to the &ldquo;learner&rdquo; which die it is (both players are familiar with the dice and their weights). However, the teacher may only communicate by giving the learner examples: showing them faces of the die.</p>
+
+<p>We can formalize the inference of the teacher in choosing the examples to give by assuming that the goal of the teacher is to successfully teach the hypothesis&mdash;that is, to choose examples such that the learner will infer the intended hypothesis:</p>
+
+<pre><code>(defn die->probs [die]
+  (case die
+    A '(0.0 0.2 0.8)
+    B '(0.1 0.3 0.6)
+    'error))
+
+(defn side-prior [] (uniform-draw '(red green blue)))
+(defn die-prior [] (if (flip) 'A 'B))
+(defn roll [die] (multinomial '(red green blue) (die->probs die)))
+
+(declare teacher)
+
+(defn learner [side depth]
+  (rejection-query
+    (let [die (die-prior)]
+      (condition (if (= depth 0)
+                   (= side (roll die))
+                   (= side (teacher die (- depth 1)))))
+      die)))
+
+(defn teacher [die depth]
+  (rejection-query
+    (let [side (side-prior)]
+      (condition (= die (learner side depth)))
+      side)))
+
+(def depth 0)
+(learner 'green depth)</code></pre>
+
+<p>This pair of mutually recursive functions represents a teacher choosing examples or a learner inferring a hypothesis, each thinking about the other. However, notice that this recursion will never halt&mdash;it will be an unending chain of &ldquo;I think that you think that I think that&hellip;&rdquo;. To avoid this infinite recursion we say that eventually (at depth 0) the learner will just assume that the teacher rolled the die and showed the side that came up (rather than reasoning about the teacher choosing a side).</p>
+
+<p>If we run this with recursion depth 0&mdash;that is a learner that does probabilistic inference without thinking about the teacher thinking&mdash;we find the learner infers hypothesis B most of the time (about 60% of the time). This is the same as using the &ldquo;strong sampling&rdquo; assumption: the learner infers B because B is more likely to have landed on green. However, if we increase the recursion depth we find this reverses: the learner infers B only about 40% of the time. Now die A becomes the better inference, because &ldquo;if the teacher had meant to communicate B, they would have shown the red side because that can never come from A.&rdquo;</p>
+
+<p>This model has been proposed by Shafto, Goodman, &amp; Frank (2012) as a model of natural pedagogy.</p>
+
+<h2 id="communicating-with-words"><a href="#communicating-with-words">Communicating with Words</a></h2>
+
+<p>Unlike the situation above, in which concrete examples were given from teacher to student, words in natural language denote more abstract concepts. However, we can use almost the same setup to reason about speakers and listeners communicating with words, if we assume that sentences have <em>literal meanings</em>, which anchor sentences to possible worlds. We assume for simplicity that the meaning of sentences are truth-functional: that each sentence corresponds to a function from states of the world to true/false.</p>
+
+<p>As above, the speaker chooses what to say in order to lead the listener to infer the correct state. The listener does an inference of the state of the world given that the speaker chose to say what they did. At depth 0, the listener simply conditions on the literal meaning of the sentence; at greater depths, the listener reasons about what the speaker would have said.</p>
+
+<h3>Example: Scalar Implicature</h3>
+
+<p>Let us imagine a situation in which there are three plants which may or may not have sprouted. We imagine that there are three sentences that the speaker could say, &ldquo;All of the plants have sprouted&rdquo;, &ldquo;Some of the plants have sprouted&rdquo;, or &ldquo;None of the plants have sprouted&rdquo;. For simplicity we represent the worlds by the number of sprouted plants (0, 1, 2, or 3) and take a uniform prior over worlds.</p>
+
+<pre><code>(defn state-prior [] (uniform-draw '(0 1 2 3)))
+(defn sentence-prior [] (uniform-draw '(all some none)))
+
+(defn meaning [words state]
+  (case words
+    all  (= 3 state)
+    some (< 0 state)
+    none (= 0 state)
+    false))
+
+(declare speaker)
+
+(defn listener [words depth]
+  (rejection-query
+    (let [state (state-prior)]
+      (condition (if (= depth 0)
+                   (meaning words state)
+                   (= words (speaker state (- depth 1)))))
+      state)))
+
+(defn speaker [state depth]
+  (rejection-query
+    (let [words (sentence-prior)]
+      (condition (= state (listener words depth)))
+      words)))
+
+(def depth 1)
+(hist (repeatedly 100 (fn [] (listener 'some depth)))
+      "Listener hears 'some'")</code></pre>
+
+<p>We see that if the listener hears &ldquo;some&rdquo; the probability of three out of three is low, even though the basic meaning of &ldquo;some&rdquo; is equally consistent with 3/3, 1/3, and 2/3. This is called the &ldquo;some but not all&rdquo; implicature. The listener reasons: if all three had sprouted, the speaker would likely have said &ldquo;all&rdquo;; since the speaker said &ldquo;some&rdquo;, it&rsquo;s likely that not all sprouted.</p>
+
+
+<h1 id="planning"><a href="#planning">Planning</a></h1>
+
+<p>The <code>choose-action</code> function we have been using is a single-step, goal-based decision procedure. We can also formulate decision problems in terms of <em>utilities</em>:</p>
+
+<pre><code>(defn normalize [lst]
+  (let [s (sum lst)]
+    (map #(/ % s) lst)))
+
+(defn match-fn [utility]
+  (sample-discrete (normalize utility)))
+
+(defn softmax [utility b]
+  (sample-discrete (normalize (map #(js/Math.exp (* b %)) utility))))
+
+(def utility-function '(1 2 3 4 5))
+(hist (repeatedly 1000 (fn [] (match-fn utility-function))) "matching")
+(hist (repeatedly 1000 (fn [] (softmax utility-function 1))) "softmax")</code></pre>
+
+<p>The <code>match-fn</code> procedure normalizes the utility values and samples proportionally. The <code>softmax</code> procedure exponentiates utilities before normalizing, which sharpens the distribution towards higher-utility actions.</p>
+
+<p>For more complex problems, we can extend to multi-step planning. Here we model an agent navigating traffic lights to reach a goal position. The agent can <code>go</code> or <code>stop</code> at each step; running a red light risks being caught and sent back to position 0:</p>
+
+<pre><code>(defn action-prior [] (if (flip 0.5) 'go 'stop))
+
+(def cheat-det 0.9)
+
+(defn forward-model [state-action]
+  (let [state (first state-action)
+        action (second state-action)
+        light (first state)
+        position (second state)]
+    [(if (flip 0.5) 'red-light 'green-light)
+     (if (= action 'go)
+       (if (and (= light 'red-light) (flip cheat-det))
+         0
+         (+ position 1))
+       position)]))
+
+(defn transition [state-action]
+  [(forward-model state-action) (action-prior)])
+
+(defn rollout [next-fn init end?]
+  (if (end? init)
+    (list init)
+    (cons init (rollout next-fn (next-fn init) end?))))
+
+(def discount 0.95)
+(defn ending? [x] (flip (- 1 discount)))
+
+(def goal-pos 5)
+(defn goal-function [state-action-seq]
+  (> (second (first (last state-action-seq))) goal-pos))
+
+(defn sample-action [trans start-state goal? ending?]
+  (rejection-query
+    (let [first-action (action-prior)
+          state-action-seq (rollout trans [start-state first-action] ending?)]
+      (condition (goal? state-action-seq))
+      state-action-seq)))
+
+(sample-action transition ['green-light 1] goal-function ending?)</code></pre>
+
+<p>This model represents sub-optimal planning as inference: the agent samples random action sequences and conditions on reaching the goal. Trajectories that reach the goal more efficiently are more likely to be sampled. Note: this example may take a moment to run due to the rejection sampling over long trajectories.</p>
+
+
+<h1 id="exercises"><a href="#exercises">Exercises</a></h1>
+
+<ol type="1">
+<li>
+<p><strong>Tricky Agents.</strong> What would happen if Sally knew you were watching her and wanted to deceive you?</p>
+
+<p>A) Complete the code below so that <code>choose-action</code> chooses a misdirection if Sally is deceptive. Then describe and show what happens if you knew Sally was deceptive and chose action &ldquo;b&rdquo;.</p>
+
+<p>B) What happens if you don&rsquo;t know Sally is deceptive and she chooses &ldquo;b&rdquo; and then &ldquo;b&rdquo;? What if she chooses &ldquo;a&rdquo; and then &ldquo;b&rdquo;? Show the models and describe the difference in behavior.</p>
+
+<pre><code>(defn action-prior [] (uniform-draw '(a b c)))
+
+(defn choose-action [goal? transition state deceive]
+  (rejection-query
+    (let [action (action-prior)]
+      ;; Fill in: if deceive is true, choose an action that does NOT
+      ;; satisfy the goal; otherwise choose one that does.
+      (condition (if deceive
+                   (not (goal? (transition state action)))
+                   (goal? (transition state action))))
+      action)))
+
+(defn vending-machine [state action]
+  (case action
+    a (multinomial '(bagel cookie doughnut) '(0.8 0.1 0.1))
+    b (multinomial '(bagel cookie doughnut) '(0.1 0.8 0.1))
+    c (multinomial '(bagel cookie doughnut) '(0.1 0.1 0.8))
+    'nothing))
+
+(defn take-sample []
+  (rejection-query
+    (let [deceive (flip 0.5)
+          goal-food (uniform-draw '(bagel cookie doughnut))
+          goal? (fn [outcome] (= outcome goal-food))
+          sally-choice (fn [] (choose-action goal? vending-machine 'state deceive))]
+      ;; Fill in your condition here:
+      (condition (= (sally-choice) 'b))
+      goal-food)))
+(hist (repeatedly 100 take-sample) "Sally's goal")</code></pre>
+</li>
+
+<li>
+<p><strong>Monty Hall.</strong> Here, we will use the tools of Bayesian inference to explore a classic statistical puzzle&mdash;the Monty Hall problem:</p>
+
+<blockquote>
+<p>Alice is on a game show and she&rsquo;s given the choice of three doors. Behind one door is a car; behind the others, goats. She picks door 1. The host, Monty, knows what&rsquo;s behind the doors and opens another door, say No. 3, revealing a goat. He then asks Alice if she wants to switch doors. Should she switch?</p>
+</blockquote>
+
+<p>Intuitively, it may seem like switching doesn&rsquo;t matter. However, the canonical solution is that you <em>should</em> switch doors. Whether you should switch depends crucially on how you believe Monty chooses doors to open.</p>
+
+<p>A) Write the model where the host <em>randomly</em> picks a door. Should Alice switch?</p>
+<p>B) Write the model where Monty randomly picks a door that is <em>neither</em> the prize door <em>nor</em> Alice&rsquo;s door. Should Alice switch?</p>
+<p>C) Write the model where Monty randomly picks a door that is not Alice&rsquo;s door.</p>
+<p>D) Write the model where Monty randomly picks a door that is not the prize door.</p>
+
+<pre><code>(defn remove-items [lst bad-items]
+  (if (empty? lst)
+    lst
+    (let [kar (first lst)]
+      (if (member kar bad-items)
+        (remove-items (rest lst) bad-items)
+        (cons kar (remove-items (rest lst) bad-items))))))
+
+(def doors (list 1 2 3))
+
+;; Example: Monty avoids both Alice's door and the prize door
+(barplot
+  (enumeration-query
+    (let [alice-door 1
+          prize-door (uniform-draw doors)
+          ;; Monty picks a door that is neither Alice's nor the prize
+          monty-door (uniform-draw (remove-items doors (list alice-door prize-door)))]
+      (condition (= monty-door 3))
+      ;; Should Alice switch to the remaining door?
+      (= prize-door (first (remove-items doors (list alice-door monty-door))))))
+  "Switch wins?")</code></pre>
+</li>
+</ol>
+
+
+<h1 id="references"><a href="#references">References</a></h1>
+
+<p>Baker, C. L., Saxe, R., &amp; Tenenbaum, J. B. (2009). Action understanding as inverse planning. <em>Cognition</em>, <em>113</em>(3), 329&ndash;349.</p>
+<p>Dennett, D. C. (1989). <em>The Intentional Stance</em>. MIT Press.</p>
+<p>Goodman, N. D., Baker, C. L., &amp; Tenenbaum, J. B. (2009). Cause and intent: Social reasoning in causal learning. <em>Proceedings of the 31st Annual Meeting of the Cognitive Science Society</em>.</p>
+<p>Kushnir, T., Xu, F., &amp; Wellman, H. M. (2010). Young children use statistical sampling to infer the preferences of other people. <em>Psychological Science</em>, <em>21</em>(8), 1134&ndash;1140.</p>
+<p>Shafto, P., Goodman, N. D., &amp; Frank, M. C. (2012). Learning from others: The consequences of psychological reasoning for human learning. <em>Perspectives on Psychological Science</em>, <em>7</em>(4), 341&ndash;351.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="05-observing-sequences.html">&larr; Chapter 5: Models for Sequences of Observations</a>
+    <span></span>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt member pair null? equal? make-list length" +
+      "                                  string-append abs sample fold iota]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot display run-physics animate-physics]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre:not(.norun)').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>

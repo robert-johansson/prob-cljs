@@ -59,6 +59,50 @@
             _ (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text") (.setAttribute "class" "axis-label") (.setAttribute "x" (+ x (/ bw 2))) (.setAttribute "y" (- y 3)) (.setAttribute "text-anchor" "middle") (-> .-textContent (set! (.toFixed p 3)))))]))
     (js/__appendToOutput c) nil))
 
+(defn- pair-car [d] (if (contains? d :car) (:car d) (first d)))
+(defn- pair-cdr [d] (if (contains? d :cdr) (:cdr d) (second d)))
+
+(defn scatter [data label]
+  (let [data (vec data)
+        xs (mapv (fn [d] (if (sequential? d) (first d) (pair-car d))) data)
+        ys (mapv (fn [d] (if (sequential? d) (second d) (pair-cdr d))) data)
+        x-min (apply min xs) x-max (apply max xs) y-min (apply min ys) y-max (apply max ys)
+        x-rng (let [r (- x-max x-min)] (if (zero? r) 1 r))
+        y-rng (let [r (- y-max y-min)] (if (zero? r) 1 r))
+        cw 350 ch 300 ml 40 mr 10 mb 30 mt 20
+        pw (- cw ml mr) ph (- ch mb mt)
+        c (doto (js/document.createElement "div") (-> .-className (set! "chart-container")))
+        t (doto (js/document.createElement "div") (-> .-className (set! "chart-title")) (-> .-textContent (set! (or label ""))))
+        _ (.appendChild c t)
+        svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "svg") (.setAttribute "width" cw) (.setAttribute "height" ch))
+        _ (.appendChild c svg)]
+    ;; axes
+    (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "line")
+                        (.setAttribute "x1" ml) (.setAttribute "y1" mt) (.setAttribute "x2" ml) (.setAttribute "y2" (+ mt ph))
+                        (.setAttribute "stroke" "#999") (.setAttribute "stroke-width" "1")))
+    (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "line")
+                        (.setAttribute "x1" ml) (.setAttribute "y1" (+ mt ph)) (.setAttribute "x2" (+ ml pw)) (.setAttribute "y2" (+ mt ph))
+                        (.setAttribute "stroke" "#999") (.setAttribute "stroke-width" "1")))
+    ;; axis labels
+    (doseq [i (range 6)]
+      (let [v (+ x-min (* x-rng (/ i 5))) x (+ ml (* (/ i 5) pw))]
+        (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text")
+                            (.setAttribute "class" "axis-label") (.setAttribute "x" x) (.setAttribute "y" (- ch 5))
+                            (.setAttribute "text-anchor" "middle") (-> .-textContent (set! (str (js/Math.round v))))))))
+    (doseq [i (range 6)]
+      (let [v (+ y-min (* y-rng (/ i 5))) y (- (+ mt ph) (* (/ i 5) ph))]
+        (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text")
+                            (.setAttribute "class" "axis-label") (.setAttribute "x" (- ml 5)) (.setAttribute "y" (+ y 4))
+                            (.setAttribute "text-anchor" "end") (-> .-textContent (set! (str (js/Math.round v))))))))
+    ;; points
+    (doseq [i (range (count data))]
+      (let [px (+ ml (* (/ (- (nth xs i) x-min) x-rng) pw))
+            py (- (+ mt ph) (* (/ (- (nth ys i) y-min) y-rng) ph))]
+        (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "circle")
+                            (.setAttribute "cx" px) (.setAttribute "cy" py) (.setAttribute "r" "3")
+                            (.setAttribute "fill" "#4a90d9") (.setAttribute "opacity" "0.6")))))
+    (js/__appendToOutput c) nil))
+
 (defn display [& args]
   (js/__appendTextToOutput (apply str (interpose " " args))))
 

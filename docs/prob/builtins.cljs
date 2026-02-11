@@ -1,7 +1,8 @@
 (ns prob.builtins
   "Built-in functions for probabilistic programming.
    Includes list operations, math, string ops, comparisons, and more.
-   These are available for direct use or re-export through prob.core.")
+   These are available for direct use or re-export through prob.core."
+  (:require [prob.erp :as erp]))
 
 (declare equal?)
 
@@ -9,33 +10,32 @@
 ;; Pair type (for non-list cons cells, e.g. (pair 1 2))
 ;; ---------------------------------------------------------------------------
 
-(defn- dotted-pair? [x]
-  (and (map? x) (= (:__type x) :pair)))
+(defrecord Pair [car cdr])
 
 (defn pair [a b]
   (if (or (seq? b) (vector? b) (list? b) (nil? b))
     (cons a b)
-    {:__type :pair :car a :cdr b}))
+    (->Pair a b)))
 
 (defn pair? [x]
   (boolean
-    (or (dotted-pair? x)
+    (or (instance? Pair x)
         (and (seq? x) (seq x))
         (and (vector? x) (seq x)))))
 
 (defn car [x]
   (cond
-    (dotted-pair? x) (:car x)
+    (instance? Pair x) (:car x)
     (seq? x) (first x)
     (vector? x) (first x)
     :else (throw (ex-info "car: not a pair" {:val x}))))
 
 (defn cdr [x]
   (cond
-    (dotted-pair? x) (:cdr x)
-    (and (seq? x) (= (count (rest x)) 0)) '()
+    (instance? Pair x) (:cdr x)
+    (and (seq? x) (empty? (rest x))) '()
     (seq? x) (rest x)
-    (and (vector? x) (= (count (rest x)) 0)) '()
+    (and (vector? x) (empty? (rest x))) '()
     (vector? x) (rest x)
     :else (throw (ex-info "cdr: not a pair" {:val x}))))
 
@@ -48,11 +48,7 @@
        (empty? (seq x))))
 
 (defn list? [x]
-  (or (and (clojure.core/seq? x) true)
-      (and (vector? x) true)
-      (nil? x)
-      (and (clojure.core/list? x) true)
-      false))
+  (or (seq? x) (vector? x) (nil? x)))
 
 (defn length [lst]
   (count (seq lst)))
@@ -127,7 +123,7 @@
     (assoc v n value)))
 
 (defn list-index [lst x]
-  (.indexOf (vec lst) x))
+  (.indexOf (to-array lst) x))
 
 (defn repeat-fn [n f]
   (repeatedly n f))
@@ -231,7 +227,7 @@
       (let [xs (seq x) ys (seq y)]
         (and (= (count xs) (count ys))
              (every? true? (map equal? xs ys))))
-      (and (dotted-pair? x) (dotted-pair? y))
+      (and (instance? Pair x) (instance? Pair y))
       (and (equal? (:car x) (:car y))
            (equal? (:cdr x) (:cdr y)))
       (and (nil? x) (nil? y)) true
@@ -321,13 +317,26 @@
 ;; ---------------------------------------------------------------------------
 
 (defn mem [f]
-  (let [cache (atom {})]
+  (let [fn-id (gensym "mem")
+        local-cache (volatile! {})]
     (fn [& args]
-      (if-let [cached (find @cache args)]
-        (val cached)
-        (let [result (apply f args)]
-          (swap! cache assoc args result)
-          result)))))
+      (if erp/*trace-state*
+        ;; Trace-aware: cache in :mem-cache of trace state (rolls back on MH reject)
+        (let [key [fn-id args]
+              state @erp/*trace-state*
+              cached (get (:mem-cache state) key ::not-found)]
+          (if (not= cached ::not-found)
+            cached
+            (let [result (apply f args)]
+              (vswap! erp/*trace-state* assoc-in [:mem-cache key] result)
+              result)))
+        ;; Outside inference: closure-local volatile cache
+        (let [cached (get @local-cache args ::not-found)]
+          (if (not= cached ::not-found)
+            cached
+            (let [result (apply f args)]
+              (vswap! local-cache assoc args result)
+              result)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Gensym
@@ -336,10 +345,10 @@
 (defn make-gensym
   ([] (make-gensym "g"))
   ([prefix]
-   (let [counter (atom 0)]
+   (let [counter (volatile! 0)]
      (fn []
        (let [n @counter]
-         (swap! counter inc)
+         (vswap! counter inc)
          (symbol (str prefix n)))))))
 
 (def ^:private default-gensym (make-gensym "g"))

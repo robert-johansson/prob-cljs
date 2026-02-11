@@ -37,9 +37,11 @@ cd examples/ink-task-list && npm install && npx nbb -cp ../../src task-list.cljs
 ### Source layout (`src/prob/`)
 
 - **core.cljs** — Public API. Thin re-export layer over erp, inference, and builtins.
-- **erp.cljs** — Elementary Random Primitives (flip, gaussian, beta, gamma, dirichlet, etc.). Pure sampling functions using `js/Math.random()`. No log-probability scoring yet.
-- **inference.cljs** — Inference algorithms: rejection sampling, MH query (currently implemented as repeated rejection, not actual Metropolis-Hastings), and enumeration query (approximate via 1000 samples, not exact).
-- **builtins.cljs** — Utility functions: Lisp-style list operations (pair/car/cdr), math, string ops, set operations, memoization (`mem`), and type predicates. Designed for webchurch compatibility.
+- **erp.cljs** — Elementary Random Primitives (flip, gaussian, beta, gamma, dirichlet, binomial, poisson, categorical, etc.). Trace-aware sampling with log-probability scoring via the distribution protocol.
+- **dist.cljs** — Distribution protocol (`IDistribution`: `sample*`/`observe*`), enumeration protocol (`IEnumerable`: `enumerate*`), and drift proposal protocol (`IProposable`: `propose*`). All distribution records with constructors.
+- **math.cljs** — Mathematical special functions: `log-gamma-fn`, `log-sum-exp`, `digamma`, `erf`. Pure ClojureScript, zero deps.
+- **inference.cljs** — Inference algorithms: rejection sampling, real single-site trace-based MH with drift proposals, and exact enumeration (odometer over all discrete combinations). Uses `volatile!` with persistent hash-map traces.
+- **builtins.cljs** — Utility functions: Lisp-style list operations (pair/car/cdr), math, string ops, set operations, trace-aware memoization (`mem`), and type predicates. Designed for webchurch compatibility.
 - **macros.clj** — Clojure macros (`rejection-query`, `mh-query`, `enumeration-query`, `query`) that wrap body in thunks and delegate to the `-fn` variants in inference.
 - **sci.cljs** — SCI configuration for Scittle. Registers all prob namespaces with `sci/copy-var`. Defines SCI-compatible macros with `^:macro` metadata.
 
@@ -49,7 +51,9 @@ Entry point that calls `scittle/register-plugin!` to make prob namespaces availa
 
 ### Key design patterns
 
-**Exception-based rejection**: `condition` throws `ExceptionInfo` with a `::rejection` sentinel. `rejection-query-fn` catches these and retries (up to 10,000 attempts). `factor` does probabilistic rejection based on log-weights.
+**Exception-based rejection**: `condition` throws with a `::rejection` sentinel. `rejection-query-fn` catches these and retries (up to 100,000 attempts). `factor` does probabilistic rejection in rejection mode, or exact score accumulation in MH mode. `observe` delegates to `factor` via the distribution protocol's `observe*`.
+
+**Scoped volatiles**: Inference state uses `volatile!` (not `atom`) holding persistent hash-map traces. Volatiles are created inside inference functions and never escape. Outside inference, ERPs are pure sampling functions.
 
 **Macro → function delegation**: Macros like `(rejection-query ...)` wrap body in `(fn [] ...)` and call `rejection-query-fn`. The `-fn` variants are what SCI and direct callers use.
 
@@ -57,13 +61,15 @@ Entry point that calls `scittle/register-plugin!` to make prob namespaces availa
 
 ### docs/
 
-GitHub Pages deployment. `docs/index.html` has all prob source inlined for browser execution via Scittle CDN. `docs/probmods/` contains ProbMods tutorial adaptations.
+GitHub Pages deployment. `docs/index.html` has a standalone demo. `docs/prob/` contains copies of source files loaded via Scittle CDN. `docs/probmods/` contains ProbMods tutorial adaptations (Chapters 1-6).
 
 ## Known Limitations
 
-See `GAPS.md` for a detailed comparison with webchurch. Key gaps:
-- ERPs are sampling-only (no log-probability scoring)
-- No execution trace system or structural addresses
-- MH query is repeated rejection, not actual Metropolis-Hastings
-- Enumeration is approximate (Monte Carlo), not exact
-- Missing distributions: binomial, Poisson
+See `GAPS.md` for a detailed comparison with webchurch and Anglican. Remaining gaps:
+- No interruptible execution (CPS/generators) — blocks SMC/particle methods
+- No importance sampling
+- Missing distributions: uniform-discrete, chi-squared, student-t, laplace, multivariate normal
+- No random process abstraction (CRP, DP, GP)
+- No DPmem
+- No gradient infrastructure (needed for variational inference)
+- No PRNG seeding for reproducibility

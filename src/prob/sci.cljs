@@ -39,7 +39,10 @@
    'beta           (sci/copy-var erp/beta erp-ns)
    'gamma          (sci/copy-var erp/gamma erp-ns)
    'dirichlet      (sci/copy-var erp/dirichlet erp-ns)
-   'exponential    (sci/copy-var erp/exponential erp-ns)})
+   'exponential    (sci/copy-var erp/exponential erp-ns)
+   'binomial       (sci/copy-var erp/binomial erp-ns)
+   'poisson        (sci/copy-var erp/poisson erp-ns)
+   'categorical    (sci/copy-var erp/categorical erp-ns)})
 
 ;; ---------------------------------------------------------------------------
 ;; prob.dist
@@ -59,7 +62,11 @@
    'uniform-draw-dist   (sci/copy-var dist/uniform-draw-dist dist-ns)
    'random-integer-dist (sci/copy-var dist/random-integer-dist dist-ns)
    'multinomial-dist    (sci/copy-var dist/multinomial-dist dist-ns)
-   'sample-discrete-dist (sci/copy-var dist/sample-discrete-dist dist-ns)})
+   'sample-discrete-dist (sci/copy-var dist/sample-discrete-dist dist-ns)
+   'binomial-dist       (sci/copy-var dist/binomial-dist dist-ns)
+   'poisson-dist        (sci/copy-var dist/poisson-dist dist-ns)
+   'categorical-dist    (sci/copy-var dist/categorical-dist dist-ns)
+   'enumerate*          (sci/copy-var dist/enumerate* dist-ns)})
 
 ;; ---------------------------------------------------------------------------
 ;; prob.math
@@ -80,6 +87,7 @@
 (def inference-namespace
   {'condition            (sci/copy-var inference/condition inference-ns)
    'factor               (sci/copy-var inference/factor inference-ns)
+   'observe              (sci/copy-var inference/observe inference-ns)
    'rejection-query-fn   (sci/copy-var inference/rejection-query-fn inference-ns)
    'mh-query-fn          (sci/copy-var inference/mh-query-fn inference-ns)
    'enumeration-query-fn (sci/copy-var inference/enumeration-query-fn inference-ns)
@@ -194,9 +202,13 @@
    'gamma              (sci/copy-var core/gamma core-ns)
    'dirichlet          (sci/copy-var core/dirichlet core-ns)
    'exponential        (sci/copy-var core/exponential core-ns)
+   'binomial           (sci/copy-var core/binomial core-ns)
+   'poisson            (sci/copy-var core/poisson core-ns)
+   'categorical        (sci/copy-var core/categorical core-ns)
    'sample*            (sci/copy-var core/sample* core-ns)
    'observe*           (sci/copy-var core/observe* core-ns)
    'dist?              (sci/copy-var core/dist? core-ns)
+   'enumerate*         (sci/copy-var core/enumerate* core-ns)
    'bernoulli-dist     (sci/copy-var core/bernoulli-dist core-ns)
    'gaussian-dist      (sci/copy-var core/gaussian-dist core-ns)
    'uniform-dist       (sci/copy-var core/uniform-dist core-ns)
@@ -208,6 +220,9 @@
    'random-integer-dist (sci/copy-var core/random-integer-dist core-ns)
    'multinomial-dist   (sci/copy-var core/multinomial-dist core-ns)
    'sample-discrete-dist (sci/copy-var core/sample-discrete-dist core-ns)
+   'binomial-dist      (sci/copy-var core/binomial-dist core-ns)
+   'poisson-dist       (sci/copy-var core/poisson-dist core-ns)
+   'categorical-dist   (sci/copy-var core/categorical-dist core-ns)
    'log-gamma-fn       (sci/copy-var core/log-gamma-fn core-ns)
    'log-beta-fn        (sci/copy-var core/log-beta-fn core-ns)
    'log-fact           (sci/copy-var core/log-fact core-ns)
@@ -216,6 +231,7 @@
    'erf                (sci/copy-var core/erf core-ns)
    'condition          (sci/copy-var core/condition core-ns)
    'factor             (sci/copy-var core/factor core-ns)
+   'observe            (sci/copy-var core/observe core-ns)
    'rejection-query-fn (sci/copy-var core/rejection-query-fn core-ns)
    'mh-query-fn        (sci/copy-var core/mh-query-fn core-ns)
    'enumeration-query-fn (sci/copy-var core/enumeration-query-fn core-ns)

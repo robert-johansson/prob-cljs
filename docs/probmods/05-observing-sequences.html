@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ProbMods: Models for Sequences of Observations</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="../js/physics.js"></script>
+  <script>ProbPhysics.setup();</script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Probabilistic Models of Cognition</a></div>
+    <ul id="nav">
+      <li><a href="04-patterns-of-inference.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+      <li><a href="06-inference-about-inference.html">Next &rarr;</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+
+<h1 id="chapter-title">5. Models for Sequences of Observations</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#independent-and-exchangeable-sequences">Independent and Exchangeable Sequences</a></li>
+<li><a href="#markov-models">Markov Models</a></li>
+<li><a href="#example-subjective-randomness">Example: Subjective Randomness</a></li>
+<li><a href="#hidden-markov-models">Hidden Markov Models</a></li>
+<li><a href="#probabilistic-context-free-grammars">Probabilistic Context-free Grammars</a></li>
+<li><a href="#unfold">Unfold</a></li>
+<li><a href="#references">References</a></li>
+</ul>
+</div>
+
+<p>In the last chapter we learned about common patterns of inference that can result from a few observations, given the right model structure. There are also many common patterns of <em>data</em> that arise from certain model structures. It is common, for instance, to have a sequence of observations that we believe was each generated from the same causal process: a sequence of coin flips, a series of temperature readings from a weather station, the words in a sentence. In this chapter we explore models for sequences of observations, moving from simple models to those with increasingly complex statistical dependence between the observations.</p>
+
+
+<h1 id="independent-and-exchangeable-sequences"><a href="#independent-and-exchangeable-sequences">Independent and Exchangeable Sequences</a></h1>
+
+<p>If the observations have <em>nothing</em> to do with each other, except that they have the same distribution, they are called <em>identically, independently distributed</em> (usually abbreviated to i.i.d.). For instance the values that come from calling <code>flip</code> are i.i.d. To verify this, let&rsquo;s first check whether the distribution of two flips in the sequence look the same (are &ldquo;identical&rdquo;):</p>
+
+<pre><code>(defn sequence-fn [] (repeatedly 10 flip))
+(def sequences (repeatedly 1000 sequence-fn))
+(hist (map first sequences) "first flip")
+(hist (map second sequences) "second flip")</code></pre>
+
+<p>Now let&rsquo;s check that the first and second flips are independent, by conditioning on the first and seeing that the distribution of the second is (approximately) unchanged:</p>
+
+<pre><code>(defn samples [first-val]
+  (mh-query 1000 1
+    (let [s (vec (repeatedly 10 flip))]
+      (condition (= (first s) first-val))
+      (second s))))
+(hist (samples true) "second if first is true")
+(hist (samples false) "second if first is false")</code></pre>
+
+<p>It is easy to build other i.i.d. sequences, we simply construct a stochastic thunk (which, recall, represents a distribution) and evaluate it several times. For instance, here is an extremely simple model for the words in a sentence:</p>
+
+<pre><code>(defn thunk [] (multinomial '(chef omelet soup eat work bake stop)
+                            '(0.0032 0.4863 0.0789 0.0675 0.1974 0.1387 0.0277)))
+(repeatedly 10 thunk)</code></pre>
+
+<p>In this example the different words are indeed independent: you can show as above (by conditioning) that the first word tells you nothing about the second word. However, constructing sequences in this way it is easy to accidentally create a sequence that is not entirely independent. For instance:</p>
+
+<pre><code>(def word-probs (if (flip)
+  '(0.0032 0.4863 0.0789 0.0675 0.1974 0.1387 0.0277)
+  '(0.0699 0.1296 0.0278 0.4131 0.1239 0.2159 0.0194)))
+(defn thunk [] (multinomial '(chef omelet soup eat work bake stop)
+                            word-probs))
+(repeatedly 10 thunk)</code></pre>
+
+<p>While the sequence looks very similar, the words are not independent: learning about the first word tells us something about the <code>word-probs</code>, which in turn tells us about the second word. Let&rsquo;s show this in a slightly simpler example:</p>
+
+<pre><code>(defn samples [first-val]
+  (mh-query 1000 1
+    (let [prob (if (flip) 0.2 0.7)
+          myflip (fn [] (flip prob))
+          s (vec (repeatedly 10 myflip))]
+      (condition (= (first s) first-val))
+      (second s))))
+(hist (samples true) "second if first is true")
+(hist (samples false) "second if first is false")</code></pre>
+
+<p>Conditioning on the first value tells us something about the second. This model is thus not i.i.d., but it does have a slightly weaker property: it is <em>exchangeable</em>, meaning that the probability of a sequence is the same in any order.</p>
+
+<p>It turns out that exchangeable sequences can always be modeled in the form used for the last example: <strong>de Finetti&rsquo;s theorem</strong> says that, under certain technical conditions, any exchangeable sequence can be represented as follows, for some <code>latent-prior</code> and <code>observe-fn</code> functions:</p>
+
+<pre class="norun"><code>;; De Finetti representation:
+;; (defn make-sequence [n]
+;;   (let [latent-prior (sample-from-prior)]
+;;     (repeatedly n (fn [] (observe-fn latent-prior)))))</code></pre>
+
+<p>For example, consider the classic <em>Polya urn</em> model. Here, an urn contains some number of white and black balls. We draw n samples as follows: we take a random ball from the urn and keep it, but add an additional <code>replace</code> balls of the same color back into the urn. Here is this model:</p>
+
+<pre><code>(defn urn [white black replace n-samples]
+  (if (= n-samples 0)
+    '()
+    (let [ball (multinomial '(w b) (list white black))
+          add-white (if (= ball 'w) (- replace 1) 0)
+          add-black (if (= ball 'b) (- replace 1) 0)]
+      (cons ball
+            (urn (+ white add-white)
+                 (+ black add-black)
+                 replace
+                 (- n-samples 1))))))
+
+(def dist-urn
+  (let [[vals probs] (enumeration-query
+                       (let [balls (urn 1 2 4 3)]
+                         (condition true)
+                         (apply str (map name balls))))]
+    (list (reverse vals) (reverse probs))))
+(barplot dist-urn "Polya urn model")</code></pre>
+
+<p>Observe that this model is exchangeable&mdash;permutations of a sequence all have the same probability (e.g., <code>bbw</code>, <code>bwb</code>, <code>wbb</code> have the same probability; <code>bww</code>, <code>wbw</code>, <code>wwb</code> do too).</p>
+
+<p>Next, consider the de Finetti representation of this model:</p>
+
+<pre><code>(defn urn-deFinetti [white black replace n-samples]
+  (let [a (/ black replace)
+        b (/ white replace)
+        latent-prior (beta a b)
+        thunk (fn [] (if (flip latent-prior) 'b 'w))]
+    (repeatedly n-samples thunk)))
+
+(def samps-deFinetti
+  (mh-query 10000 1
+    (let [balls (urn-deFinetti 1 2 4 3)]
+      (condition true)
+      (apply str (map name balls)))))
+(hist samps-deFinetti "de Finetti Polya urn model")</code></pre>
+
+<p>Here, we sample a shared latent parameter &ndash; in this case, a sample from a beta distribution &ndash; and, using this parameter, generate n samples independently. Up to sampling error, we obtain the same distribution on sequences of draws.</p>
+
+
+<h1 id="markov-models"><a href="#markov-models">Markov Models</a></h1>
+
+<p>Exchangeable sequences don&rsquo;t depend on the order of the observations, but often the order <em>is</em> important. For instance, the temperature today is highly correlated with the temperature yesterday&mdash;if we were building a model of temperature readings we would want to take this into account. The simplest assumption we can make to include the order of the observations is that each observation depends on the previous observation, but not (directly) on the ones before that. This is called a <em>Markov model</em> (or, in linguistics and biology, a <em>bi-gram model</em>). Here is a simple Markov model for Boolean values:</p>
+
+<pre><code>(defn markov [prev-obs n]
+  (if (= n 0)
+    '()
+    (let [next-obs (if prev-obs (flip 0.9) (flip 0.1))]
+      (cons next-obs (markov next-obs (- n 1))))))
+(markov true 10)</code></pre>
+
+<p>Notice that the sequences sampled from this model have &ldquo;runs&rdquo; of true or false more than in the i.i.d. or exchangeable models above. This is because the <code>next-obs</code> will tend to be similar to the <code>prev-obs</code>. How would you adjust this model to make it tend to switch on each observation, rather than tending to stay the same?</p>
+
+<p>We can use a Markov model as a better (but still drastically simplified) model for sequences of words in language:</p>
+
+<pre><code>(def vocabulary '(chef omelet soup eat work bake stop))
+
+(defn sample-words [last-word]
+  (if (= last-word 'stop)
+    '()
+    (cons last-word
+      (let [next-word
+            (case last-word
+              start  (multinomial vocabulary '(0.0032 0.4863 0.0789 0.0675 0.1974 0.1387 0.0277))
+              chef   (multinomial vocabulary '(0.0699 0.1296 0.0278 0.4131 0.1239 0.2159 0.0194))
+              omelet (multinomial vocabulary '(0.2301 0.0571 0.1884 0.1393 0.0977 0.1040 0.1831))
+              soup   (multinomial vocabulary '(0.1539 0.0653 0.0410 0.1622 0.2166 0.2664 0.0941))
+              eat    (multinomial vocabulary '(0.0343 0.0258 0.6170 0.0610 0.0203 0.2401 0.0011))
+              work   (multinomial vocabulary '(0.0602 0.2479 0.0034 0.0095 0.6363 0.0291 0.0133))
+              bake   (multinomial vocabulary '(0.0602 0.2479 0.0034 0.0095 0.6363 0.0291 0.0133))
+              'error)]
+        (sample-words next-word)))))
+
+(sample-words 'start)</code></pre>
+
+<p>Each word is sampled from a multinomial distribution whose parameters are fixed, depending on the previous word (using a <code>case</code> statement). Notice that we control the length of the generated list here not with a fixed parameter, but by using the model itself: We start the recursion by sampling given the special symbol <code>start</code>. When we sample the symbol <code>stop</code> we end the recursion. Like the geometric distribution, this stochastic recursion can produce unbounded structures&mdash;in this case lists of words of arbitrary length.</p>
+
+<p>The above code may seem unnecessarily complex because it explicitly lists every transition probability. Suppose that we put a prior distribution on the multinomial transitions instead. Using <code>mem</code> this is very straightforward:</p>
+
+<pre><code>(def vocabulary '(chef omelet soup eat work bake stop))
+
+(def word->distribution
+  (mem (fn [word] (dirichlet (repeat (count vocabulary) 1)))))
+
+(defn transition [word]
+  (multinomial vocabulary (word->distribution word)))
+
+(defn sample-words [last-word]
+  (if (= last-word 'stop)
+    '()
+    (cons last-word (sample-words (transition last-word)))))
+
+(sample-words 'start)</code></pre>
+
+<p>This is very much like the way we created an exchangeable model above, except instead of one unknown probability list, we have one for each previous word. Models like this are often called &ldquo;hierarchical&rdquo; n-gram models. We consider hierarchical models in more detail in a later chapter.</p>
+
+
+<h1 id="example-subjective-randomness"><a href="#example-subjective-randomness">Example: Subjective Randomness</a></h1>
+
+<p>What does a random sequence look like? Is <code>00101</code> more random than <code>00000</code>? Is the former a better example of a sequence coming from a fair coin than the latter? Most people say so, but notice that if you flip a fair coin, these two sequences are equally probable. Yet these intuitions about randomness are pervasive and often misunderstood: In 1936 the Zenith corporation attempted to test the hypothesis that people are sensitive to psychic transmissions. During a radio program, a group of psychics would attempt to transmit a randomly drawn sequence of ones and zeros to the listeners. Listeners were asked to write down and then mail in the sequence they perceived. The data thus generated showed no systematic effect of the transmitted sequence&mdash;but it did show a strong preference for certain sequences (Goodfellow, 1938). The preferred sequences included 00101, 00110, 01100, and 01101.</p>
+
+<p>Griffiths &amp; Tenenbaum (2001) suggested that we can explain this bias if people are considering not the probability of the sequence under a fair-coin process, but the probability that the sequence would have come from a fair process as opposed to a non-uniform (trick) process:</p>
+
+<pre><code>(defn samples [sequence]
+  (mh-query 100 1
+    (let [isfair (flip)
+          coin (fn [] (flip (if isfair 0.5 0.2)))]
+      (condition (= sequence (vec (repeatedly 5 coin))))
+      isfair)))
+
+(hist (samples [false false true false true]) "00101 is fair?")
+(hist (samples [false false false false false]) "00000 is fair?")</code></pre>
+
+<p>This model posits that when considering randomness, as well as when imagining random sequences, people are more concerned with distinguishing a &ldquo;truly random&rdquo; generative process from a trick process. This version of the model doesn&rsquo;t think <code>01010</code> looks any less random than <code>01100</code> (try it), because even its &ldquo;trick process&rdquo; is i.i.d. and hence does not distinguish order. We could extend the model to consider a Markov model as the alternative (trick) generative process:</p>
+
+<pre><code>(defn samples [sequence]
+  (mh-query 100 1
+    (let [isfair (flip)]
+      (letfn [(transition [prev]
+                (flip (if isfair
+                        0.5
+                        (if prev 0.1 0.9))))
+              (markov-seq [prev n]
+                (if (= 0 n)
+                  '()
+                  (let [nxt (transition prev)]
+                    (cons nxt (markov-seq nxt (- n 1))))))]
+        (condition (= sequence (vec (markov-seq (flip) 5))))
+        isfair))))
+
+(hist (samples [false true false true false]) "01010 is fair?")
+(hist (samples [true false false true false]) "10010 is fair?")</code></pre>
+
+<p>This version thinks that alternating sequences are non-random, but there are other non-uniform generative processes (such as all-true) that it doesn&rsquo;t detect. How could we extend this model to detect more non-random sequences?</p>
+
+
+<h1 id="hidden-markov-models"><a href="#hidden-markov-models">Hidden Markov Models</a></h1>
+
+<p>Another popular model in computational linguistics is the <em>hidden Markov model</em> (HMM). The HMM extends the Markov model by assuming that the &ldquo;actual&rdquo; states aren&rsquo;t observable. Instead there is an &ldquo;observation model&rdquo; that generates an observation from each &ldquo;hidden state&rdquo;. We use the same construction as above to generate an unknown observation model:</p>
+
+<pre><code>(def states '(s1 s2 s3 s4 s5 s6 s7 s8 stop))
+(def vocabulary '(chef omelet soup eat work bake))
+
+(def state->observation-model
+  (mem (fn [state] (dirichlet (repeat (count vocabulary) 1)))))
+
+(defn observation [state]
+  (multinomial vocabulary (state->observation-model state)))
+
+(def state->transition-model
+  (mem (fn [state] (dirichlet (repeat (count states) 1)))))
+
+(defn state-transition [state]
+  (multinomial states (state->transition-model state)))
+
+(defn sample-words [last-state]
+  (if (= last-state 'stop)
+    '()
+    (cons (observation last-state) (sample-words (state-transition last-state)))))
+
+(sample-words 'start)</code></pre>
+
+
+<h1 id="probabilistic-context-free-grammars"><a href="#probabilistic-context-free-grammars">Probabilistic Context-free Grammars</a></h1>
+
+<p>The models above generate sequences of words, but lack constituent structure (or &ldquo;hierarchical structure&rdquo; in the linguistic sense).</p>
+
+<p>Probabilistic context-free grammars (PCFGs) are a straightforward (and canonical) way to generate sequences of words with constituent structure. There are many ways to write a PCFG in a probabilistic programming language. One especially direct way is to let each non-terminal be represented by a procedure; here constituency is embodied by one procedure calling another&mdash;that is by causal dependence.</p>
+
+<pre><code>(defn sample-rhs [rhs] (mapcat (fn [x] (x)) rhs))
+
+(defn terminal [t] (fn [] (list t)))
+
+(defn D [] (sample-rhs
+  (multinomial (list (list (terminal 'the))
+                     (list (terminal 'a)))
+               '(0.5 0.5))))
+
+(defn N [] (sample-rhs
+  (multinomial (list (list (terminal 'chef))
+                     (list (terminal 'soup))
+                     (list (terminal 'omelet)))
+               '(0.333 0.333 0.334))))
+
+(defn V [] (sample-rhs
+  (multinomial (list (list (terminal 'cooks))
+                     (list (terminal 'works)))
+               '(0.5 0.5))))
+
+(defn A [] (sample-rhs
+  (multinomial (list (list (terminal 'diligently)))
+               '(1.0))))
+
+(defn AP [] (sample-rhs
+  (multinomial (list (list A))
+               '(1.0))))
+
+(defn NP [] (sample-rhs
+  (multinomial (list (list D N))
+               '(1.0))))
+
+(defn VP [] (sample-rhs
+  (multinomial (list (list V AP)
+                     (list V NP))
+               '(0.5 0.5))))
+
+(defn S [] (sample-rhs
+  (multinomial (list (list NP VP))
+               '(1.0))))
+
+(S)</code></pre>
+
+<p>We have defined a utility procedure <code>sample-rhs</code>, which calls each thunk in a chosen right-hand side and concatenates the results.</p>
+
+<p>Now, let&rsquo;s look at one of the procedures defining our PCFG in detail:</p>
+
+<pre class="norun"><code>;; When VP is called, it samples a right-hand side from a multinomial:
+;; either (list V AP) or (list V NP), corresponding to the rules
+;; VP -> V AP and VP -> V NP.
+;; sample-rhs then calls each procedure in the list, building the
+;; terminal sequence recursively.
+(defn VP [] (sample-rhs
+  (multinomial (list (list V AP)
+                     (list V NP))
+               '(0.5 0.5))))</code></pre>
+
+<p>When <code>VP</code> is called it uses <code>sample-rhs</code> to <code>mapcat</code> over a list which is sampled from a multinomial distribution: in this case either <code>(list V AP)</code> or <code>(list V NP)</code>. These two lists correspond to the &ldquo;right-hand sides&rdquo; (RHSs) of the rules VP &rarr; V AP and VP &rarr; V NP in the standard representation of PCFGs. These are lists that consist of functions which are the names of other procedures. Therefore when they are called via <code>sample-rhs</code>, they themselves recursively sample their RHSs until no more recursion can take place. Note that we have wrapped our terminal symbols up as thunks so that when they are called they deterministically return the terminal symbol in a list.</p>
+
+<p>While it is most common to use PCFGs as models of strings (for linguistic applications), they can be useful as components of any probabilistic model where constituent structure is required.</p>
+
+
+<h1 id="unfold"><a href="#unfold">Unfold</a></h1>
+
+<p>You may notice that the basic structure of computation was repeated in each non-terminal procedure for the PCFG above. Similarly, each <code>case</code> in the Markov model did the same thing. We can abstract out these computation patterns as a higher-order procedure. For the Markov model, where we build a list, this is called <code>unfold</code>&mdash;it describes the pattern of recursively building lists. <code>unfold</code> takes three arguments. The first is the current state, the second is a transition function, which returns the next state given the last one. The last argument is a predicate that stops the recursion:</p>
+
+<pre><code>(defn unfold [current transition stop?]
+  (if (stop? current)
+    '()
+    (cons current (unfold (transition current) transition stop?))))
+
+;; Example: counting down from 5
+(unfold 5 dec zero?)</code></pre>
+
+<p>With <code>unfold</code> defined we can now refactor our Markov model:</p>
+
+<pre><code>(defn unfold [current transition stop?]
+  (if (stop? current)
+    '()
+    (cons current (unfold (transition current) transition stop?))))
+
+(def vocabulary '(chef omelet soup eat work bake stop))
+
+(def word->distribution
+  (mem (fn [word] (dirichlet (repeat (count vocabulary) 1)))))
+
+(defn transition [word]
+  (multinomial vocabulary (word->distribution word)))
+
+(defn stop? [word] (= word 'stop))
+
+(unfold 'start transition stop?)</code></pre>
+
+<p>The PCFG can&rsquo;t be written with <code>unfold</code> because it builds a tree (nested list) rather than a list. However, there is a generalization of <code>unfold</code> called <code>tree-unfold</code> which will do the trick. Using <code>tree-unfold</code> we can rewrite our PCFG in a way that abstracts out the recursive structure, and looks much more like the standard notation for PCFGs:</p>
+
+<pre><code>(defn terminal [t] (list 'terminal t))
+
+(defn unwrap-terminal [t] (second t))
+
+(defn terminal? [sym]
+  (if (sequential? sym)
+    (= (first sym) 'terminal)
+    false))
+
+(defn tree-unfold [transition start-symbol]
+  (if (terminal? start-symbol)
+    (unwrap-terminal start-symbol)
+    (cons start-symbol
+          (map (fn [sym] (tree-unfold transition sym))
+               (transition start-symbol)))))
+
+(defn transition [nonterminal]
+  (case nonterminal
+    D  (multinomial (list (list (terminal 'the))
+                          (list (terminal 'a)))
+                    '(0.5 0.5))
+    N  (multinomial (list (list (terminal 'chef))
+                          (list (terminal 'soup))
+                          (list (terminal 'omelet)))
+                    '(0.333 0.333 0.334))
+    V  (multinomial (list (list (terminal 'cooks))
+                          (list (terminal 'works)))
+                    '(0.5 0.5))
+    A  (multinomial (list (list (terminal 'diligently)))
+                    '(1.0))
+    AP (multinomial (list (list 'A))
+                    '(1.0))
+    NP (multinomial (list (list 'D 'N))
+                    '(1.0))
+    VP (multinomial (list (list 'V 'AP)
+                          (list 'V 'NP))
+                    '(0.5 0.5))
+    S  (multinomial (list (list 'NP 'VP))
+                    '(1.0))
+    'error))
+
+(tree-unfold transition 'S)</code></pre>
+
+<p>Note that this samples a hierarchical (or &ldquo;parenthesized&rdquo;) sequence of terminals. How would you &ldquo;flatten&rdquo; this to return a sequence without parentheses?</p>
+
+
+<h1 id="references"><a href="#references">References</a></h1>
+
+<p>Goodfellow, L. D. (1938). A psychological interpretation of the results of the Zenith radio experiments in telepathy. <em>Journal of Experimental Psychology</em>, <em>23</em>(6), 601.</p>
+<p>Griffiths, T. L., &amp; Tenenbaum, J. B. (2001). Randomness and coincidences: Reconciling intuition and probability theory. In <em>Proceedings of the 23rd Annual Conference of the Cognitive Science Society</em> (pp. 370&ndash;375).</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="04-patterns-of-inference.html">&larr; Chapter 4: Patterns of Inference</a>
+    <a href="06-inference-about-inference.html">Chapter 6: Inference about Inference &rarr;</a>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt member pair null? equal? make-list length" +
+      "                                  string-append abs sample fold]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot display run-physics animate-physics]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre:not(.norun)').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>

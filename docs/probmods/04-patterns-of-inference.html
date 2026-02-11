@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ProbMods: Patterns of Inference</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="../js/physics.js"></script>
+  <script>ProbPhysics.setup();</script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Probabilistic Models of Cognition</a></div>
+    <ul id="nav">
+      <li><a href="03-conditioning.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+      <li><a href="05-observing-sequences.html">Next &rarr;</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+
+<h1 id="chapter-title">4. Patterns of Inference</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#causal-dependence">Causal Dependence</a><ul>
+<li><a href="#detecting-dependence-through-intervention">Detecting Dependence Through Intervention</a></li>
+</ul></li>
+<li><a href="#statistical-dependence">Statistical Dependence</a></li>
+<li><a href="#graphical-notations-for-dependence">Graphical Notations for Dependence</a></li>
+<li><a href="#from-a-priori-dependence-to-conditional-dependence">From A Priori Dependence to Conditional Dependence</a><ul>
+<li><a href="#screening-off">Screening off</a></li>
+<li><a href="#explaining-away">Explaining away</a></li>
+<li><a href="#non-monotonic-reasoning">Non-monotonic Reasoning</a></li>
+<li><a href="#example-medical-diagnosis">Example: Medical Diagnosis</a></li>
+</ul></li>
+<li><a href="#example-trait-attribution">Example: Trait Attribution</a></li>
+<li><a href="#example-of-blickets-and-blocking">Example: Of Blickets and Blocking</a></li>
+<li><a href="#visual-perception">A Case Study in Modularity: Visual Perception of Surface Lightness and Color</a></li>
+<li><a href="#exercises">Exercises</a></li>
+<li><a href="#references">References</a></li>
+</ul>
+</div>
+
+
+<h1 id="causal-dependence"><a href="#causal-dependence">Causal Dependence</a></h1>
+
+<p>Probabilistic programs encode knowledge about the world in the form of causal models, and it is useful to understand how their function relates to their structure by thinking about some of the intuitive properties of causal relations. Causal relations are local, modular, and directed. They are modular in the sense that any two arbitrary events in the world are most likely causally unrelated, or independent. If they are related, or dependent, the relation is only very weak and liable to be ignored in our mental models. Causal structure is local in the sense that many events that are related are not related directly: They are connected only through causal chains of several steps, a series of intermediate and more local dependencies. And the basic dependencies are directed: when we say that A causes B, it means something different than saying that B causes A. The causal influence flows only one way along a causal relation&mdash;we expect that manipulating the cause will change the effect, but not vice versa&mdash;but information can flow both ways&mdash;learning about either event will give us information about the other.</p>
+
+<p>Let&rsquo;s examine this notion of &ldquo;causal dependence&rdquo; a little more carefully. What does it mean to believe that A depends causally on B? Viewing cognition through the lens of probabilistic programs, the most basic notions of causal dependence are in terms of the structure of the program and the flow of evaluation (or &ldquo;control&rdquo;) in its execution. We say that expression A causally depends on expression B if it is necessary to evaluate B in order to evaluate A. (More precisely, expression A depends on expression B if it is ever necessary to evaluate B in order to evaluate A.) For instance, in this program A depends on B but not on C (the final expression depends on both A and C):</p>
+
+<pre><code>(def C (flip))
+(def B (flip))
+(def A (if B (flip 0.1) (flip 0.4)))
+(or A C)</code></pre>
+
+<p>Note that causal dependence order is weaker than a notion of ordering in time&mdash;one expression might happen to be evaluated before another in time (for instance C before A), but without the second expression requiring the first.</p>
+
+<p>For example, consider a simpler variant of our medical diagnosis scenario:</p>
+
+<pre><code>(def samples
+  (mh-query 200 1
+    (let [smokes (flip 0.2)
+          lung-disease (or (flip 0.001) (and smokes (flip 0.1)))
+          cold (flip 0.02)
+          cough (or (and cold (flip 0.5)) (and lung-disease (flip 0.5)) (flip 0.01))
+          fever (or (and cold (flip 0.3)) (flip 0.01))
+          chest-pain (or (and lung-disease (flip 0.2)) (flip 0.01))
+          shortness-of-breath (or (and lung-disease (flip 0.2)) (flip 0.01))]
+      (condition cough)
+      (list cold lung-disease))))
+(hist (map first samples) "cold")
+(hist (map second samples) "lung-disease")
+(hist samples "cold, lung-disease")</code></pre>
+
+<p>Here, <code>cough</code> depends causally on both <code>lung-disease</code> and <code>cold</code>, while <code>fever</code> depends causally on <code>cold</code> but not <code>lung-disease</code>. We can see that <code>cough</code> depends causally on <code>smokes</code> but only indirectly: although <code>cough</code> does not reference <code>smokes</code> directly, in order to evaluate whether a patient coughs, we first have to evaluate the expression <code>lung-disease</code> that must itself evaluate <code>smokes</code>.</p>
+
+<p>We haven&rsquo;t made the notion of &ldquo;direct&rdquo; causal dependence precise: do we want to say that <code>cough</code> depends directly on <code>cold</code>, or only directly on the expression <code>(or (and cold (flip 0.5)) ...)</code>? This can be resolved in several ways that all result in similar intuitions. For instance, we could first re-write the program into a form where each intermediate expression is named (called A-normal form) and then say direct dependence is when one expression immediately includes the name of another.</p>
+
+<p>There are several special situations that are worth mentioning. In some cases, whether expression A requires expression B will depend on the value of some third expression C. For example, here is a particular way of writing a noisy-AND relationship:</p>
+
+<pre><code>(def C (flip))
+(def B (flip))
+(def A (if C (if B (flip 0.85) false) false))
+A</code></pre>
+
+<p>A always requires C, but only evaluates B if C returns true. Under the above definition of causal dependence A depends on B (as well as C). However, one could imagine a more fine-grained notion of causal dependence that would be useful here: we could say that A depends causally on B only in certain contexts (just those where C happens to return true and thus A evaluates B).</p>
+
+<p>Another nuance is that an expression that occurs inside a function body may get evaluated several times in a program execution. In such cases it is useful to speak of causal dependence between specific evaluations of two expressions.</p>
+
+<h2 id="detecting-dependence-through-intervention"><a href="#detecting-dependence-through-intervention">Detecting Dependence Through Intervention</a></h2>
+
+<p>The causal dependence structure is not always immediately clear from examining a program, particularly where there are complex function calls. Another way to detect (or according to some philosophers, such as Jim Woodward, to define) causal dependence is more operational, in terms of &ldquo;difference making&rdquo;: If we manipulate A, does B tend to change? By manipulate here we don&rsquo;t mean an assumption in the sense of <code>query</code>. Instead we mean actually edit, or <em>intervene on</em>, the program in order to make an expression have a particular value independent of its (former) causes. If setting A to different values in this way changes the distribution of values of B, then B causally depends on A. This method is known in the causal Bayesian network literature as the &ldquo;do operator&rdquo; or graph surgery (Pearl, 1988).</p>
+
+<p>For example, this code represents whether a patient is likely to have a cold or a cough <em>a priori</em>, conditioned on no observations:</p>
+
+<pre><code>(defn take-sample []
+  (let [smokes (flip 0.2)
+        lung-disease (or (flip 0.001) (and smokes (flip 0.1)))
+        cold (flip 0.02)
+        cough (or (and cold (flip 0.5)) (and lung-disease (flip 0.5)) (flip 0.01))
+        fever (or (and cold (flip 0.3)) (flip 0.01))
+        chest-pain (or (and lung-disease (flip 0.2)) (flip 0.01))
+        shortness-of-breath (or (and lung-disease (flip 0.2)) (flip 0.01))]
+    (list cough cold)))
+(def samples (repeatedly 200 take-sample))
+(hist (map first samples) "cough")
+(hist (map second samples) "cold")</code></pre>
+
+<p>Imagine we now give our hypothetical patient a cold&mdash;for example, by exposing him to a strong cocktail of cold viruses. We should not model this as an observation (conditioning on having a cold using query), because we have taken direct action to change the normal causal structure. Instead we implement intervention by directly editing the program: change <code>cold (flip 0.02)</code> to <code>cold true</code>:</p>
+
+<pre><code>(defn take-sample []
+  (let [smokes (flip 0.2)
+        lung-disease (or (flip 0.001) (and smokes (flip 0.1)))
+        cold true ;; we intervene to make cold true
+        cough (or (and cold (flip 0.5)) (and lung-disease (flip 0.5)) (flip 0.01))
+        fever (or (and cold (flip 0.3)) (flip 0.01))
+        chest-pain (or (and lung-disease (flip 0.2)) (flip 0.01))
+        shortness-of-breath (or (and lung-disease (flip 0.2)) (flip 0.01))]
+    (list cough cold)))
+(def samples (repeatedly 200 take-sample))
+(hist (map first samples) "cough")
+(hist (map second samples) "cold")</code></pre>
+
+<p>You should see that the distribution on <code>cough</code> changes: coughing becomes more likely if we know that a patient has been given a cold by external intervention. But the reverse is not true. Try forcing the patient to have a cough (e.g., with some unusual drug or by exposure to some cough-inducing dust) by writing <code>cough true</code>: the distribution on <code>cold</code> is unaffected. We have captured a familiar fact: treating the symptoms of a disease directly doesn&rsquo;t cure the disease (taking cough medicine doesn&rsquo;t make your cold go away), but treating the disease does relieve the symptoms.</p>
+
+<p>Verify in the program above that the method of manipulation works also to identify causal relations that are only indirect: for example, force a patient to smoke and show that it increases their probability of coughing, but not vice versa. If we are given a program representing a causal model, and the model is simple enough, it is straightforward to read off causal dependencies from the structure of the program. However, the notion of causation as difference-making may be easier to compute in much larger, more complex models&mdash;and it does not require an analysis of the program code.</p>
+
+<h1 id="statistical-dependence"><a href="#statistical-dependence">Statistical Dependence</a></h1>
+
+<p>One often hears the warning, &ldquo;correlation does not imply causation&rdquo;. By &ldquo;correlation&rdquo; we mean a different kind of dependence between events or functions&mdash;<em>statistical dependence</em>. We say that A and B are statistically dependent, if learning information about A tells us something about B, and vice versa. In the language of probabilistic programs: using <code>query</code> to make an assumption about A changes the value expected for B. Statistical dependence is a symmetric relation between events referring to how information flows between them when we observe or reason about them. The fact that we need to be warned against confusing statistical and causal dependence suggests they are related, and indeed, they are. In general, if A causes B, then A and B will be statistically dependent.</p>
+
+<p>Diagnosing statistical dependence using <code>query</code> is similar to diagnosing causal dependence through intervention. We query on the target variable, here A, conditioning on various values of the possible statistical dependent, here B:</p>
+
+<pre><code>(defn samples [B-val]
+  (mh-query 100 1
+    (let [C (flip)
+          B (flip)
+          A (if B (flip 0.1) (flip 0.4))]
+      (condition (= B B-val))
+      A)))
+(hist (samples true) "A if B is true")
+(hist (samples false) "A if B is false")</code></pre>
+
+<p>Because the two distributions on A (when we have different information about B) are different, we can conclude that A statistically depends on B. Do the same procedure for testing if B statistically depends on A. How is this similar (and different) from the causal dependence between these two? As an exercise, make a version of the above medical example to test the statistical dependence between cough and cold. Verify that statistical dependence holds symmetrically for events that are connected by an indirect causal chain, such as smokes and coughs.</p>
+
+<p>Correlation is not just a symmetrized version of causality. Two events may be statistically dependent even if there is no causal chain running between them, as long as they have a common cause (direct or indirect). That is, two expressions in a probabilistic program can be statistically dependent if one references the other, directly or indirectly, or if they both at some point in their evaluation histories refer to some other expression (a &ldquo;common cause&rdquo;). Here is an example of statistical dependence generated by a common cause:</p>
+
+<pre><code>(defn samples [B-val]
+  (mh-query 100 1
+    (let [C (flip)
+          B (if C (flip 0.5) (flip 0.9))
+          A (if C (flip 0.1) (flip 0.4))]
+      (condition (= B B-val))
+      A)))
+(hist (samples true) "A if B is true")
+(hist (samples false) "A if B is false")</code></pre>
+
+<p>Situations like this are extremely common. In the medical example above, <code>cough</code> and <code>fever</code> are not causally dependent but they are statistically dependent, because they both depend on <code>cold</code>; likewise for <code>chest-pain</code> and <code>shortness-of-breath</code> which both depend on <code>lung-disease</code>. Here we can read off these facts from the program definitions, but more generally all of these relations can be diagnosed by reasoning using <code>query</code>.</p>
+
+<p>Successful learning and reasoning with causal models typically depends on exploiting the close coupling between causation and correlation. Causal relations are typically unobservable, while correlations are observable from data. Noticing patterns of correlation is thus often the beginning of causal learning, or discovering what causes what. On the other hand, with a causal model already in place, reasoning about the statistical dependencies implied by the model allows us to predict many aspects of the world not directly observed from those aspects we do observe.</p>
+
+<h1 id="graphical-notations-for-dependence"><a href="#graphical-notations-for-dependence">Graphical Notations for Dependence</a></h1>
+
+<p><em>Graphical models</em> are an extremely important idea in modern machine learning: a graphical diagram is used to represent the direct dependence structure between random choices in a probabilistic model. A special case are <em>Bayesian networks</em>, in which there is a node for each random variable (and expression in our terms) and a link between two nodes if there is a direct conditional dependence between them (a direct causal dependence in our terms). The sets of nodes and links define a directed acyclic graph (hence the term graphical model), a data structure over which many efficient algorithms can be defined. Each node has a conditional probability table (CPT), which represents the conditional probability distribution of that node, given its parents. The joint probability distribution over random variables is given by the product of the conditional distributions for each variable in the graph.</p>
+
+<p>Simple generative models will have a corresponding graphical model that captures all of the dependencies (and independencies) of the model, without capturing the precise form of these functions. For example, while the graphical model faithfully represents the probability distribution encoded by the program, it captures the noisy-OR form of the causal dependencies only implicitly. As a result, the CPTs provide a less compact representation of the conditional probabilities than the probabilistic program. For instance, the CPT for cough specifies 4 parameters &ndash; one for each pair of values of lung-disease and cold (the second entry in each row is determined by the constraint that the conditional distribution of cough must sum to 1). In contrast, the <code>def</code> statement for cough in our program specifies only 3 parameters: the base rate of cough, and the strength with which lung-disease and cold cause cough. This difference becomes more pronounced for noisy-OR relations with many causes &ndash; the size of the CPT for a node will be exponential in the number of parents, while the number of terms in the noisy-OR expression for that node will be linear in the number of causal dependencies (why?).</p>
+
+<p>More complicated generative models, which can be expressed as probabilistic programs, often don&rsquo;t have such a simple graphical model (or rather they have many approximations, none of which captures all independencies). Recursive models generally give rise to such ambiguous (or loopy) Bayes nets.</p>
+
+<h1 id="from-a-priori-dependence-to-conditional-dependence"><a href="#from-a-priori-dependence-to-conditional-dependence">From A Priori Dependence to Conditional Dependence</a></h1>
+
+<p>The relationships between causal structure and statistical dependence become particularly interesting and subtle when we look at the effects of additional observations or assumptions. Events that are statistically dependent <em>a priori</em> (sometimes called marginally dependent) may become independent when we condition on some other observation; this is called <em>screening off</em>, or sometimes <em>context-specific independence</em>. Also, events that are statistically independent <em>a priori</em> (marginally independent) may become dependent when we condition on other observations; this is known as <em>explaining away</em>. The dynamics of screening off and explaining away are extremely important for understanding patterns of inference&mdash;reasoning and learning&mdash;in probabilistic models.</p>
+
+<h2 id="screening-off"><a href="#screening-off">Screening off</a></h2>
+
+<p><em>Screening off</em> refers to a pattern of statistical inference that is quite common in both scientific and intuitive reasoning. If the statistical dependence between two events A and B is only indirect, mediated strictly by one or more other events C, then conditioning on (observing) C should render A and B statistically independent. This can occur if A and B are connected by one or more causal chains, and all such chains run through the set of events C, or if C comprises one or more common causes of A and B.</p>
+
+<p>For instance, let&rsquo;s look again at our common cause example, this time assuming that we already know the value of C:</p>
+
+<pre><code>(defn samples [B-val C-val]
+  (mh-query 100 1
+    (let [C (flip)
+          B (if C (flip 0.5) (flip 0.9))
+          A (if C (flip 0.1) (flip 0.4))]
+      (condition (and (= B B-val) (= C C-val)))
+      A)))
+(hist (samples true true) "A if B is true, C is true")
+(hist (samples false true) "A if B is false, C is true")</code></pre>
+
+<p>We see that A and B are statistically independent given knowledge of C. (Note: it can be tricky to diagnose statistical independence from samples, such as returned by <code>mh-query</code>, since natural variation due to random sampling can look like differences between conditions.)</p>
+
+<p>Screening off is a purely statistical phenomenon. For example, consider the causal chain model, where A directly causes C, which in turn directly causes B. Here, when we observe C &ndash; the event that mediates an indirect causal relation between A and B &ndash; A and B are still causally dependent in our model of the world: it is just our beliefs about the states of A and B that become uncorrelated. There is also an analogous causal phenomenon. If we can actually manipulate or intervene on the causal system, and set the value of C to some known value, then A and B become both statistically and causally independent (by intervening on C, we break the causal link between A and C).</p>
+
+<h2 id="explaining-away"><a href="#explaining-away">Explaining away</a></h2>
+
+<p>&ldquo;Explaining away&rdquo; (Pearl, 1988) refers to a complementary pattern of statistical inference which is somewhat more subtle than screening off. If two events A and B are statistically (and hence causally) independent, but they are both causes of one or more other events C, then conditioning on (observing) C can render A and B statistically dependent. Here is an example where A and B have a common effect:</p>
+
+<pre><code>(defn samples [B-val]
+  (mh-query 100 1
+    (let [A (flip)
+          B (flip)
+          C (if (or A B) (flip 0.9) (flip 0.2))]
+      (condition (and C (= B B-val)))
+      A)))
+(hist (samples true) "A if B is true")
+(hist (samples false) "A if B is false")</code></pre>
+
+<p>As with screening off, we only induce statistical dependence from learning about C, not causal dependence: when we observe C, A and B remain causally independent in our model of the world; it is our beliefs about A and B that become correlated.</p>
+
+<p>We can express the general phenomenon of explaining away with the following schematic query:</p>
+
+<pre class="norun"><code>;; Schematic explaining away:
+;; (mh-query ...
+;;   (def a ...)
+;;   (def b ...)
+;;   (def data (... a ... b ...))
+;;   (condition (and (= data some-value)
+;;                   (= a some-other-value)))
+;;   b)</code></pre>
+
+<p>We have defined two independent variables <code>a</code> and <code>b</code> both of which are used to define the value of our <code>data</code>. If we condition on the data and <code>a</code>, the posterior distribution on <code>b</code> will now be dependent on <code>a</code>: observing additional information about <code>a</code> changes our conclusions about <code>b</code>.</p>
+
+<p>The most typical pattern of explaining away we see in causal reasoning is a kind of <em>anti-correlation</em>: the probabilities of two possible causes for the same effect increase when the effect is observed, but they are conditionally anti-correlated, so that observing additional evidence in favor of one cause should lower our degree of belief in the other cause. However, the coupling induced by conditioning on common effects depends on the nature of the interaction between the causes, it is not always an anti-correlation. Explaining away takes the form of an anti-correlation when the causes interact in a roughly disjunctive or additive form: the effect tends to happen if any cause happens; or the effect happens if the sum of some continuous influences exceeds a threshold. The following simple mathematical examples show this and other patterns.</p>
+
+<p>Suppose we condition on observing the sum of two integers drawn uniformly from 0 to 9:</p>
+
+<pre><code>(defn take-sample []
+  (rejection-query
+    (let [A (random-integer 10)
+          B (random-integer 10)]
+      (condition (= (+ A B) 9))
+      (list A B))))
+(def samples (repeatedly 500 take-sample))
+(scatter samples "A and B, conditioned on A + B = 9")
+(hist samples "A, B")</code></pre>
+
+<p>This gives perfect anti-correlation in conditional inferences for A and B. But suppose we instead condition on observing that A and B are equal:</p>
+
+<pre><code>(defn take-sample []
+  (rejection-query
+    (let [A (random-integer 10)
+          B (random-integer 10)]
+      (condition (= A B))
+      (list A B))))
+(def samples (repeatedly 500 take-sample))
+(scatter samples "A and B, conditioned on A = B")
+(hist samples "A, B")</code></pre>
+
+<p>Now, of course, A and B go from being independent a priori to being perfectly correlated in the conditional distribution. Try out these other conditioners to see other possible patterns of conditional dependence for a priori independent functions:</p>
+
+<ul>
+<li><code>(< (js/Math.abs (- A B)) 2)</code></li>
+<li><code>(and (>= (+ A B) 9) (&lt;= (+ A B) 11))</code></li>
+<li><code>(= 3 (js/Math.abs (- A B)))</code></li>
+<li><code>(= 3 (mod (- A B) 10))</code></li>
+<li><code>(= (mod A 2) (mod B 2))</code></li>
+<li><code>(= (mod A 5) (mod B 5))</code></li>
+</ul>
+
+<h2 id="non-monotonic-reasoning"><a href="#non-monotonic-reasoning">Non-monotonic Reasoning</a></h2>
+
+<p>One reason explaining away is an important phenomenon in probabilistic inference is that it is an example of <em>non-monotonic</em> reasoning. In formal logic, a theory is said to be monotonic if adding an assumption (or formula) to the theory never reduces the set of conclusions that can be drawn. Most traditional logics (e.g. First Order) are monotonic, but human reasoning does not seem to be. For instance, if I tell you that Tweety is a bird, you conclude that he can fly; if I now tell you that Tweety is an ostrich you retract the conclusion that he can fly. Over the years many non-monotonic logics have been introduced to model aspects of human reasoning. One of the first reasons that probabilistic reasoning with Bayesian networks was recognized as important for AI was that it could perspicuously capture these patterns of reasoning (see for instance Pearl, 1988).</p>
+
+<p>Another way to think about monotonicity is by considering the trajectory of our belief in a specific proposition, as we gain additional relevant information. In traditional logic, there are only three states of belief: true, false, and unknown (when neither a proposition nor its negation can be proven). As we learn more about the world, maintaining logical consistency requires that our belief in any proposition only move from unknown to true or false. That is our &ldquo;confidence&rdquo; in any conclusion only increases.</p>
+
+<p>In a probabilistic approach, by contrast, belief comes in a whole spectrum of degrees. We can think of confidence as a measure of how far our beliefs are from a uniform distribution&mdash;how close to the extremes of 0 or 1. In probabilistic inference, unlike in traditional logic, our confidence in a proposition can both increase and decrease. Even fairly simple probabilistic models can induce complex explaining-away dynamics that lead our degree of belief in a proposition to reverse directions multiple times as the conditioning set expands.</p>
+
+<h2 id="example-medical-diagnosis"><a href="#example-medical-diagnosis">Example: Medical Diagnosis</a></h2>
+
+<p>The medical scenario is a great model to explore screening off and explaining away. In this model <code>smokes</code> is statistically dependent on several symptoms&mdash;<code>cough</code>, <code>chest-pain</code>, and <code>shortness-of-breath</code>&mdash;due to a causal chain between them mediated by <code>lung-disease</code>. We can see this easily by conditioning on these symptoms and querying <code>smokes</code>:</p>
+
+<pre><code>(def samples
+  (mh-query 200 1
+    (let [smokes (flip 0.2)
+          lung-disease (or (flip 0.001) (and smokes (flip 0.1)))
+          cold (flip 0.02)
+          cough (or (and cold (flip 0.5)) (and lung-disease (flip 0.5)) (flip 0.001))
+          fever (or (and cold (flip 0.3)) (flip 0.01))
+          chest-pain (or (and lung-disease (flip 0.2)) (flip 0.01))
+          shortness-of-breath (or (and lung-disease (flip 0.2)) (flip 0.01))]
+      (condition (and cough chest-pain shortness-of-breath))
+      smokes)))
+(hist samples "smokes")</code></pre>
+
+<p>The conditional probability of <code>smokes</code> is much higher than the base rate, 0.2, because observing all these symptoms gives strong evidence for smoking. See how much evidence the different symptoms contribute by dropping them out of the conditioning set. For instance, condition on <code>(and cough chest-pain)</code>, or just <code>cough</code>; you should observe the probability of <code>smokes</code> decrease as fewer symptoms are observed.</p>
+
+<p>Now, suppose we condition also on knowledge about the function that mediates these causal links: <code>lung-disease</code>. Is there still an informational dependence between these various symptoms and <code>smokes</code>? In the query below, try adding and removing various symptoms (<code>cough</code>, <code>chest-pain</code>, <code>shortness-of-breath</code>) but maintaining the observation <code>lung-disease</code>:</p>
+
+<pre><code>(def samples
+  (mh-query 500 1
+    (let [smokes (flip 0.2)
+          lung-disease (or (flip 0.001) (and smokes (flip 0.1)))
+          cold (flip 0.02)
+          cough (or (and cold (flip 0.5)) (and lung-disease (flip 0.5)) (flip 0.001))
+          fever (or (and cold (flip 0.3)) (flip 0.01))
+          chest-pain (or (and lung-disease (flip 0.2)) (flip 0.01))
+          shortness-of-breath (or (and lung-disease (flip 0.2)) (flip 0.01))]
+      (condition (and lung-disease
+                      (and cough chest-pain shortness-of-breath)))
+      smokes)))
+(hist samples "smokes")</code></pre>
+
+<p>You should see an effect of whether the patient has lung disease on conditional inferences about smoking&mdash;a person is judged to be substantially more likely to be a smoker if they have lung disease than otherwise&mdash;but there is no separate effect of chest pain, shortness of breath or cough, over and above the evidence provided by knowing whether the patient has lung-disease. We say that the intermediate variable lung disease <em>screens off</em> the root cause (smoking) from the more distant effects (coughing, chest pain and shortness of breath).</p>
+
+<p>Here is a concrete example of explaining away in our medical scenario. Having a cold and having lung disease are a priori independent both causally and statistically. But because they are both causes of coughing, if we observe <code>cough</code> then <code>cold</code> and <code>lung-disease</code> become statistically dependent. That is, learning something about whether a patient has cold or lung-disease will, in the presence of their common effect cough, convey information about the other condition. We say that cold and lung-disease are <em>marginally</em> (or a priori) independent, but <em>conditionally dependent</em> given cough.</p>
+
+<p>To illustrate, observe how the probabilities of cold and lung-disease change when we observe cough is true:</p>
+
+<pre><code>(def samples
+  (mh-query 500 1
+    (let [smokes (flip 0.2)
+          lung-disease (or (flip 0.001) (and smokes (flip 0.1)))
+          cold (flip 0.02)
+          cough (or (and cold (flip 0.5)) (and lung-disease (flip 0.5)) (flip 0.001))
+          fever (or (and cold (flip 0.3)) (flip 0.01))
+          chest-pain (or (and lung-disease (flip 0.2)) (flip 0.01))
+          shortness-of-breath (or (and lung-disease (flip 0.2)) (flip 0.01))]
+      (condition cough)
+      (list cold lung-disease))))
+(hist (map first samples) "cold")
+(hist (map second samples) "lung-disease")
+(hist samples "cold, lung-disease")</code></pre>
+
+<p>Both cold and lung disease are now far more likely than their baseline probability: the probability of having a cold increases from 2% to around 50%; the probability of having lung disease also increases substantially.</p>
+
+<p>Now suppose we learn that the patient does <em>not</em> have a cold:</p>
+
+<pre><code>(def samples
+  (mh-query 500 1
+    (let [smokes (flip 0.2)
+          lung-disease (or (flip 0.001) (and smokes (flip 0.1)))
+          cold (flip 0.02)
+          cough (or (and cold (flip 0.5)) (and lung-disease (flip 0.5)) (flip 0.001))
+          fever (or (and cold (flip 0.3)) (flip 0.01))
+          chest-pain (or (and lung-disease (flip 0.2)) (flip 0.01))
+          shortness-of-breath (or (and lung-disease (flip 0.2)) (flip 0.01))]
+      (condition (and cough (not cold)))
+      (list cold lung-disease))))
+(hist (map first samples) "cold")
+(hist (map second samples) "lung-disease")
+(hist samples "cold, lung-disease")</code></pre>
+
+<p>The probability of having lung disease increases dramatically. If instead we had observed that the patient does have a cold, the probability of lung cancer returns to its very low base rate:</p>
+
+<pre><code>(def samples
+  (mh-query 500 1
+    (let [smokes (flip 0.2)
+          lung-disease (or (flip 0.001) (and smokes (flip 0.1)))
+          cold (flip 0.02)
+          cough (or (and cold (flip 0.5)) (and lung-disease (flip 0.5)) (flip 0.001))
+          fever (or (and cold (flip 0.3)) (flip 0.01))
+          chest-pain (or (and lung-disease (flip 0.2)) (flip 0.01))
+          shortness-of-breath (or (and lung-disease (flip 0.2)) (flip 0.01))]
+      (condition (and cough cold))
+      (list cold lung-disease))))
+(hist (map first samples) "cold")
+(hist (map second samples) "lung-disease")
+(hist samples "cold, lung-disease")</code></pre>
+
+<p>This is the conditional statistical dependence between lung disease and cold, given cough: Learning that the patient does in fact have a cold &ldquo;explains away&rdquo; the observed cough, so the alternative of lung disease decreases to a much lower value. If on the other hand, we had learned that the patient does not have a cold, so the most likely alternative to lung disease is not in fact available to &ldquo;explain away&rdquo; the observed cough, that raises the conditional probability of lung disease dramatically. As an exercise, check that if we remove the observation of coughing, the observation of having a cold or not has no influence on our belief about lung disease; this effect is purely conditional on the observation of a common effect of these two causes.</p>
+
+<p>Explaining away effects can be more indirect. Instead of observing the truth value of cold, a direct alternative cause of cough, we might simply observe another symptom that provides evidence for cold, such as fever. Try replacing the condition in the above programs with <code>(and cough fever)</code> or <code>(and cough (not fever))</code>. In this case, finding out that the patient either does or does not have a fever makes a crucial difference in whether we think that the patient has lung disease&hellip; even though fever itself is not at all diagnostic of lung disease, and there is no causal connection between them.</p>
+
+<h1 id="example-trait-attribution"><a href="#example-trait-attribution">Example: Trait Attribution</a></h1>
+
+<p>People often have to make inferences about entities and their interactions. Such problems tend to have dense relations between the entities, leading to very challenging explaining away problems. Inference is computationally difficult in these situations but the inferences come very naturally to people, suggesting these are important problems that our brains have specialized somewhat to solve.</p>
+
+<p>A familiar example comes from reasoning about the causes of students&rsquo; success and failure in the classroom. Imagine yourself in the position of an interested outside observer&mdash;a parent, another teacher, a guidance counselor or college admissions officer&mdash;in thinking about these conditional inferences. If a student doesn&rsquo;t pass an exam, what can you say about why he failed? Maybe he doesn&rsquo;t do his homework, maybe the exam was unfair, or maybe he was just unlucky?</p>
+
+<p>Initially we observe that Bill failed exam 1. A priori, we assume that most students do their homework and most exams are fair, but given this one observation it becomes somewhat likely that either the student didn&rsquo;t study or the exam was unfair:</p>
+
+<pre><code>(def samples
+  (mh-query 1000 1
+    (let [exam-fair (flip 0.8)
+          does-homework (flip 0.8)
+          pass? (flip (if exam-fair
+                          (if does-homework 0.9 0.4)
+                          (if does-homework 0.6 0.2)))]
+      (condition (not pass?))
+      (list does-homework exam-fair))))
+(hist samples "Joint: Student Does Homework?, Exam Fair?")
+(hist (map first samples) "Student Does Homework")
+(hist (map second samples) "Exam Fair")</code></pre>
+
+<p>Notice that we have set the probabilities in the <code>pass?</code> expression to be asymmetric: whether a student does homework has a greater influence on passing the test than whether the exam is fair. This in turn means that when inferring the cause of a failed exam, the model tends to attribute it to the person property (not doing homework) over the situation property (exam being unfair). This asymmetry is an example of the <em>fundamental attribution bias</em> (Ross, 1977): we tend to attribute outcomes to personal traits rather than situations.</p>
+
+<p>Now consider a model where each student and each exam has persistent properties, using <code>mem</code>:</p>
+
+<pre><code>(def samples
+  (mh-query 1000 1
+    (let [exam-fair-prior 0.8
+          does-homework-prior 0.8
+          exam-fair? (mem (fn [exam] (flip exam-fair-prior)))
+          does-homework? (mem (fn [student] (flip does-homework-prior)))
+          pass? (fn [student exam]
+                  (flip (if (exam-fair? exam)
+                            (if (does-homework? student) 0.9 0.4)
+                            (if (does-homework? student) 0.6 0.2))))]
+      (condition (not (pass? 'bill 'exam1)))
+      (list (does-homework? 'bill) (exam-fair? 'exam1)))))
+(hist samples "Joint: Student Does Homework?, Exam Fair?")
+(hist (map first samples) "Student Does Homework")
+(hist (map second samples) "Exam Fair")</code></pre>
+
+<p>See how conditional inferences about Bill and exam 1 change as you add in more data about this student or this exam, or additional students and exams. Try using each of the following expressions as the condition for the above inference. Try to explain the different inferences that result at each stage:</p>
+
+<pre class="norun"><code>;; Bill fails two exams:
+(and (not (pass? 'bill 'exam1)) (not (pass? 'bill 'exam2)))
+
+;; Three students fail exam 1:
+(and (not (pass? 'bill 'exam1))
+     (not (pass? 'mary 'exam1))
+     (not (pass? 'tim 'exam1)))
+
+;; Bill fails exam 1, Mary and Tim pass many other exams but also fail exam 1:
+(and (not (pass? 'bill 'exam1))
+     (not (pass? 'mary 'exam1)) (pass? 'mary 'exam2) (pass? 'mary 'exam3)
+     (not (pass? 'tim 'exam1)) (pass? 'tim 'exam2) (pass? 'tim 'exam3))
+
+;; Bill fails exam 1, but Mary and Tim pass it:
+(and (not (pass? 'bill 'exam1))
+     (pass? 'mary 'exam1)
+     (pass? 'tim 'exam1))</code></pre>
+
+<p>This example is inspired by the work of Harold Kelley (and many others) on causal attribution in social settings (Kelley, 1973). Kelley identified three important dimensions of variation in the evidence, which affect the attributions people make of the cause of an outcome. These three dimensions are: <em>Persons</em>&mdash;is the outcome consistent across different people in the situation?; <em>Entities</em>&mdash;is the outcome consistent for different entities in the situation?; <em>Time</em>&mdash;is the outcome consistent over different episodes?</p>
+
+<h1 id="example-of-blickets-and-blocking"><a href="#example-of-blickets-and-blocking">Example: Of Blickets and Blocking</a></h1>
+
+<p>A number of researchers have explored children&rsquo;s causal learning abilities by using the &ldquo;blicket detector&rdquo; (Gopnik &amp; Sobel, 2000): a toy box that will light up when certain blocks, the blickets, are put on top of it. Children are shown a set of evidence and then asked which blocks are blickets. For instance, if block A makes the detector go off, it is probably a blicket. Ambiguous patterns are particularly interesting. Imagine that blocks A and B are put on the detector together, making the detector go off; it is likely that A is a blicket. Now B is put on the detector alone, making the detector go off; it is now less plausible that A is a blicket. This is called &ldquo;backward blocking&rdquo;, and it is an example of explaining away.</p>
+
+<p>We can capture this setup with a model in which each block has a persistent &ldquo;blicket-ness&rdquo; property, and the causal power of the block to make the machine go off depends on its blicketness. Finally, the machine goes off if any of the blocks on it is a blicket (but noisily):</p>
+
+<pre><code>(def samples
+  (mh-query 100 1
+    (let [blicket (mem (fn [block] (flip 0.2)))
+          power (fn [block] (if (blicket block) 0.9 0.05))
+          machine (fn machine [blocks]
+                    (if (empty? blocks)
+                      (flip 0.05)
+                      (or (flip (power (first blocks)))
+                          (machine (rest blocks)))))]
+      (condition (machine (list 'A 'B)))
+      (blicket 'A))))
+(hist samples "Is A a blicket?")</code></pre>
+
+<p>Try the backward blocking scenario described above: condition on both <code>(machine (list 'A 'B))</code> and <code>(machine (list 'B))</code>. Sobel, Tenenbaum, &amp; Gopnik (2004) tried this with children, finding that four year-olds perform similarly to the model: evidence that B is a blicket explains away the evidence that A and B made the detector go off.</p>
+
+<h1 id="visual-perception"><a href="#visual-perception">A Case Study in Modularity: Visual Perception of Surface Lightness and Color</a></h1>
+
+<p>Visual perception is full of rich conditional inference phenomena, including both screening off and explaining away. Some very impressive demonstrations have been constructed using the perception of surface structure by mid-level vision researchers.</p>
+
+<p>In vision, the luminance of a surface depends on two factors, the <em>illumination</em> of the surface (how much light is hitting it) and its <em>reflectance</em>. The actual luminance is the product of the two factors. Thus luminance is inherently ambiguous. The visual system has to determine what proportion of the luminance is due to reflectance and what proportion is due to the illumination of the scene.</p>
+
+<p>This has led to a famous illusion known as the <em>checker shadow illusion</em> discovered by Ted Adelson. Despite appearances, two squares in the image that look different are actually the same shade of gray. The presence of a cylinder is providing evidence that the illumination of one square is actually less than that of the other (because it is expected to cast a shadow). Thus we perceive the shadowed square as having higher reflectance since its luminance is identical but we believe there is less light hitting it.</p>
+
+<p>The following program implements a simple version of this scenario &ldquo;before&rdquo; we see the shadow cast by the cylinder:</p>
+
+<pre><code>(def observed-luminance 3.0)
+(def samples
+  (mh-query 1000 1
+    (let [reflectance (gaussian 1 1)
+          illumination (gaussian 3 0.5)
+          luminance (* reflectance illumination)]
+      (factor (observe* (gaussian-dist luminance 0.1) observed-luminance))
+      reflectance)))
+(display "Mean reflectance:" (mean samples))
+(density samples "Reflectance")</code></pre>
+
+<p>Now let&rsquo;s condition on the presence of the cylinder, by conditioning on the presence of its &ldquo;shadow&rdquo; (i.e. lower illumination than expected a priori):</p>
+
+<pre><code>(def observed-luminance 3.0)
+(def samples
+  (mh-query 1000 1
+    (let [reflectance (gaussian 1 1)
+          illumination (gaussian 3 0.5)
+          luminance (* reflectance illumination)]
+      (factor (observe* (gaussian-dist luminance 0.1) observed-luminance))
+      (factor (observe* (gaussian-dist illumination 0.1) 0.5))
+      reflectance)))
+(display "Mean reflectance:" (mean samples))
+(density samples "Reflectance")</code></pre>
+
+<p>The variables reflectance and illumination are conditionally independent in the generative model, but after we condition on luminance they become dependent: changing one of them affects the probability of the other. This phenomenon has important consequences for cognitive science. Although the model of (our knowledge of) the world has a certain kind of modularity implied by conditional independence, as soon as we start using the model to do conditional inference on some data, formerly modularly isolated variables can become dependent.</p>
+
+<h1 id="exercises"><a href="#exercises">Exercises</a></h1>
+
+<ol type="1">
+<li>
+<p><strong>Causal and statistical dependency.</strong> For each of the following programs:</p>
+<ul>
+<li>Draw the dependency diagram (Bayes net).</li>
+<li>Use informal evaluation order reasoning and the intervention method to determine causal dependency between A and B.</li>
+<li>Use conditioning to determine whether A and B are statistically dependent.</li>
+</ul>
+
+<p>A)</p>
+<pre><code>(def a (flip))
+(def b (flip))
+(def c (flip (if (and a b) 0.8 0.5)))</code></pre>
+
+<p>B)</p>
+<pre><code>(def a (flip))
+(def b (flip (if a 0.9 0.2)))
+(def c (flip (if b 0.7 0.1)))</code></pre>
+
+<p>C)</p>
+<pre><code>(def a (flip))
+(def b (flip (if a 0.9 0.2)))
+(def c (flip (if a 0.7 0.1)))</code></pre>
+
+<p>D)</p>
+<pre><code>(def a (flip 0.6))
+(def c (flip 0.1))
+(def z (uniform-draw (list a c)))
+(def b (if z 'foo 'bar))</code></pre>
+
+<p>E)</p>
+<pre><code>(def exam-fair-prior 0.8)
+(def does-homework-prior 0.8)
+(def exam-fair? (mem (fn [exam] (flip exam-fair-prior))))
+(def does-homework? (mem (fn [student] (flip does-homework-prior))))
+(defn pass? [student exam]
+  (flip (if (exam-fair? exam)
+            (if (does-homework? student) 0.9 0.5)
+            (if (does-homework? student) 0.2 0.1))))
+(def a (pass? 'alice 'history-exam))
+(def b (pass? 'bob 'history-exam))</code></pre>
+</li>
+
+<li>
+<p><strong>Epidemiology.</strong> Imagine that you are an epidemiologist and you are determining people&rsquo;s cause of death. In this simplified world, there are two main diseases, cancer and the common cold. People rarely have cancer, \(p(\text{cancer}) = 0.00001\), but when they do have cancer, it is often fatal, \(p(\text{death} \mid \text{cancer}) = 0.9\). People are much more likely to have a common cold, \(p(\text{cold}) = 0.2\), but it is rarely fatal, \(p(\text{death} \mid \text{cold}) = 0.00006\). Very rarely, people also die of other causes \(p(\text{death} \mid \text{other}) = 0.000000001\).</p>
+
+<p>Write this model and use <code>enumeration-query</code> to answer these questions:</p>
+
+<p>A) Compute \(p(\text{cancer} \mid \text{death}, \text{cold})\) and \(p(\text{cancer} \mid \text{death}, \text{no cold})\). How do these probabilities compare to \(p(\text{cancer} \mid \text{death})\) and \(p(\text{cancer})\)? Using these probabilities, give an example of explaining away.</p>
+
+<p>B) Compute \(p(\text{cold} \mid \text{death}, \text{cancer})\) and \(p(\text{cold} \mid \text{death}, \text{no cancer})\). How do these probabilities compare to \(p(\text{cold} \mid \text{death})\) and \(p(\text{cold})\)? Using these probabilities, give an example of explaining away.</p>
+
+<pre><code>;; Your model here
+(def distribution
+  (enumeration-query
+    (let [cancer (flip 0.00001)
+          cold (flip 0.2)
+          death (or (and cancer (flip 0.9))
+                    (and cold (flip 0.00006))
+                    (flip 0.000000001))]
+      (condition death)
+      cancer)))
+(barplot distribution "p(cancer | death)")</code></pre>
+</li>
+</ol>
+
+<h1 id="references"><a href="#references">References</a></h1>
+
+<p>Gopnik, A., &amp; Sobel, D. M. (2000). Detecting blickets: How young children use information about novel causal powers in categorization and induction. <em>Child Development</em>, <em>71</em>(5), 1205&ndash;1222.</p>
+<p>Kelley, H. H. (1973). The processes of causal attribution. <em>American Psychologist</em>, <em>28</em>(2), 107.</p>
+<p>Pearl, J. (1988). <em>Probabilistic reasoning in intelligent systems: networks of plausible inference</em>. Morgan Kaufmann.</p>
+<p>Ross, L. (1977). The intuitive psychologist and his shortcomings: Distortions in the attribution process. <em>Advances in Experimental Social Psychology</em>, <em>10</em>, 173&ndash;220.</p>
+<p>Sobel, D. M., Tenenbaum, J. B., &amp; Gopnik, A. (2004). Children&rsquo;s causal inferences from indirect evidence: Backwards blocking and Bayesian reasoning in preschoolers. <em>Cognitive Science</em>, <em>28</em>(3), 303&ndash;333.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="03-conditioning.html">&larr; Chapter 3: Conditioning</a>
+    <a href="05-observing-sequences.html">Chapter 5: Models for Sequences of Observations &rarr;</a>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt member pair null? equal? make-list length" +
+      "                                  string-append abs sample fold]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot display run-physics animate-physics]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre:not(.norun)').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>

@@ -32,6 +32,8 @@ code { font-family: 'Menlo', 'Monaco', 'Consolas', monospace; font-size: 14px; b
 .code-example .toolbar button:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 .code-example .output { padding: 8px 12px; background: var(--output-bg); border-top: 1px solid var(--output-border); font-family: 'Menlo', 'Monaco', 'Consolas', monospace; font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; max-height: 500px; overflow-y: auto; }
 .code-example .output:empty { display: none; }
+.code-example .cm-editor { background: var(--code-bg); border: none; outline: none; }
+.code-example .cm-editor.cm-focused { outline: none; }
 .code-example .output .error { color: #c0392b; font-weight: bold; }
 pre.norun { background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 4px; padding: 10px 12px; overflow-x: auto; }
 pre.norun code { background: none; padding: 0; }
