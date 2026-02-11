@@ -666,6 +666,131 @@
    (->KDE (vec data) bandwidth)))
 
 ;; ---------------------------------------------------------------------------
+;; Uniform Discrete (integers in [min, max])
+;; ---------------------------------------------------------------------------
+
+(defrecord UniformDiscrete [lo hi]
+  IDistribution
+  (sample* [this]
+    (let [n (- hi lo -1)
+          raw-sample (fn [] (+ lo (js/Math.floor (* (erp/rand) n))))]
+      (if erp/*trace-state*
+        (erp/trace-choice! :uniform-discrete
+          raw-sample
+          #(if (and (integer? %) (>= % lo) (<= % hi))
+             (- (js/Math.log n))
+             ##-Inf)
+          (vec (range lo (inc hi)))
+          this)
+        (raw-sample))))
+  (observe* [_ x]
+    (let [n (- hi lo -1)]
+      (if (and (integer? x) (>= x lo) (<= x hi))
+        (- (js/Math.log n))
+        ##-Inf)))
+  IEnumerable
+  (enumerate* [_] (vec (range lo (inc hi))))
+  IProposable
+  (propose* [_ cv]
+    (let [support (vec (range lo (inc hi)))]
+      (exclude-current-proposal support cv)))
+  (propose-lp [_ _from _to] 0.0))
+
+(defn uniform-discrete-dist
+  "Discrete uniform distribution over integers [lo, hi] (inclusive)."
+  [lo hi]
+  (->UniformDiscrete lo hi))
+
+;; ---------------------------------------------------------------------------
+;; Chi-Squared (special case of Gamma)
+;; ---------------------------------------------------------------------------
+
+(defrecord ChiSquared [df]
+  IDistribution
+  (sample* [_] (erp/gamma (/ df 2.0) 2.0))
+  (observe* [_ x]
+    (if (< x 0)
+      ##-Inf
+      (let [shape (/ df 2.0)
+            scale 2.0]
+        (+ (safe-mul-log (dec shape) x)
+           (- (/ x scale))
+           (- (* shape (js/Math.log scale)))
+           (- (math/log-gamma-fn shape)))))))
+
+(defn chi-squared-dist
+  "Chi-squared distribution with df degrees of freedom.
+   Equivalent to Gamma(df/2, 2)."
+  [df]
+  (->ChiSquared df))
+
+;; ---------------------------------------------------------------------------
+;; Logit-Normal
+;; ---------------------------------------------------------------------------
+
+(defn- logit [x]
+  (js/Math.log (/ x (- 1.0 x))))
+
+(defn- logit-normal-log-prob [mu sigma x]
+  (if (or (<= x 0) (>= x 1))
+    ##-Inf
+    (let [z (logit x)]
+      (- (gaussian-log-prob mu sigma z)
+         (js/Math.log x)
+         (js/Math.log (- 1.0 x))))))
+
+(defrecord LogitNormal [mu sigma]
+  IDistribution
+  (sample* [this]
+    (let [raw-sample (fn []
+                       (binding [erp/*trace-state* nil]
+                         (/ 1.0 (+ 1.0 (js/Math.exp (- (erp/gaussian mu sigma)))))))]
+      (if erp/*trace-state*
+        (erp/trace-choice! :logit-normal raw-sample #(logit-normal-log-prob mu sigma %))
+        (raw-sample))))
+  (observe* [_ x] (logit-normal-log-prob mu sigma x)))
+
+(defn logit-normal-dist
+  "Logit-normal distribution. sigmoid(Gaussian(mu, sigma)).
+   Samples are in (0, 1). Useful for proportion modeling."
+  [mu sigma]
+  (->LogitNormal mu sigma))
+
+;; ---------------------------------------------------------------------------
+;; Distribution type predicates
+;; ---------------------------------------------------------------------------
+
+(defn discrete?
+  "Returns true if the distribution implements IEnumerable (has finite support)."
+  [d]
+  (satisfies? IEnumerable d))
+
+(defn continuous?
+  "Returns true if the distribution does NOT implement IEnumerable."
+  [d]
+  (and (satisfies? IDistribution d)
+       (not (satisfies? IEnumerable d))))
+
+;; ---------------------------------------------------------------------------
+;; KL Divergence
+;; ---------------------------------------------------------------------------
+
+(defn kl-divergence
+  "KL divergence D_KL(p || q) = sum(p(x) * log(p(x)/q(x))) for discrete distributions.
+   Both p and q must implement IEnumerable. Uses the support of p."
+  [p q]
+  (let [support (enumerate* p)]
+    (reduce + 0.0
+      (map (fn [x]
+             (let [lp (observe* p x)
+                   lq (observe* q x)
+                   px (js/Math.exp lp)]
+               (if (zero? px)
+                 0.0
+                 (* px (- lp lq)))))
+           support))))
+
+;; ---------------------------------------------------------------------------
 ;; Marginal (cached marginal distribution via inner inference)
 ;; ---------------------------------------------------------------------------
 

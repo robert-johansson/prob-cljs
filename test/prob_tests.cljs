@@ -16,9 +16,11 @@
                                 categorical-dist
                                 delta-dist cauchy-dist laplace-dist lognormal-dist
                                 student-t-dist mixture-dist kde-dist entropy
+                                uniform-discrete-dist chi-squared-dist logit-normal-dist
+                                discrete? continuous? kl-divergence
                                 marginal-dist
                                 set-seed! rand
-                                mem cache DPmem sd mean variance sum prod repeat-fn
+                                mem cache DPmem sd mode mean variance sum prod repeat-fn
                                 weighted-mean weighted-variance
                                 empirical-distribution expectation]]
             [prob.erp :as erp]
@@ -1256,6 +1258,151 @@
       (fn [_] (vswap! called inc))
       (fn [] (flip)))
     (= @called 5)))
+
+;; ---------------------------------------------------------------------------
+;; Uniform Discrete distribution
+;; ---------------------------------------------------------------------------
+
+(println "=== Uniform Discrete Distribution ===")
+
+(test-assert "uniform-discrete-dist: samples in range"
+  (let [d (uniform-discrete-dist 3 7)]
+    (every? #(and (integer? %) (>= % 3) (<= % 7))
+            (repeatedly 50 #(sample* d)))))
+
+(test-assert "uniform-discrete-dist: log-prob correct"
+  ;; 5 values: 3,4,5,6,7 -> log(1/5) = -log(5)
+  (approx= (observe* (uniform-discrete-dist 3 7) 5)
+           (- (js/Math.log 5)) 0.001))
+
+(test-assert "uniform-discrete-dist: out of range -> -Inf"
+  (and (= ##-Inf (observe* (uniform-discrete-dist 3 7) 2))
+       (= ##-Inf (observe* (uniform-discrete-dist 3 7) 8))))
+
+(test-assert "uniform-discrete-dist: enumerate*"
+  (= (enumerate* (uniform-discrete-dist 2 5)) [2 3 4 5]))
+
+(test-assert "uniform-discrete-dist: works in enumeration"
+  (let [[values probs] (enumeration-query-fn
+                          (fn [] (let [x (sample* (uniform-discrete-dist 1 3))]
+                                   (condition (> x 1))
+                                   x)))]
+    (and (= (set (seq values)) #{2 3})
+         (approx= (reduce + (seq probs)) 1.0 0.001))))
+
+;; ---------------------------------------------------------------------------
+;; Chi-Squared distribution
+;; ---------------------------------------------------------------------------
+
+(println "=== Chi-Squared Distribution ===")
+
+(test-assert "chi-squared-dist: samples are positive"
+  (every? pos? (repeatedly 50 #(sample* (chi-squared-dist 3)))))
+
+(test-assert "chi-squared-dist: mean near df"
+  ;; Mean of chi-squared(df) = df
+  (let [samples (repeatedly 3000 #(sample* (chi-squared-dist 5)))]
+    (approx= (mean samples) 5.0 0.5)))
+
+(test-assert "chi-squared-dist: log-prob negative -> -Inf"
+  (= ##-Inf (observe* (chi-squared-dist 3) -1)))
+
+(test-assert "chi-squared-dist: log-prob at known value"
+  ;; chi-squared(2) = Exp(0.5), so pdf at x=1 = 0.5*exp(-0.5) ≈ 0.3033
+  (approx= (observe* (chi-squared-dist 2) 1)
+           (js/Math.log 0.30327) 0.01))
+
+;; ---------------------------------------------------------------------------
+;; Logit-Normal distribution
+;; ---------------------------------------------------------------------------
+
+(println "=== Logit-Normal Distribution ===")
+
+(test-assert "logit-normal-dist: samples in (0, 1)"
+  (every? #(and (> % 0) (< % 1))
+          (repeatedly 50 #(sample* (logit-normal-dist 0 1)))))
+
+(test-assert "logit-normal-dist: observe* outside (0,1) -> -Inf"
+  (and (= ##-Inf (observe* (logit-normal-dist 0 1) 0))
+       (= ##-Inf (observe* (logit-normal-dist 0 1) 1))
+       (= ##-Inf (observe* (logit-normal-dist 0 1) -0.5))
+       (= ##-Inf (observe* (logit-normal-dist 0 1) 1.5))))
+
+(test-assert "logit-normal-dist: log-prob is finite in (0,1)"
+  (js/isFinite (observe* (logit-normal-dist 0 1) 0.5)))
+
+(test-assert "logit-normal-dist: mu=0 median near 0.5"
+  ;; When mu=0, median of logit-normal = sigmoid(0) = 0.5
+  (let [samples (sort (repeatedly 2000 #(sample* (logit-normal-dist 0 0.5))))
+        median (nth samples 1000)]
+    (approx= median 0.5 0.1)))
+
+;; ---------------------------------------------------------------------------
+;; Mode
+;; ---------------------------------------------------------------------------
+
+(println "=== Mode ===")
+
+(test-assert "mode: most frequent element"
+  (= (mode [1 2 2 3 3 3]) 3))
+
+(test-assert "mode: single element"
+  (= (mode [42]) 42))
+
+(test-assert "mode: works with keywords"
+  (= (mode [:a :b :a :c :a]) :a))
+
+;; ---------------------------------------------------------------------------
+;; KL Divergence
+;; ---------------------------------------------------------------------------
+
+(println "=== KL Divergence ===")
+
+(test-assert "kl-divergence: same distribution = 0"
+  (approx= (kl-divergence (bernoulli-dist 0.5) (bernoulli-dist 0.5)) 0.0 0.001))
+
+(test-assert "kl-divergence: non-negative"
+  (>= (kl-divergence (bernoulli-dist 0.3) (bernoulli-dist 0.7)) 0.0))
+
+(test-assert "kl-divergence: known value"
+  ;; KL(Bernoulli(0.5) || Bernoulli(0.25)) = 0.5*log(0.5/0.25) + 0.5*log(0.5/0.75)
+  ;; = 0.5*log(2) + 0.5*log(2/3) = 0.5*(0.6931 + (-0.4055)) = 0.1438
+  (approx= (kl-divergence (bernoulli-dist 0.5) (bernoulli-dist 0.25))
+           0.1438 0.01))
+
+(test-assert "kl-divergence: asymmetric"
+  (not= (kl-divergence (bernoulli-dist 0.3) (bernoulli-dist 0.7))
+        (kl-divergence (bernoulli-dist 0.7) (bernoulli-dist 0.3))))
+
+;; ---------------------------------------------------------------------------
+;; Discrete? / Continuous? predicates
+;; ---------------------------------------------------------------------------
+
+(println "=== discrete?/continuous? ===")
+
+(test-assert "discrete?: bernoulli is discrete"
+  (discrete? (bernoulli-dist 0.5)))
+
+(test-assert "discrete?: uniform-discrete is discrete"
+  (discrete? (uniform-discrete-dist 1 6)))
+
+(test-assert "discrete?: categorical is discrete"
+  (discrete? (categorical-dist {:a 0.5 :b 0.5})))
+
+(test-assert "continuous?: gaussian is continuous"
+  (continuous? (gaussian-dist 0 1)))
+
+(test-assert "continuous?: beta is continuous"
+  (continuous? (beta-dist 2 2)))
+
+(test-assert "continuous?: chi-squared is continuous"
+  (continuous? (chi-squared-dist 3)))
+
+(test-assert "continuous?: logit-normal is continuous"
+  (continuous? (logit-normal-dist 0 1)))
+
+(test-assert "discrete?: delta is discrete"
+  (discrete? (delta-dist 42)))
 
 ;; ---------------------------------------------------------------------------
 ;; Summary

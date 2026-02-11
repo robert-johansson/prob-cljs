@@ -41,13 +41,18 @@ Systematic comparison of prob-cljs against [webchurch](https://github.com/probmo
 | mixture | — | `Mixture({dists, ps})` | — | `mixture-dist`: sample, observe (`log-sum-exp` scoring) | **Done** |
 | KDE | — | `KDE({data, width})` | — | `kde-dist`: Gaussian kernel, Silverman bandwidth, sample, observe | **Done** |
 
+### Additional distributions (continued)
+
+| Distribution | webchurch | WebPPL | Anglican | prob-cljs | Status |
+|---|---|---|---|---|---|
+| uniform-discrete | — | — | `(uniform-discrete min max)` | `uniform-discrete-dist`: sample, observe, enumerate, propose | **Done** |
+| logit-normal | — | `LogitNormal({mu, sigma, a, b})` | — | `logit-normal-dist`: sigmoid(Gaussian), sample, observe | **Done** |
+| chi-squared | — | — | `(chi-squared nu)` | `chi-squared-dist`: Gamma(df/2, 2) wrapper, sample, observe | **Done** |
+
 ### Missing distributions
 
 | Distribution | webchurch | WebPPL | Anglican | prob-cljs | Priority |
 |---|---|---|---|---|---|
-| **uniform-discrete** | — | — | `(uniform-discrete min max)` | not implemented | Medium |
-| **logit-normal** | — | `LogitNormal({mu, sigma, a, b})` | — | not implemented | Medium (sigmoid transform of Gaussian) |
-| **chi-squared** | — | — | `(chi-squared nu)` | not implemented | Medium |
 | **multivariate-bernoulli** | — | `MultivariateBernoulli({ps})` | — | not implemented | Low (vector of independent Bernoulli) |
 | **diag-cov-gaussian** | — | `DiagCovGaussian({mu, sigma})` | — | not implemented | Low (needs vector abstraction) |
 | **multivariate normal** | — | `MultivariateGaussian({mu, cov})` | `(mvn mean cov)` with Cholesky | not implemented | Low (needs linear algebra) |
@@ -70,7 +75,8 @@ All existing distributions implement `IDistribution`. Discrete distributions imp
 | Capability | WebPPL | Anglican | prob-cljs | Status |
 |---|---|---|---|---|
 | `entropy` on discrete dists | Yes | — | `(entropy dist)` computes `-sum(p * log(p))` | **Done** |
-| `isContinuous` / `isDiscrete` flag | Yes | Via type check | not implemented | Low |
+| `isContinuous` / `isDiscrete` flag | Yes | Via type check | `(discrete? d)` / `(continuous? d)` via protocol check | **Done** |
+| KL divergence | — | — | Yes | `(kl-divergence p q)` for discrete distributions | **Done** |
 | Distribution serialization (JSON round-trip) | Yes | — | not implemented | Low |
 | Reparameterization (`base`/`transform`) | Yes (for variational inference) | — | not implemented | Low (only useful with VI) |
 
@@ -293,9 +299,9 @@ Required for: HMC, variational inference (BBVB/ELBO). Not needed for MCMC or SMC
 | `sd` (standard deviation) | Yes | — | Yes | **Done** |
 | `skew` | Yes | Yes | not implemented | Low priority |
 | `kurtosis` | Yes | Yes | not implemented | Low priority |
-| `mode` | Yes | — | not implemented | Low priority |
+| `mode` | Yes | — | Yes | **Done** |
 | `kde` (function) | Yes (Epanechnikov kernel) | — | `kde-dist` (Gaussian kernel, Silverman bandwidth) | **Done** |
-| KL divergence | — | Yes | not implemented | Low priority |
+| KL divergence | — | Yes | `(kl-divergence p q)` for discrete dists | **Done** |
 | L2 distance | — | Yes | not implemented | Low priority |
 | Kolmogorov-Smirnov distance | — | Yes | not implemented | Low priority |
 
@@ -311,9 +317,9 @@ Required for: HMC, variational inference (BBVB/ELBO). Not needed for MCMC or SMC
 | Scatter plot | — | `viz.scatter` with groupBy | `scatter` | **Done** |
 | Line chart | — | `viz.line` with groupBy, stroke | `lineplot` (single/multi-series) | **Done** |
 | Table | — | `viz.table` with log/top options | `table` | **Done** |
-| Auto-detect | — | `viz.auto` (analyzes data dimensionality, dispatches to best chart) | not implemented | Medium |
-| Heat map | — | `viz.heatMap` (2D joint distributions) | not implemented | Medium |
-| Marginals | — | `viz.marginals` (each marginal of joint dist separately) | not implemented | Medium |
+| Auto-detect | — | `viz.auto` (analyzes data dimensionality, dispatches to best chart) | `auto` classifies data and dispatches to appropriate chart | **Done** |
+| Heat map | — | `viz.heatMap` (2D joint distributions) | `heatmap` with SVG grid and color scale | **Done** |
+| Marginals | — | `viz.marginals` (each marginal of joint dist separately) | `marginals` displays per-variable hist/density | **Done** |
 | Parallel coordinates | — | `viz.parallelCoordinates` (high-dimensional data) | not implemented | Low priority |
 | Display text | — | `display(val)` | `display` | **Done** |
 
@@ -412,8 +418,8 @@ The effective gap for builtins is small because ClojureScript's standard library
 
 ### Phase 5: Missing Distributions (harder)
 
-22. **Medium distributions:**
-    - Uniform-discrete, Chi-squared, LogitNormal
+22. ~~**Medium distributions:**~~
+    - ~~Uniform-discrete, Chi-squared, LogitNormal~~ -- **Done.** All three implemented in `dist.cljs`.
 
 23. **Multivariate distributions** (requires linear algebra):
     - DiagCovGaussian, MultivariateGaussian, LogisticNormal, Wishart, multivariate-t
@@ -437,9 +443,9 @@ The effective gap for builtins is small because ClojureScript's standard library
 
 30. ~~**`cache` (LRU memoization)**~~ -- **Done.** `(cache f)` or `(cache f max-size)` with LRU eviction.
 
-31. **Additional statistics** -- `skew`, `kurtosis`, `mode`, KL divergence, L2/KS distances.
+31. **Additional statistics** -- `skew`, `kurtosis`, L2/KS distances. ~~`mode`~~: **Done.** ~~KL divergence~~: **Done.**
 
-32. **Additional visualizations** -- `viz.auto` (smart chart selection), heat map, marginals display.
+32. ~~**Additional visualizations**~~ -- ~~`viz.auto` (smart chart selection), heat map, marginals display.~~ **Done.** `auto`, `heatmap`, `marginals` in `viz.cljs`.
 
 33. **Matrix operations** -- Cholesky, inverse, determinant (pure ClojureScript or optional dep).
 

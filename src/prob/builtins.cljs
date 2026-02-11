@@ -218,6 +218,11 @@
     (if (zero? tw) 0.0
       (/ (reduce + 0.0 (map (fn [v w] (* w (js/Math.pow (- v mu) 2))) vs ws)) tw))))
 
+(defn mode
+  "Most frequent value in a collection. If tied, returns one of the modes."
+  [lst]
+  (key (apply max-key val (frequencies lst))))
+
 (defn empirical-distribution [samples]
   (let [n (count samples)]
     (into {} (map (fn [[k v]] [k (/ (double v) n)]) (frequencies samples)))))

@@ -101,6 +101,12 @@
 (def mixture-dist dist/mixture-dist)
 (def kde-dist dist/kde-dist)
 (def entropy dist/entropy)
+(def uniform-discrete-dist dist/uniform-discrete-dist)
+(def chi-squared-dist dist/chi-squared-dist)
+(def logit-normal-dist dist/logit-normal-dist)
+(def discrete? dist/discrete?)
+(def continuous? dist/continuous?)
+(def kl-divergence dist/kl-divergence)
 
 ;; ---------------------------------------------------------------------------
 ;; Distribution: Marginal
@@ -112,6 +118,7 @@
 ;; Utilities
 ;; ---------------------------------------------------------------------------
 
+(def mode builtins/mode)
 (def mem builtins/mem)
 (def cache builtins/cache)
 (def DPmem builtins/DPmem)

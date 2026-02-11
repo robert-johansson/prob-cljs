@@ -188,6 +188,144 @@
     (.appendChild c tbl)
     (js/__appendToOutput c) nil))
 
+(defn heatmap [data label]
+  (let [data (vec data)
+        ;; data: seq of [x y value] triples OR seq of seqs (matrix)
+        triples (if (and (sequential? (first data)) (= 3 (count (first data))))
+                  data
+                  ;; matrix form: row-index = y, col-index = x
+                  (for [[r row] (map-indexed vector data)
+                        [c val] (map-indexed vector row)]
+                    [c r val]))
+        triples (vec triples)
+        xs (mapv first triples) ys (mapv second triples) vs (mapv #(nth % 2) triples)
+        x-vals (vec (sort (distinct xs))) y-vals (vec (sort (distinct ys)))
+        v-min (apply min vs) v-max (apply max vs)
+        v-rng (let [r (- v-max v-min)] (if (zero? r) 1 r))
+        nx (count x-vals) ny (count y-vals)
+        cell-w (max 15 (min 40 (js/Math.floor (/ 400 (max nx 1)))))
+        cell-h (max 15 (min 40 (js/Math.floor (/ 300 (max ny 1)))))
+        ml 40 mt 20 mb 30 mr 60
+        cw (+ ml (* nx cell-w) mr) ch (+ mt (* ny cell-h) mb)
+        c (doto (js/document.createElement "div") (-> .-className (set! "chart-container")))
+        t (doto (js/document.createElement "div") (-> .-className (set! "chart-title")) (-> .-textContent (set! (or label ""))))
+        _ (.appendChild c t)
+        svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "svg") (.setAttribute "width" cw) (.setAttribute "height" ch))
+        _ (.appendChild c svg)
+        x-idx (into {} (map-indexed (fn [i v] [v i]) x-vals))
+        y-idx (into {} (map-indexed (fn [i v] [v i]) y-vals))
+        interp (fn [v] (let [t (/ (- v v-min) v-rng)
+                              r (js/Math.round (+ 255 (* (- 74 255) t)))
+                              g (js/Math.round (+ 255 (* (- 144 255) t)))
+                              b (js/Math.round (+ 255 (* (- 217 255) t)))]
+                          (str "rgb(" r "," g "," b ")")))]
+    ;; cells
+    (doseq [[x y v] triples]
+      (let [xi (get x-idx x) yi (get y-idx y)
+            px (+ ml (* xi cell-w)) py (+ mt (* yi cell-h))]
+        (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "rect")
+                            (.setAttribute "x" px) (.setAttribute "y" py)
+                            (.setAttribute "width" cell-w) (.setAttribute "height" cell-h)
+                            (.setAttribute "fill" (interp v))
+                            (.setAttribute "stroke" "#fff") (.setAttribute "stroke-width" "1")))))
+    ;; x labels
+    (doseq [[i v] (map-indexed vector x-vals)]
+      (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text")
+                          (.setAttribute "class" "axis-label")
+                          (.setAttribute "x" (+ ml (* i cell-w) (/ cell-w 2)))
+                          (.setAttribute "y" (+ mt (* ny cell-h) 15))
+                          (.setAttribute "text-anchor" "middle")
+                          (.setAttribute "font-size" "10")
+                          (-> .-textContent (set! (str v))))))
+    ;; y labels
+    (doseq [[i v] (map-indexed vector y-vals)]
+      (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text")
+                          (.setAttribute "class" "axis-label")
+                          (.setAttribute "x" (- ml 5))
+                          (.setAttribute "y" (+ mt (* i cell-h) (/ cell-h 2) 4))
+                          (.setAttribute "text-anchor" "end")
+                          (.setAttribute "font-size" "10")
+                          (-> .-textContent (set! (str v))))))
+    ;; color scale legend
+    (let [lx (+ ml (* nx cell-w) 15) lw 15 lh (* ny cell-h)]
+      (doseq [i (range 20)]
+        (let [t (/ i 19) y (+ mt (* (- 1 t) lh (/ 1 20) 19))]
+          (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "rect")
+                              (.setAttribute "x" lx) (.setAttribute "y" (+ mt (* (- 19 i) (/ lh 20))))
+                              (.setAttribute "width" lw) (.setAttribute "height" (/ lh 20))
+                              (.setAttribute "fill" (interp (+ v-min (* t v-rng))))))))
+      (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text")
+                          (.setAttribute "class" "axis-label") (.setAttribute "x" (+ lx lw 4)) (.setAttribute "y" (+ mt 10))
+                          (.setAttribute "font-size" "9") (-> .-textContent (set! (.toFixed v-max 2)))))
+      (.appendChild svg (doto (js/document.createElementNS "http://www.w3.org/2000/svg" "text")
+                          (.setAttribute "class" "axis-label") (.setAttribute "x" (+ lx lw 4)) (.setAttribute "y" (+ mt lh))
+                          (.setAttribute "font-size" "9") (-> .-textContent (set! (.toFixed v-min 2))))))
+    (js/__appendToOutput c) nil))
+
+(defn marginals [data label]
+  (let [;; data: seq of maps or seq of seqs; extract each "column" as a marginal
+        data (vec data)
+        sample (first data)]
+    (cond
+      ;; seq of maps: one marginal per key
+      (map? sample)
+      (let [ks (keys sample)]
+        (doseq [k ks]
+          (let [values (mapv #(get % k) data)
+                sub-label (str (or label "") (when label " - ") (name k))]
+            (if (every? number? values)
+              (density values sub-label)
+              (hist values sub-label)))))
+      ;; seq of seqs/vectors: one marginal per index
+      (or (sequential? sample) (vector? sample))
+      (let [n (count sample)]
+        (doseq [i (range n)]
+          (let [values (mapv #(nth (vec %) i) data)
+                sub-label (str (or label "") (when label " - ") "dim " i)]
+            (if (every? number? values)
+              (density values sub-label)
+              (hist values sub-label)))))
+      ;; scalar: just a single histogram
+      :else (hist data label))))
+
+(defn- classify-data [values]
+  (cond
+    (every? number? values) (if (every? integer? values) :integer :real)
+    :else :categorical))
+
+(defn auto [data label]
+  (let [data (vec data)
+        sample (first data)]
+    (cond
+      ;; [values probs] pair from enumeration
+      (and (= 2 (count data))
+           (sequential? (first data))
+           (sequential? (second data))
+           (every? number? (second data)))
+      (barplot data label)
+
+      ;; seq of [x y] pairs
+      (and (sequential? sample) (= 2 (count sample)) (every? number? (map first data)))
+      (let [xs (map first data) ys (map second data)
+            x-type (classify-data xs) y-type (classify-data ys)]
+        (cond
+          (and (= :real x-type) (= :real y-type)) (scatter data label)
+          (and (#{:integer :real} x-type) (#{:integer :real} y-type)) (lineplot data label)
+          :else (scatter data label)))
+
+      ;; seq of maps -> marginals
+      (map? sample)
+      (marginals data label)
+
+      ;; seq of numbers
+      (every? number? data)
+      (if (> (count (distinct data)) 20)
+        (density data label)
+        (hist data label))
+
+      ;; seq of categorical values
+      :else (hist data label))))
+
 (defn display [& args]
   (js/__appendTextToOutput (apply str (interpose " " args))))
 

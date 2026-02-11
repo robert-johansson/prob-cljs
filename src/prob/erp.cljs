@@ -184,7 +184,7 @@
           (if (and (> v 0)
                    (< (js/Math.log (rand-uniform))
                       (+ (* 0.5 x x)
-                         (* d (- 1 v (js/Math.log v))))))
+                         (* d (+ 1 (- v) (js/Math.log v))))))
             (* d v b)
             (recur)))))))
 
