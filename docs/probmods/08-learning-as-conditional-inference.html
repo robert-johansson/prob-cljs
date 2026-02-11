@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ProbMods: Learning as Conditional Inference</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="../js/physics.js"></script>
+  <script>ProbPhysics.setup();</script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Probabilistic Models of Cognition</a></div>
+    <ul id="nav">
+      <li><a href="07-algorithms-for-inference.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+
+<h1 id="chapter-title">8. Learning as Conditional Inference</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#example-learning-about-coins">Example: Learning About Coins</a></li>
+<li><a href="#learning-a-continuous-parameter">Learning a Continuous Parameter</a><ul>
+<li><a href="#example-estimating-causal-power">Example: Estimating Causal Power</a></li>
+</ul></li>
+<li><a href="#grammar-based-concept-induction">Grammar-based Concept Induction</a><ul>
+<li><a href="#example-inferring-an-arithmetic-expression">Example: Inferring an Arithmetic Expression</a></li>
+<li><a href="#example-rational-rules">Example: Rational Rules</a></li>
+</ul></li>
+<li><a href="#references">References</a></li>
+</ul>
+</div>
+
+
+<p>The line between reasoning and learning is not sharp in cognitive science. Just as reasoning can be seen as conditional inference, so can learning: acquiring long-lasting knowledge about the world, such as the causal structure of objects or the preferences of people. By &ldquo;long-lasting&rdquo; we mean knowledge that is relevant to many observations over time. Learning is then inference in a model that has (1) a fixed latent value called the <em>hypothesis</em>, and (2) a sequence of observations called <em>data points</em>. This is a special class of the sequence models we considered in the last few chapters, and it naturally takes the form of Bayes&rsquo; rule:</p>
+
+<pre class="norun"><code>;; Schematic Bayesian learning:
+(let [hypothesis (prior)]
+  (condition (= observed-data (vec (repeatedly N #(observe-fn hypothesis)))))
+  hypothesis)</code></pre>
+
+<p>The <code>prior</code> function samples a hypothesis from the <em>hypothesis space</em>, and expresses our prior knowledge about which processes are likely to generate our data before we have observed any of it. The <code>observe-fn</code> function describes how a single data point is generated given the hypothesis. The key questions are: what can we infer about the hypothesis given particular observed data? How much more can we learn as we accumulate data&mdash;what is the <em>learning curve</em>?</p>
+
+
+<h1 id="example-learning-about-coins"><a href="#example-learning-about-coins">Example: Learning About Coins</a></h1>
+
+<p>Imagine that a friend produces a coin and you flip it five times, getting all heads:</p>
+
+<p><code>(H H H H H)</code></p>
+
+<p>Most people would find five consecutive heads mildly surprising but not alarming. But if you flip the coin five more times and still get only heads:</p>
+
+<p><code>(H H H H H H H H H H)</code></p>
+
+<p>Now you would probably suspect the coin is weighted. And after fifteen total heads:</p>
+
+<p><code>(H H H H H H H H H H H H H H H)</code></p>
+
+<p>Regardless of your initial beliefs, you would be quite confident the coin is biased.</p>
+
+<p>This &ldquo;learning curve&rdquo; is the result of rational conditional inference. For simplicity, consider two hypotheses: a fair coin (weight 0.5) and a trick coin (weight 0.95). What prior probability should we assign to encountering a trick coin? There is no single right answer, but assume for the sake of argument that the prior probability is 1 in 1000 for trick coins versus 999 in 1000 for fair coins:</p>
+
+<pre><code>(def observed-data ['h 'h 'h 'h 'h])
+(def num-flips (count observed-data))
+
+(def samples
+  (mh-query 1000 10
+    (let [fair-prior 0.999
+          fair-coin? (flip fair-prior)
+          make-coin (fn [weight] (fn [] (if (flip weight) 'h 't)))
+          coin (make-coin (if fair-coin? 0.5 0.95))]
+      (condition (= observed-data (vec (repeatedly num-flips coin))))
+      fair-coin?)))
+
+(hist samples "Fair coin?")</code></pre>
+
+<p>Try varying the number of flips and how many come up heads. Five heads raises the trick coin possibility to roughly 3%&mdash;about thirty times the base rate. After ten heads, fair and trick become comparable, though fair is still slightly favored. After fifteen heads, the trick hypothesis strongly dominates.</p>
+
+<p>Experiment with how learning depends on the <code>fair-prior</code>. With equal priors (0.5), five heads substantially favor the trick coin. At 0.99, ten heads suffice. Even at 0.9999, fifteen consecutive heads still overwhelmingly favor trick coins. Evidence accumulates exponentially; each successive head increases evidence by roughly a factor of two.</p>
+
+<p>Learning is about how knowledge changes with evidence. The speed of this shift reveals the strength of prior beliefs. Most people need between ten and fifteen consecutive heads to suspect trickery, suggesting typical prior probabilities for trick coins range from 1 in 100 to 1 in 10,000&mdash;reasonable estimates for everyday encounters.</p>
+
+
+<h1 id="learning-a-continuous-parameter"><a href="#learning-a-continuous-parameter">Learning a Continuous Parameter</a></h1>
+
+<p>The preceding example is perhaps the simplest possible learning problem. Real learning problems are typically much more complex. In particular, learners usually face far more than two hypotheses about the underlying process. Indeed, hypothesis spaces are frequently infinite. Statistics and machine learning call conditional inference over continuous hypothesis spaces <em>parameter estimation</em>.</p>
+
+<p>Let&rsquo;s explore continuous hypothesis spaces by enriching the coin example. Rather than choosing between two coin weights, the learner can consider <em>any</em> weight between zero and one. The following program computes the posterior over coin weights drawn from a uniform prior, conditioned on observed flips:</p>
+
+<pre><code>(def observed-data ['h 'h 'h 'h 'h])
+(def num-flips (count observed-data))
+(def num-samples 1000)
+(def prior-samples (vec (repeatedly num-samples #(uniform 0 1))))
+
+(def samples
+  (mh-query num-samples 10
+    (let [coin-weight (uniform 0 1)
+          make-coin (fn [weight] (fn [] (if (flip weight) 'h 't)))
+          coin (make-coin coin-weight)]
+      (condition (= observed-data (vec (repeatedly num-flips coin))))
+      coin-weight)))
+
+(density prior-samples "Coin weight, prior to observing data")
+(density samples "Coin weight, conditioned on observed data")</code></pre>
+
+<p>Since inference outputs samples from a continuous interval, we can&rsquo;t expect exact matches. We use kernel density estimation to visualize the posterior distribution. Experiment with varying datasets across different numbers of flips and proportions of heads. How does the posterior shape change? The peak reflects a reasonable &ldquo;best estimate&rdquo; of the coin weight, roughly matching the observed head proportion with uninformative priors. The spread reflects confidence: distributions sharpen with more observations.</p>
+
+<p>When studying learning as conditional inference&mdash;examining <em>ideal learner models</em>&mdash;we are particularly interested in how the posterior changes as data accumulate. A <em>learning trajectory</em> maps posterior summaries (like the expected weight) against the number of observations. Here we plot the estimated weight as a function of data size, using <code>factor</code> for soft conditioning:</p>
+
+<pre><code>(defn make-coin [weight] (fn [] (if (flip weight) 'h 't)))
+
+(defn get-samples [data]
+  (mh-query 400 10
+    (let [coin-weight (uniform 0 1)]
+      (factor (sum (map (fn [obs]
+                          (if (= obs 'h)
+                            (js/Math.log coin-weight)
+                            (js/Math.log (- 1 coin-weight))))
+                        data)))
+      coin-weight)))
+
+(def true-weight 0.9)
+(def true-coin (make-coin true-weight))
+(def full-data-set (vec (repeatedly 100 true-coin)))
+(def observed-data-sizes [1 3 6 10 20 30 50 70 100])
+(defn estimate [n] (mean (get-samples (take n full-data-set))))
+(lineplot (map (fn [n] [n (estimate n)]) observed-data-sizes)
+          "Learning curve")</code></pre>
+
+<p>Different runs produce different trajectories (because different random datasets are generated), but they all converge to the true weight eventually. You can try plotting alternative statistics like the absolute difference between true and estimated means, or confidence measures like the standard error.</p>
+
+<p>What happens when we have informative prior knowledge? The uniform prior above doesn&rsquo;t capture our real beliefs about coins. Imagine receiving a quarter from a store&mdash;or taking one from a fresh bank roll. Your prior strongly expects fairness. Flipping ten times and getting seven heads suggests nothing suspicious; fair coins easily produce this outcome. The <code>beta</code> distribution lets us express such prior beliefs:</p>
+
+<pre><code>(def observed-data ['h 'h 'h 't 'h 't 'h 'h 't 'h])
+(def num-flips (count observed-data))
+(def num-samples 1000)
+(def pseudo-counts [10 10])
+(def prior-samples (vec (repeatedly num-samples
+                          #(beta (first pseudo-counts) (second pseudo-counts)))))
+
+(def samples
+  (mh-query num-samples 10
+    (let [coin-weight (beta (first pseudo-counts) (second pseudo-counts))
+          make-coin (fn [weight] (fn [] (if (flip weight) 'h 't)))
+          coin (make-coin coin-weight)]
+      (condition (= observed-data (vec (repeatedly num-flips coin))))
+      coin-weight)))
+
+(density prior-samples "Coin weight, prior to observing data")
+(density samples "Coin weight, conditioned on observed data")</code></pre>
+
+<p>Try varying the pseudo-counts. With <code>[100 100]</code> the prior is very concentrated around 0.5, expressing strong belief in fairness. With <code>[1 1]</code> the prior is uniform. Notice how stronger priors require more evidence to shift the posterior away from the prior mean.</p>
+
+<p>Does the Beta family capture all our intuitive beliefs about coins? Consider what happens if you flip a fresh-from-bank quarter twenty-five times and get nothing but heads. With Beta(100,100) priors, the posterior shifts only slightly. But our real intuition says: &ldquo;Twenty-five heads? This coin must be rigged!&rdquo; The belief shifts <em>discretely</em> between &ldquo;fair coin&rdquo; and &ldquo;trick coin&rdquo; categories rather than smoothly traversing graded weight hypotheses. Capturing this requires more expressive programs than single parametric distributions&mdash;something we will explore in later chapters on hierarchical models.</p>
+
+<h2 id="example-estimating-causal-power"><a href="#example-estimating-causal-power">Example: Estimating Causal Power</a></h2>
+
+<p>Cognition frequently confronts <em>causal learning</em>: inferring causal relationships from observed event co-occurrences. An especially simple case, studied in psychology, is <em>elemental causal induction</em>: given a potential cause C and potential effect E, does C cause E? Following Cheng and colleagues, we assume C and background factors both cause E via a noisy-or interaction. Learning the &ldquo;causal power&rdquo; of C to produce E is then a parameter estimation problem:</p>
+
+<pre><code>(def samples
+  (mh-query 10000 1
+    (let [cp (uniform 0 1)   ;; causal power of C to cause E
+          b (uniform 0 1)    ;; background probability of E
+          E-if-C (fn [C]
+                   (or (and C (flip cp))
+                       (flip b)))]
+      (condition (and (E-if-C true)
+                      (E-if-C true)
+                      (not (E-if-C false))
+                      (E-if-C true)))
+      cp)))
+
+(density samples "Causal power")</code></pre>
+
+<p>Experiment: when does this model conclude a causal relation is likely (high <code>cp</code>)? Does this match your intuitions? What role does the background rate <code>b</code> play? What happens if you modify the <code>E-if-C</code> function to use a different causal interaction?</p>
+
+
+<h1 id="grammar-based-concept-induction"><a href="#grammar-based-concept-induction">Grammar-based Concept Induction</a></h1>
+
+<p>An important concern for Bayesian learning models is how to specify the hypothesis space. We want hypothesis spaces that are rich enough to capture human learning, yet specified in simple, uniform terms. One powerful approach uses <em>grammars</em> to define <em>hypothesis languages</em>: small grammars can generate infinite sets of potential hypotheses. Since grammars are themselves generative processes, priors over hypotheses emerge naturally from the grammar&rsquo;s stochastic choices.</p>
+
+<h2 id="example-inferring-an-arithmetic-expression"><a href="#example-inferring-an-arithmetic-expression">Example: Inferring an Arithmetic Expression</a></h2>
+
+<p>Consider inducing arithmetic functions from examples. We generate expressions as lists and evaluate them using a simple interpreter:</p>
+
+<pre><code>(defn eval-expr [expr x]
+  (cond
+    (number? expr) expr
+    (= expr 'x) x
+    (sequential? expr)
+    (let [a (eval-expr (second expr) x)
+          b (eval-expr (nth expr 2) x)]
+      (if (= (first expr) '+) (+ a b) (- a b)))))
+
+(defn random-arithmetic-expression []
+  (if (flip 0.7)
+    (if (flip) 'x (random-integer 10))
+    (list (uniform-draw '(+ -))
+          (random-arithmetic-expression)
+          (random-arithmetic-expression))))
+
+(defn procedure-from-expression [expr]
+  (fn [x] (eval-expr expr x)))
+
+(defn take-sample []
+  (rejection-query
+    (let [my-expr (random-arithmetic-expression)
+          my-proc (procedure-from-expression my-expr)]
+      (condition (= (my-proc 1) 3))
+      my-expr)))
+
+(doseq [s (repeatedly 20 take-sample)] (display s))</code></pre>
+
+<p>This query searches for arithmetic expressions over variable <code>x</code> that evaluate to 3 when <code>x</code> equals 1. Many extensionally equivalent expressions satisfy this: <code>3</code>, <code>(+ 1 2)</code>, <code>(+ x 2)</code>, but complex expressions require more generative choices and so appear less frequently. What happens when you observe more data? Try changing the condition to <code>(and (= (my-proc 1) 3) (= (my-proc 2) 4))</code>.</p>
+
+<p>Here&rsquo;s an alternative formulation that directly builds arithmetic functions via random subfunctions, avoiding the need for an explicit interpreter:</p>
+
+<pre><code>(defn random-constant-fn []
+  (let [i (random-integer 10)]
+    (fn [x] i)))
+
+(defn random-combination [f g]
+  (let [op (uniform-draw [+ -])]
+    (fn [x] (op (f x) (g x)))))
+
+(defn random-arithmetic-fn []
+  (if (flip 0.3)
+    (random-combination (random-arithmetic-fn) (random-arithmetic-fn))
+    (if (flip)
+      (fn [x] x)
+      (random-constant-fn))))
+
+(defn take-sample []
+  (rejection-query
+    (let [my-proc (random-arithmetic-fn)]
+      (condition (= (my-proc 1) 3))
+      (my-proc 2))))
+
+(hist (repeatedly 500 take-sample) "f(2), given f(1) = 3")</code></pre>
+
+<p>This model learns from an infinite hypothesis space&mdash;all expressions constructible from <code>x</code>, <code>+</code>, <code>-</code>, and constant integers&mdash;yet specifies both hypothesis space and priors through a simple generative process.</p>
+
+<h2 id="example-rational-rules"><a href="#example-rational-rules">Example: Rational Rules</a></h2>
+
+<p>How do we explain the remarkable productivity of human concept learning? &ldquo;Classical&rdquo; theories explained it through compositional rules: concepts are classification rules built by logically combining object features. However, this theory struggled to explain graded effects in categorization experiments&mdash;generalization gradients, typicality effects, and prototype enhancement&mdash;leading psychologists toward prototype and exemplar models that capture these graded effects but lack compositional structure.</p>
+
+<p>Can rule-based concepts produce graded effects? Perhaps the uncertainty comes from <em>learning</em> rather than from the representations themselves. Goodman, Tenenbaum, Feldman, and Griffiths (2008) introduced the Rational Rules model: deterministic rules learned via probabilistic inference over an infinite hypothesis space (propositional logic formulas, compositionally generated by a grammar). Here is a simplified version applied to a classic categorization experiment by Medin and Schaffer (1978):</p>
+
+<pre><code>;; Training (category A/B) and test objects:
+(def num-features 4)
+
+(def A-objects [[0 0 0 1] [0 1 0 1] [0 1 0 0] [0 0 1 0] [1 0 0 0]])
+(def B-objects [[0 0 1 1] [1 0 0 1] [1 1 1 0] [1 1 1 1]])
+(def T-objects [[0 1 1 0] [0 1 1 1] [0 0 0 0] [1 1 0 1]
+                [1 0 1 0] [1 1 0 0] [1 0 1 1]])
+
+;; Human data from Nosofsky et al (1994), for comparison:
+(def human-A [0.77 0.78 0.83 0.64 0.61])
+(def human-B [0.39 0.41 0.21 0.15])
+(def human-T [0.56 0.41 0.82 0.40 0.32 0.53 0.20])
+
+;; Two parameters: stopping probability and noise:
+(def tau 0.3)
+(def noise-param (js/Math.exp -1.5))
+
+;; Grammar for disjunctive normal form propositional formulas:
+(declare get-formula get-conj)
+
+(defn get-pred []
+  (let [index (random-integer num-features)
+        value (random-integer 2)]
+    (fn [x] (= (nth x index) value))))
+
+(defn get-conj []
+  (if (flip tau)
+    (let [c (get-conj) p (get-pred)]
+      (fn [x] (and (c x) (p x))))
+    (get-pred)))
+
+(defn get-formula []
+  (if (flip tau)
+    (let [c (get-conj) f (get-formula)]
+      (fn [x] (or (c x) (f x))))
+    (get-conj)))
+
+(defn noisy-equal? [a b]
+  (flip (if (= a b) 0.999999999 noise-param)))
+
+(def samples
+  (mh-query 1000 10
+    (let [my-formula (get-formula)
+          a-checks (mapv #(noisy-equal? true (my-formula %)) A-objects)
+          b-checks (mapv #(noisy-equal? false (my-formula %)) B-objects)]
+      (condition (and (every? identity a-checks)
+                      (every? identity b-checks)))
+      (mapv my-formula (concat T-objects A-objects B-objects)))))
+
+;; Compute column means (model predictions):
+(defn column-means [samples]
+  (when (seq (first samples))
+    (cons (mean (map #(if (first %) 1.0 0.0) samples))
+          (column-means (map rest samples)))))
+
+(scatter (map vector (column-means samples) (concat human-T human-A human-B))
+         "model vs human")</code></pre>
+
+<p>Goodman et al. showed that this model captures a wide range of classic categorization effects. Probabilistic rule induction over compositional hypothesis spaces produces graded effects that were previously thought to require non-rule-based representations.</p>
+
+<p>This style of compositional concept induction extends naturally to more complex hypothesis spaces. Further examples include:</p>
+
+<ul>
+<li>Compositionality in rational analysis: Grammar-based induction for concept learning. N. D. Goodman, J. B. Tenenbaum, T. L. Griffiths, and J. Feldman (2008). In M. Oaksford and N. Chater (Eds.), <em>The Probabilistic Mind</em>.</li>
+<li>A Bayesian Model of the Acquisition of Compositional Semantics. S. T. Piantadosi, N. D. Goodman, B. A. Ellis, and J. B. Tenenbaum (2008). <em>Proceedings of the 30th Annual Conference of the Cognitive Science Society</em>.</li>
+<li>Learning Structured Generative Concepts. A. Stuhlmueller, J. B. Tenenbaum, and N. D. Goodman (2010). <em>Proceedings of the 32nd Annual Conference of the Cognitive Science Society</em>.</li>
+</ul>
+
+
+<h1 id="references"><a href="#references">References</a></h1>
+
+<p>Goodman, N. D., Tenenbaum, J. B., Feldman, J., &amp; Griffiths, T. L. (2008). A rational analysis of rule-based concept learning. <em>Cognitive Science</em>, <em>32</em>(1), 108&ndash;154.</p>
+<p>Medin, D. L., &amp; Schaffer, M. M. (1978). Context theory of classification learning. <em>Psychological Review</em>, <em>85</em>(3), 207&ndash;238.</p>
+<p>Nosofsky, R. M., Gluck, M. A., Palmeri, T. J., &amp; McKinley, S. C. (1994). Comparing models of rule-based classification learning. <em>Memory &amp; Cognition</em>, <em>22</em>(3), 352&ndash;369.</p>
+
+
+  </div>
+  <div class="chapter-nav">
+    <a href="07-algorithms-for-inference.html">&larr; Chapter 7: Algorithms for Inference</a>
+    <span></span>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt member pair null? equal? make-list length" +
+      "                                  string-append abs sample fold iota]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot lineplot display run-physics animate-physics]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre:not(.norun)').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>

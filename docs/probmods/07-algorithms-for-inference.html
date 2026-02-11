@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ProbMods: Algorithms for Inference</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="../js/physics.js"></script>
+  <script>ProbPhysics.setup();</script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Probabilistic Models of Cognition</a></div>
+    <ul id="nav">
+      <li><a href="06-inference-about-inference.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+      <li><a href="08-learning-as-conditional-inference.html">Next &rarr;</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+
+<h1 id="chapter-title">7. Algorithms for Inference</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#the-performance-characteristics-of-different-algorithms">The Performance Characteristics of Different Algorithms</a></li>
+<li><a href="#markov-chains-as-samplers">Markov Chains as Samplers</a></li>
+<li><a href="#markov-chains-with-infinite-state-space">Markov Chains with Infinite State Space</a></li>
+<li><a href="#getting-the-right-chain-mcmc">Getting the Right Chain: MCMC</a><ul>
+<li><a href="#satisfying-detailed-balance-mh">Satisfying Detailed Balance: MH</a></li>
+<li><a href="#states-with-structure">States with Structure</a></li>
+<li><a href="#mh-on-program-executions">MH on Program Executions</a></li>
+<li><a href="#biases-of-mcmc">Biases of MCMC</a></li>
+</ul></li>
+<li><a href="#inference-for-nested-queries">Inference for Nested Queries</a></li>
+<li><a href="#exercises">Exercises</a></li>
+</ul>
+</div>
+
+
+<h1 id="the-performance-characteristics-of-different-algorithms"><a href="#the-performance-characteristics-of-different-algorithms">The Performance Characteristics of Different Algorithms</a></h1>
+
+<p>When we introduced <a href="03-conditioning.html">conditioning</a> we pointed out that the rejection sampling and mathematical definitions are equivalent&mdash;we could take either one as the definition of <code>query</code>, showing that the other specifies the same distribution. There are many different ways to compute the same distribution, it is thus useful to separately think about the distributions we are building (including conditional distributions) and how we will compute them. Indeed, in the last few chapters we have explored the dynamics of inference without worrying about the details of inference algorithms. The efficiency characteristics of different implementations of <code>query</code> can be very different, however, and this is important both practically and for motivating cognitive hypotheses at the level of algorithms (or psychological processes).</p>
+
+<p>The &ldquo;guess and check&rdquo; method of rejection sampling, implemented in <code>rejection-query</code>, is conceptually useful but is often not efficient: even if we are sure that our model can satisfy the condition, it will often take a very large number of samples to find computations that do so. To see this, try making the <code>baserate</code> probability of <code>A</code>, <code>B</code>, and <code>C</code> lower in this example:</p>
+
+<pre><code>(def baserate 0.1)
+
+(defn take-sample []
+  (rejection-query
+    (let [A (if (flip baserate) 1 0)
+          B (if (flip baserate) 1 0)
+          C (if (flip baserate) 1 0)
+          D (+ A B C)]
+      (condition (>= D 2))
+      A)))
+
+(hist (repeatedly 100 take-sample) "Value of A, given D >= 2, using rejection")</code></pre>
+
+<p>Even for this simple program, lowering the baserate by just one order of magnitude, to 0.01, will make <code>rejection-query</code> impractical.</p>
+
+<p>Another option is to use the mathematical definition of conditional probability directly: to <em>enumerate</em> all of the execution histories for the query, and then to use the rules of probability to compute the conditional probability (which we can then use to sample if we wish). The <code>enumeration-query</code> implementation returns the exact distribution as a list of values and a list of probabilities, rather than a sample:</p>
+
+<pre><code>(def baserate 0.1)
+
+(barplot
+  (enumeration-query
+    (let [A (if (flip baserate) 1 0)
+          B (if (flip baserate) 1 0)
+          C (if (flip baserate) 1 0)
+          D (+ A B C)]
+      (condition (>= D 2))
+      A))
+  "Value of A, given D >= 2, using enumeration")</code></pre>
+
+<p>Notice that the time it takes for this program to run doesn&rsquo;t depend on the baserate. Unfortunately it does depend critically on the number of random choices in an execution history: the number of possible histories that must be considered grows exponentially in the number of random choices. To see this try adding more random choices to the sum (following the pattern of <code>A</code>). The dependence on size of the execution space renders <code>enumeration-query</code> impractical for all but the simplest models.</p>
+
+<p>There are many other algorithms and techniques for dealing with conditional probabilistic inference, and several of these have been adapted into prob-cljs to give implementations of <code>query</code> that may be more efficient in various cases. One implementation that we have used already is based on the <em>Metropolis-Hastings</em> algorithm, a form of <em>Markov chain Monte Carlo</em> inference.</p>
+
+<pre><code>(def baserate 0.1)
+
+(def samples
+  (mh-query 100 100
+    (let [A (if (flip baserate) 1 0)
+          B (if (flip baserate) 1 0)
+          C (if (flip baserate) 1 0)
+          D (+ A B C)]
+      (condition (>= D 2))
+      A)))
+
+(hist samples "Value of A, given that D >= 2")</code></pre>
+
+<p>See what happens in the above query as you lower the baserate. Inference should not slow down appreciably, but it will become less stable and less accurate.</p>
+
+<p>It becomes increasingly difficult for MH to draw independent conditional samples by taking small random steps, so for a fixed lag (100 in the code above), the 100 samples returned will tend to be less representative of the true conditional inference. In this case, stable and accurate conditional inferences can still be achieved in reasonable time by increasing the number of samples to 500 (while holding the lag at 100).</p>
+
+
+<h1 id="markov-chains-as-samplers"><a href="#markov-chains-as-samplers">Markov Chains as Samplers</a></h1>
+
+<p>We have already seen <a href="05-observing-sequences.html#markov-models">Markov models</a> used to describe sequences of observations. A Markov model (or Markov <em>chain</em>, as it is often called in the context of inference algorithms) is a discrete dynamical system that unfolds over iterations of the <code>transition</code> function. Here is a Markov chain:</p>
+
+<pre><code>(defn transition [state]
+  (case state
+    a (multinomial '(a b c d) '(0.48 0.48 0.02 0.02))
+    b (multinomial '(a b c d) '(0.48 0.48 0.02 0.02))
+    c (multinomial '(a b c d) '(0.02 0.02 0.48 0.48))
+    d (multinomial '(a b c d) '(0.02 0.02 0.48 0.48))))
+
+(defn chain [state n]
+  (if (= n 0) state (chain (transition state) (dec n))))
+
+(hist (repeatedly 2000 #(chain 'a 10)) "10 steps, starting at a")
+(hist (repeatedly 2000 #(chain 'c 10)) "10 steps, starting at c")
+(hist (repeatedly 2000 #(chain 'a 30)) "30 steps, starting at a")
+(hist (repeatedly 2000 #(chain 'c 30)) "30 steps, starting at c")</code></pre>
+
+<p>Notice that the distribution of states after only a few steps is highly influenced by the starting state. In the long run the distribution looks the same from any starting state: this long-run distribution is called the <em>stable distribution</em> (also known as <em>stationary distribution</em>). For the chain above, the stable distribution is uniform&mdash;we have another (fairly baroque!) way to sample from the uniform distribution on <code>'(a b c d)</code>!</p>
+
+<p>Of course we could have sampled from the uniform distribution using other Markov chains. For instance the following chain is more natural, since it transitions uniformly:</p>
+
+<pre><code>(defn transition [state]
+  (uniform-draw '(a b c d)))
+
+(defn chain [state n]
+  (if (= n 0) state (chain (transition state) (dec n))))
+
+(hist (repeatedly 2000 #(chain 'a 2)) "a, 2 steps")
+(hist (repeatedly 2000 #(chain 'c 2)) "c, 2 steps")
+(hist (repeatedly 2000 #(chain 'a 10)) "a, 10 steps")
+(hist (repeatedly 2000 #(chain 'c 10)) "c, 10 steps")</code></pre>
+
+<p>Notice that this chain converges much more quickly to the uniform distribution&mdash;after only one step. The number of steps it takes for the distribution on states to reach the stable distribution (and hence lose traces of the starting state) is called the <em>burn-in time</em>. We can use a Markov chain as a way to (approximately) sample from its stable distribution, but the efficiency depends on burn-in time. While many Markov chains have the same stable distribution they can have very different burn-in times, and hence different efficiency.</p>
+
+
+<h1 id="markov-chains-with-infinite-state-space"><a href="#markov-chains-with-infinite-state-space">Markov Chains with Infinite State Space</a></h1>
+
+<p>Markov chains can also be constructed over infinite state spaces. Here&rsquo;s a chain over the integers:</p>
+
+<pre><code>(def theta 0.7)
+
+(defn transition [state]
+  (if (= state 3)
+    (multinomial (list 3 4)
+                 (list (- 1 (* 0.5 theta)) (* 0.5 theta)))
+    (multinomial (list (- state 1) state (+ state 1))
+                 (list 0.5 (- 0.5 (* 0.5 theta)) (* 0.5 theta)))))
+
+(defn chain [state n]
+  (if (= n 0) state (chain (transition state) (dec n))))
+
+(hist (repeatedly 2000 #(chain 3 20)) "Markov chain")</code></pre>
+
+<p>As we can see, this Markov chain has as its stationary distribution a geometric distribution conditioned to be greater than 2. We can also write it using <code>query</code> syntax:</p>
+
+<pre><code>(defn geometric [theta]
+  (if (not (flip theta))
+    (+ 1 (geometric theta))
+    1))
+
+(def samples
+  (mh-query 2000 20
+    (let [x (geometric 0.3)]
+      (condition (> x 2))
+      x)))
+
+(hist samples "geometric > 2")</code></pre>
+
+<p>The Markov chain above <em>implements</em> the query below, in the sense that it specifies a way to sample from the required conditional distribution.</p>
+
+
+<h1 id="getting-the-right-chain-mcmc"><a href="#getting-the-right-chain-mcmc">Getting the Right Chain: MCMC</a></h1>
+
+<p>It turns out that for any (conditional) distribution there is a Markov chain with that stationary distribution. How can we find one when we need it? There are several methods for constructing them&mdash;they go by the name &ldquo;Markov chain Monte Carlo&rdquo;.</p>
+
+<p>First, if we have a target distribution, how can we tell if a Markov chain has this target distribution as its stationary distribution? Let \(p(x)\) be the target distribution, and let \(\pi(x \rightarrow x')\) be the transition distribution (i.e. the <code>transition</code> function in the above programs). Since the stationary distribution is characterized by not changing when the transition is applied we have a <em>balance condition</em>: \(p(x') = \sum_x p(x)\pi(x \rightarrow x')\). Note that the balance condition holds for the distribution as a whole&mdash;a single state can of course be moved by the transition.</p>
+
+<p>There is another condition, called <em>detailed balance</em>, that is sufficient (but not necessary) to give the balance condition, and is often easier to work with: \(p(x)\pi(x \rightarrow x') = p(x')\pi(x' \rightarrow x)\). To show that detailed balance implies balance, substitute the right-hand side of the detailed balance equation into the balance equation (replacing the summand), then simplify.</p>
+
+<p>To construct a Markov chain that converges to a stationary distribution of interest, we also need to ensure that any state can be reached from any other state in a finite number of steps. This requirement is called <em>ergodicity</em>. If a chain is not ergodic, it may still leave the stationary distribution unchanged when the transition operator is applied, but the chain will not reliably converge to the stationary distribution when initialized with a state sampled from an arbitrary distribution.</p>
+
+<h2 id="satisfying-detailed-balance-mh"><a href="#satisfying-detailed-balance-mh">Satisfying Detailed Balance: MH</a></h2>
+
+<p>How can we come up with a <code>transition</code> function, \(\pi\), that satisfies detailed balance? One way is the <em>Metropolis-Hastings</em> recipe.</p>
+
+<p>We start with a <em>proposal distribution</em>, \(q(x\rightarrow x')\), which does not need to have the target distribution as its stationary distribution, but should be easy to sample from. We correct this into a transition function with the right stationary distribution by either accepting or rejecting each proposed transition. We accept with probability: \(\min\left(1, \frac{p(x')q(x'\rightarrow x)}{p(x)q(x\rightarrow x')}\right).\) That is, we flip a coin with that probability: if it comes up heads our next state is \(x'\), otherwise our next state is still \(x\).</p>
+
+<p>As an exercise, try to show that this rule gives an actual transition probability (i.e. \(\pi(x\rightarrow x')\)) that satisfies detailed balance. (Hint: the probability of transitioning depends on first proposing a given new state, then accepting it; if you don&rsquo;t accept the proposal you &ldquo;transition&rdquo; to the original state.)</p>
+
+<p>The MH recipe looks like:</p>
+
+<pre class="norun"><code>(defn target-distr [x] ...)
+(defn proposal-fn [x] ...)
+(defn proposal-distr [x1 x2] ...)
+
+(defn accept? [x1 x2]
+  (flip (min 1 (/ (* (target-distr x2) (proposal-distr x2 x1))
+                   (* (target-distr x1) (proposal-distr x1 x2))))))
+
+(defn transition [x]
+  (let [proposed-x (proposal-fn x)]
+    (if (accept? x proposed-x) proposed-x x)))
+
+(defn mcmc [state iterations]
+  (if (= iterations 0)
+    '()
+    (cons state (mcmc (transition state) (dec iterations)))))</code></pre>
+
+<p>Note that in order to use this recipe we need to have a function that computes the target probability (not just one that samples from it) and the transition probability, but they need not be normalized (since the normalization terms will cancel).</p>
+
+<p>We can use this recipe to construct a Markov chain for the conditioned geometric distribution, as above, by using a proposal distribution that is equally likely to propose one number higher or lower:</p>
+
+<pre><code>(def theta 0.7)
+
+;; The target distribution (not normalized):
+(defn target-distr [x]
+  (if (< x 3)
+    0.0
+    (* (expt (- 1 theta) (- x 1)) theta)))
+
+;; The proposal function and distribution;
+;; here we're equally likely to propose x+1 or x-1.
+(defn proposal-fn [x] (if (flip) (- x 1) (+ x 1)))
+(defn proposal-distr [x1 x2] 0.5)
+
+;; The MH recipe:
+(defn accept? [x1 x2]
+  (flip (min 1.0 (/ (* (target-distr x2) (proposal-distr x2 x1))
+                     (* (target-distr x1) (proposal-distr x1 x2))))))
+
+(defn transition [x]
+  (let [proposed-x (proposal-fn x)]
+    (if (accept? x proposed-x) proposed-x x)))
+
+;; The MCMC loop:
+(defn mcmc [state iterations]
+  (if (= iterations 0)
+    '()
+    (cons state (mcmc (transition state) (dec iterations)))))
+
+(hist (mcmc 3 1000) "MCMC for conditioned geometric")</code></pre>
+
+<p>The transition function that is automatically derived using the MH recipe is equivalent to the one we wrote by hand above.</p>
+
+<h2 id="states-with-structure"><a href="#states-with-structure">States with Structure</a></h2>
+
+<p>Above the states were single entities (letters or numbers), but of course we may have probabilistic models where the state is more complex. In this case, element-wise proposals (that change a single part of the state at a time) can be very convenient.</p>
+
+<p>For instance, consider the one-dimensional Ising model:</p>
+
+<pre><code>(defn noisy-equal? [a b]
+  (flip (if (= a b) 1.0 0.2)))
+
+(def samples
+  (mh-query 30 1
+    (let [bits (vec (repeatedly 10 #(if (flip) 1 0)))
+          checks (mapv noisy-equal? (rest bits) (butlast bits))]
+      (condition (every? identity checks))
+      bits)))
+
+(doseq [s samples] (display s))</code></pre>
+
+<p>Here the state is a list of Boolean values (shown as 0/1 for readability). We can use an MH recipe with proposals that change a single element of this list at a time&mdash;indeed, if you look at the list of samples returned, you will notice that this is what the prob-cljs MH algorithm does.</p>
+
+<h2 id="mh-on-program-executions"><a href="#mh-on-program-executions">MH on Program Executions</a></h2>
+
+<p>How could we use the MH recipe for arbitrary programs? What&rsquo;s the state space? What are the proposals?</p>
+
+<p>Our MH implementation takes as the state space the space of all executions of the code inside a query. Equivalently this is the space of all random choices that may be used in the process of executing this code (unused choices can be ignored without loss of generality by marginalizing). The un-normalized score is just the product of the probabilities of all the random choices, or zero if the conditioner doesn&rsquo;t evaluate to true.</p>
+
+<p>Proposals are made by changing a single random choice, then updating the execution (which may result in choices being created or deleted).</p>
+
+<p>To get this all to work we need a way to identify random choices across different executions of the program. We can do this by augmenting the program with &ldquo;call names&rdquo;&mdash;in prob-cljs, each random choice is assigned a sequential integer address in the execution trace.</p>
+
+<h2 id="biases-of-mcmc"><a href="#biases-of-mcmc">Biases of MCMC</a></h2>
+
+<p>An MCMC sampler is guaranteed to take unbiased samples from its stationary distribution &ldquo;in the limit&rdquo; of arbitrary time between samples. In practice MCMC will have characteristic biases in the form of long burn-in and slow mixing.</p>
+
+<p>We already saw an example of slow mixing above: the first Markov chain we used to sample from the uniform distribution would take (on average) several iterations to switch from <code>a</code> or <code>b</code> to <code>c</code> or <code>d</code>. In order to get approximately independent samples, we needed to wait longer than this time between taking iterations. In contrast, the more efficient Markov chain (with uniform transition function) let us take samples with little lag. In this case poor mixing was the result of a poorly chosen transition function. Poor mixing is often associated with multimodal distributions.</p>
+
+
+<h1 id="inference-for-nested-queries"><a href="#inference-for-nested-queries">Inference for Nested Queries</a></h1>
+
+<p>In the <a href="06-inference-about-inference.html">previous chapter</a> we saw how inference about inference could be modeled by using nested queries. For the examples in that chapter we used rejection sampling, because it is straightforward and well-behaved. Of course, rejection sampling will become unacceptably slow if the probability of the condition in any level of query becomes small&mdash;this happens very quickly for nested-query models when the state space grows. Each of the other types of query can, in principle, also be nested, but some special care is needed to get good performance.</p>
+
+<p>To explore alternative algorithms for nested-query, let&rsquo;s start with a simple example:</p>
+
+<pre><code>(defn inner [x]
+  (rejection-query
+    (let [y (flip)]
+      (condition (flip (if x 1.0 (if y 0.9 0.1))))
+      y)))
+
+(defn outer []
+  (rejection-query
+    (let [x (flip)]
+      (condition (not (inner x)))
+      x)))
+
+(hist (repeatedly 10000 outer) "Outer query")</code></pre>
+
+<p>We could compute the same answer using enumeration. Recall that enumeration returns the explicit marginal distribution, so we have to sample from it using <code>multinomial</code>:</p>
+
+<pre><code>(defn inner [x]
+  (enumeration-query
+    (let [y (flip)]
+      (condition (flip (if x 1.0 (if y 0.9 0.1))))
+      y)))
+
+(defn outer []
+  (enumeration-query
+    (let [x (flip)]
+      (condition (not (apply multinomial (inner x))))
+      x)))
+
+(barplot (outer) "Outer query (enumeration)")</code></pre>
+
+<p>However, notice that this combination will recompute the inner and outer distributions every time they are encountered. Because these distributions are deterministically fixed (since they are the explicit marginal distributions, not samples), we could <em>cache</em> their values using <code>mem</code>. This technique, an example of <em>dynamic programming</em>, avoids work and so speeds up the computation:</p>
+
+<pre><code>(def inner
+  (mem (fn [x]
+    (enumeration-query
+      (let [y (flip)]
+        (condition (flip (if x 1.0 (if y 0.9 0.1))))
+        y)))))
+
+(def outer
+  (mem (fn []
+    (enumeration-query
+      (let [x (flip)]
+        (condition (not (apply multinomial (inner x))))
+        x)))))
+
+(barplot (outer) "Outer query (cached enumeration)")</code></pre>
+
+<p>This enumeration-with-caching technique is extremely useful for exploring small nested-query models, but it becomes impractical when the state space of any one of the queries grows too large. As before, an alternative is MCMC.</p>
+
+<pre><code>(def inner
+  (mem (fn [x]
+    (mh-query 1000 1
+      (let [y (flip)]
+        (condition (flip (if x 1.0 (if y 0.9 0.1))))
+        y)))))
+
+(def outer
+  (mem (fn []
+    (mh-query 1000 1
+      (let [x (flip)]
+        (condition (not (uniform-draw (inner x))))
+        x)))))
+
+(hist (repeatedly 10000 #(uniform-draw (outer))) "Outer query (cached MH)")</code></pre>
+
+<p>Here we are caching a set of samples from each query, and drawing one at random when we need a sample from that distribution. Because we re-use the same set of samples many times, this can potentially introduce bias into our results; if the number of samples is large enough, though, this bias will be very small.</p>
+
+<p>We can also mix these methods&mdash;using enumeration for levels of query with few states, rejection for queries with likely conditions, and MCMC for queries where these methods take too long.</p>
+
+
+<h1 id="exercises"><a href="#exercises">Exercises</a></h1>
+
+<ol type="1">
+<li>
+<p>Why does the MH algorithm return less stable estimates when you lower the baserate for the following program?</p>
+
+<pre><code>(def baserate 0.1)
+
+(def samples
+  (mh-query 100 100
+    (let [A (if (flip baserate) 1 0)
+          B (if (flip baserate) 1 0)
+          C (if (flip baserate) 1 0)
+          D (+ A B C)]
+      (condition (>= D 2))
+      A)))
+
+(hist samples "Value of A, given that D >= 2")</code></pre>
+</li>
+</ol>
+
+
+  </div>
+  <div class="chapter-nav">
+    <a href="06-inference-about-inference.html">&larr; Chapter 6: Inference about Inference</a>
+    <span></span>
+    <a href="08-learning-as-conditional-inference.html">Chapter 8: Learning as Conditional Inference &rarr;</a>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt member pair null? equal? make-list length" +
+      "                                  string-append abs sample fold iota]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot display run-physics animate-physics]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre:not(.norun)').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>
