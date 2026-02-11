@@ -67,9 +67,7 @@ GitHub Pages deployment. `docs/index.html` has a standalone demo. `docs/prob/` c
 
 See `GAPS.md` for a detailed comparison with webchurch and Anglican. Remaining gaps:
 - No interruptible execution (CPS/generators) — blocks SMC/particle methods
-- No importance sampling
 - Missing distributions: uniform-discrete, chi-squared, student-t, laplace, multivariate normal
 - No random process abstraction (CRP, DP, GP)
 - No DPmem
 - No gradient infrastructure (needed for variational inference)
-- No PRNG seeding for reproducibility

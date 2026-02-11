@@ -89,6 +89,7 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 | Rejection sampling | Trace-based, uses logprob | Supported | Exception-based rejection | **Done** |
 | MH / MCMC | Real single-site trace MH | LMH, RMH, ALMH | Real single-site trace MH with drift proposals | **Done** |
 | Exact enumeration | Trace-based, iterates all ERP combinations | Not emphasized | Trace-based, odometer over all combinations | **Done** |
+| Importance sampling | — | Weighted prior sampling | N runs with score normalization, aggregates duplicates | **Done** |
 | `condition` | Sets flag on trace | Via observe | Throws exception (rejection-style) | **Done** |
 | `factor` | Adds to trace logprob (exact) | Via observe log-weight | Exact in MH mode, probabilistic in rejection mode | **Done** |
 | `observe` | — | Via observe log-weight | Delegates to factor via dist protocol | **Done** |
@@ -111,11 +112,10 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 5. **Normalization**: `log-sum-exp` for numerical stability; aggregate duplicate return values
 6. **Guards**: error if >1M combos or non-enumerable ERP encountered
 
-### Anglican inference algorithms (all missing from prob-cljs)
+### Anglican inference algorithms (missing from prob-cljs)
 
 | Algorithm | Type | Description |
 |---|---|---|
-| **Importance Sampling** | Basic | Sample from prior, weight by likelihood. Simplest weighted inference. |
 | **ALMH** | MCMC | Adaptive LMH with UCB bandit scheduling for faster mixing. |
 | **SMC** | Particle | Sequential Monte Carlo with systematic resampling. Requires interruptible execution. |
 | **Particle Gibbs** | PMCMC | Iterated conditional SMC with retained particle. |
@@ -226,13 +226,18 @@ Required for variational inference (BBVB). Not needed for MCMC or SMC.
 
 ## Weighted Sample Processing
 
-**Anglican-specific.** Anglican's `stat.cljc` provides functions for working with weighted samples:
-- `empirical-distribution` -- weighted samples to probability map
-- `empirical-mean/variance/std/skew/kurtosis` -- weighted statistics
-- `empirical-expectation` -- E[f(x)] under weighted samples
-- KL divergence, L2 distance, Kolmogorov-Smirnov distance
+Anglican's `stat.cljc` provides functions for working with weighted samples. prob-cljs now implements core weighted utilities:
 
-prob-cljs has no weighted sample utilities. These become important once inference produces weighted (non-rejection) samples.
+| Capability | Anglican | prob-cljs | Status |
+|---|---|---|---|
+| `empirical-distribution` | weighted samples to probability map | unweighted frequency map | **Done** |
+| `weighted-mean` | `empirical-mean` | `weighted-mean` | **Done** |
+| `weighted-variance` | `empirical-variance` | `weighted-variance` | **Done** |
+| `expectation` | `empirical-expectation` E[f(x)] | `expectation` with optional transform | **Done** |
+| weighted std/skew/kurtosis | Provided | not implemented | Low priority |
+| KL divergence | Provided | not implemented | Low priority |
+| L2 distance | Provided | not implemented | Low priority |
+| Kolmogorov-Smirnov distance | Provided | not implemented | Low priority |
 
 ---
 
@@ -247,7 +252,7 @@ prob-cljs has no weighted sample utilities. These become important once inferenc
 | Set ops | union, intersection, difference | Clojure standard | Same | **Done** |
 | `curry` / `uncurry` | Implemented | — | not implemented | Minor gap |
 | `read-file` / `read-csv` / `write-csv` | Implemented | — | not implemented | Minor (users have `js/require "fs"`) |
-| `set-seed` | PRNG seeding | Via runtime config | not implemented | **Missing** |
+| `set-seed` | PRNG seeding | Via runtime config | `set-seed!` with xoshiro128** PRNG | **Done** |
 | Visualization | Full Vega-based viz suite | — (external tools) | SVG-based: hist, density, scatter, barplot | **Done** (browser only) |
 
 ---
@@ -256,7 +261,7 @@ prob-cljs has no weighted sample utilities. These become important once inferenc
 
 ### Phase 1: Better Inference
 
-1. **Importance sampling** -- Sample from prior, weight by observe log-probs. Simplest weighted inference.
+1. ~~**Importance sampling**~~ -- **Done.** `importance-query-fn` / `importance-query` macro. N traced executions with score normalization.
 
 2. **SMC / Particle Filtering** -- Multiple particles, resample at observe points. Requires interruptible execution (CPS or generators).
 
@@ -286,7 +291,7 @@ prob-cljs has no weighted sample utilities. These become important once inferenc
 
 9. **`predict`** -- Labeled output collection alongside return value.
 
-10. **PRNG seeding** -- Reproducible sampling.
+10. ~~**PRNG seeding**~~ -- **Done.** `set-seed!` with xoshiro128** PRNG; `rand` replaces all `js/Math.random` calls.
 
 ### Phase 5: Advanced Algorithms
 
@@ -298,7 +303,7 @@ prob-cljs has no weighted sample utilities. These become important once inferenc
 
 ### Phase 6: Ecosystem
 
-14. **Weighted sample utilities** -- `empirical-distribution`, weighted mean/variance, KL divergence.
+14. ~~**Weighted sample utilities**~~ -- **Done.** `weighted-mean`, `weighted-variance`, `empirical-distribution`, `expectation`. Remaining: KL divergence, L2/KS distances.
 
 15. **Matrix operations** -- Cholesky, inverse, determinant (pure ClojureScript or optional dep).
 
