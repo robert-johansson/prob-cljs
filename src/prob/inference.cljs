@@ -16,19 +16,25 @@
 
 (def ^:private rejection-sentinel ::rejection)
 
+(def ^:dynamic *forward-mode*
+  "When true, condition and factor are no-ops (forward sampling mode)."
+  false)
+
 (defn condition [pred]
-  (when-not pred
-    (throw (ex-info "condition failed" {::type rejection-sentinel})))
+  (when-not *forward-mode*
+    (when-not pred
+      (throw (ex-info "condition failed" {::type rejection-sentinel}))))
   nil)
 
 (defn factor [log-weight]
-  (if erp/*trace-state*
-    ;; MH mode: accumulate score deterministically
-    (vswap! erp/*trace-state* update :score + log-weight)
-    ;; Rejection mode: probabilistic rejection
-    (when (neg? log-weight)
-      (when (> (js/Math.log (erp/rand)) log-weight)
-        (throw (ex-info "factor rejected" {::type rejection-sentinel})))))
+  (when-not *forward-mode*
+    (if erp/*trace-state*
+      ;; MH mode: accumulate score deterministically
+      (vswap! erp/*trace-state* update :score + log-weight)
+      ;; Rejection mode: probabilistic rejection
+      (when (neg? log-weight)
+        (when (> (js/Math.log (erp/rand)) log-weight)
+          (throw (ex-info "factor rejected" {::type rejection-sentinel}))))))
   nil)
 
 (defn- rejection? [e]
@@ -62,6 +68,18 @@
         (if (= result ::rejected)
           (recur (inc attempts))
           (:value result))))))
+
+;; ---------------------------------------------------------------------------
+;; Forward Sampling
+;; ---------------------------------------------------------------------------
+
+(defn forward-query-fn
+  "Forward sampling: run thunk n times from the prior.
+   factor and observe are no-ops, condition is a no-op.
+   Returns a list of n prior samples."
+  [n thunk]
+  (binding [*forward-mode* true]
+    (vec (repeatedly n thunk))))
 
 ;; ---------------------------------------------------------------------------
 ;; Traced execution (for MH)
@@ -163,9 +181,11 @@
   "Trace-based single-site Metropolis-Hastings inference.
    Returns a list of num-samples samples with the given lag
    (number of intermediate steps to discard between kept samples).
-   Optional burn parameter discards initial samples for convergence."
-  ([num-samples lag thunk] (mh-query-fn num-samples lag 0 thunk))
-  ([num-samples lag burn thunk]
+   Optional burn parameter discards initial samples for convergence.
+   Optional callback is called with {:iter i :value v :score s} for each kept sample."
+  ([num-samples lag thunk] (mh-query-fn num-samples lag 0 nil thunk))
+  ([num-samples lag burn thunk] (mh-query-fn num-samples lag burn nil thunk))
+  ([num-samples lag burn callback thunk]
    ;; Get initial sample via traced rejection
    (let [initial (loop [attempts 0]
                    (if (>= attempts max-rejection-attempts)
@@ -187,13 +207,16 @@
        (if (>= i num-samples)
          (seq (persistent! samples))
          (let [state' (advance state (inc lag))]
+           (when callback
+             (callback {:iter i :value (:value state') :score (:score state')}))
            (recur (inc i) state' (conj! samples (:value state')))))))))
 
 (defn mh-query-scored-fn
   "Like mh-query-fn but returns a list of {:value v :score s} maps
    instead of bare values."
-  ([num-samples lag thunk] (mh-query-scored-fn num-samples lag 0 thunk))
-  ([num-samples lag burn thunk]
+  ([num-samples lag thunk] (mh-query-scored-fn num-samples lag 0 nil thunk))
+  ([num-samples lag burn thunk] (mh-query-scored-fn num-samples lag burn nil thunk))
+  ([num-samples lag burn callback thunk]
    (let [initial (loop [attempts 0]
                    (if (>= attempts max-rejection-attempts)
                      (throw (ex-info "mh-query-scored: no initial sample found"
@@ -210,10 +233,11 @@
      (loop [i 0, state burned, samples (transient [])]
        (if (>= i num-samples)
          (seq (persistent! samples))
-         (let [state' (advance state (inc lag))]
-           (recur (inc i) state'
-                  (conj! samples {:value (:value state')
-                                  :score (:score state')}))))))))
+         (let [state' (advance state (inc lag))
+               entry {:value (:value state') :score (:score state')}]
+           (when callback
+             (callback (assoc entry :iter i)))
+           (recur (inc i) state' (conj! samples entry))))))))
 
 (defn map-query-fn
   "MAP inference: return the single highest-scoring value from MH samples."
@@ -288,62 +312,123 @@
             (assoc indices i next-val)
             (recur (dec i) (assoc indices i 0))))))))
 
-(defn enumeration-query-fn
-  "Exact enumeration over all combinations of discrete choices.
-   Returns (values probs)."
-  [thunk]
-  (let [domains (discover-enum-domains thunk)
-        _ (when (some #(nil? (:domain %)) domains)
-            (throw (ex-info "enumeration-query: continuous (non-enumerable) ERP encountered"
-                            {:erp (first (filter #(nil? (:domain %)) domains))})))
-        sizes (mapv #(count (:domain %)) domains)
+(defn- enum-normalize
+  "Normalize a seq of {:value :log-prob} results into (values probs)."
+  [results]
+  (when (empty? results)
+    (throw (ex-info "enumeration-query: all executions rejected" {})))
+  (let [log-probs (mapv :log-prob results)
+        log-z (math/log-sum-exp log-probs)
+        grouped (reduce (fn [m {:keys [value log-prob]}]
+                          (update m value (fnil #(math/log-sum-exp [% log-prob]) ##-Inf)))
+                        {} results)
+        values (keys grouped)
+        probs (map #(js/Math.exp (- (get grouped %) log-z)) values)]
+    (list (apply list values) (apply list probs))))
+
+(defn- enum-execute-combo
+  "Execute a single combination (index vector) via trace replay."
+  [thunk domains indices]
+  (let [old-trace (into {}
+                    (map-indexed
+                      (fn [i {:keys [addr domain erp-id]}]
+                        (let [val (nth domain (nth indices i))]
+                          [addr {:value val :erp-id erp-id :log-prob 0.0}]))
+                      domains))
+        ts (make-replay-state old-trace -1)
+        result (execute-traced thunk ts)]
+    (when result
+      (let [choice-lps (map (fn [[_addr entry]] (:log-prob entry)) (:trace result))
+            total-lp (+ (reduce + 0.0 choice-lps) (:score result))]
+        {:value (:value result) :log-prob total-lp}))))
+
+(defn- full-enum
+  "Exhaustive odometer enumeration over all combinations."
+  [thunk domains max-execs]
+  (let [sizes (mapv #(count (:domain %)) domains)
         total-combos (reduce * 1 sizes)]
-    (when (> total-combos max-enum-combos)
+    (when (and (nil? max-execs) (> total-combos max-enum-combos))
       (throw (ex-info "enumeration-query: too many combinations"
                       {:combos total-combos :limit max-enum-combos})))
-    (if (zero? (count domains))
-      ;; No random choices: just run the thunk
-      (let [result (try {:value (thunk)} (catch :default e (if (rejection? e) nil (throw e))))]
-        (if result
-          (list (list (:value result)) (list 1.0))
-          (list (list) (list))))
-      ;; Iterate over all combinations
-      (let [results
-            (loop [indices (vec (repeat (count domains) 0))
-                   acc (transient [])]
-              (if (nil? indices)
-                (persistent! acc)
-                ;; Build old-trace for this combination
-                (let [old-trace (into {}
-                                  (map-indexed
-                                    (fn [i {:keys [addr domain erp-id]}]
-                                      (let [val (nth domain (nth indices i))
-                                            lp 0.0] ;; placeholder, will be recomputed
-                                        [addr {:value val :erp-id erp-id :log-prob lp}]))
-                                    domains))
-                      ts (make-replay-state old-trace -1)
-                      result (execute-traced thunk ts)]
-                  (recur (odometer-step indices sizes)
-                         (if result
-                           (let [;; Sum log-probs of all choices + score
-                                 choice-lps (map (fn [[_addr entry]] (:log-prob entry))
-                                                 (:trace result))
-                                 total-lp (+ (reduce + 0.0 choice-lps)
-                                             (:score result))]
-                             (conj! acc {:value (:value result) :log-prob total-lp}))
-                           acc)))))
-            ;; Normalize
-            _ (when (empty? results)
-                (throw (ex-info "enumeration-query: all executions rejected" {})))
-            log-probs (mapv :log-prob results)
-            log-z (math/log-sum-exp log-probs)
-            ;; Aggregate duplicate return values
-            grouped (reduce (fn [m {:keys [value log-prob]}]
-                              (update m value (fnil #(math/log-sum-exp % log-prob) ##-Inf)))
-                            {} results)
-            values (keys grouped)
-            probs (map #(js/Math.exp (- (get grouped %) log-z)) values)]
-        (list (apply list values) (apply list probs))))))
+    (loop [indices (vec (repeat (count domains) 0))
+           acc (transient [])
+           executed 0]
+      (if (or (nil? indices)
+              (and max-execs (>= executed max-execs)))
+        (persistent! acc)
+        (let [result (enum-execute-combo thunk domains indices)]
+          (recur (odometer-step indices sizes)
+                 (if result (conj! acc result) acc)
+                 (inc executed)))))))
+
+(defn- pq-pop-max
+  "Pop the highest log-prob item from a priority queue (vector)."
+  [pq]
+  (let [n (count pq)
+        idx (loop [i 1, best 0]
+              (if (>= i n)
+                best
+                (recur (inc i)
+                       (if (> (:log-prob (nth pq i)) (:log-prob (nth pq best)))
+                         i best))))
+        item (nth pq idx)]
+    [item (into (subvec pq 0 idx) (subvec pq (inc idx)))]))
+
+(defn- likely-first-enum
+  "Priority-queue enumeration: explore high-probability combinations first.
+   Stops after max-execs complete traces."
+  [thunk domains max-execs]
+  (let [n-domains (count domains)
+        max-execs (or max-execs 10000)]
+    (loop [pq [{:log-prob 0.0 :indices []}]
+           results (transient [])
+           executed 0]
+      (if (or (empty? pq) (>= executed max-execs))
+        (persistent! results)
+        (let [[best rest-pq] (pq-pop-max pq)
+              depth (count (:indices best))]
+          (if (= depth n-domains)
+            ;; Complete assignment — execute trace
+            (let [result (enum-execute-combo thunk domains (:indices best))]
+              (recur rest-pq
+                     (if result (conj! results result) results)
+                     (inc executed)))
+            ;; Partial — expand children for next domain
+            (let [{:keys [domain log-probs]} (nth domains depth)
+                  children (mapv (fn [idx]
+                                  {:log-prob (+ (:log-prob best)
+                                                (if log-probs (nth log-probs idx) 0.0))
+                                   :indices (conj (:indices best) idx)})
+                                (range (count domain)))]
+              (recur (into rest-pq children)
+                     results
+                     executed))))))))
+
+(defn enumeration-query-fn
+  "Exact enumeration over all combinations of discrete choices.
+   Returns (values probs).
+   With opts map: supports :strategy (:full, :likely-first) and :max-executions."
+  ([thunk] (enumeration-query-fn {} thunk))
+  ([opts thunk]
+   (let [{:keys [strategy max-executions]
+          :or {strategy :full}} opts
+         domains (discover-enum-domains thunk)
+         _ (when (some #(nil? (:domain %)) domains)
+             (throw (ex-info "enumeration-query: continuous (non-enumerable) ERP encountered"
+                             {:erp (first (filter #(nil? (:domain %)) domains))})))]
+     (if (zero? (count domains))
+       ;; No random choices: just run the thunk
+       (let [result (try {:value (thunk)} (catch :default e (if (rejection? e) nil (throw e))))]
+         (if result
+           (list (list (:value result)) (list 1.0))
+           (list (list) (list))))
+       ;; Enumerate
+       (let [results (case strategy
+                       :likely-first (likely-first-enum thunk domains max-executions)
+                       :full (full-enum thunk domains max-executions)
+                       (throw (ex-info (str "enumeration-query: unknown strategy " strategy)
+                                       {:strategy strategy})))]
+         (enum-normalize results))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Soft conditioning via enumeration
@@ -403,3 +488,43 @@
       ;; Default: rejection
       (fn []
         (rejection-query-fn thunk)))))
+
+;; ---------------------------------------------------------------------------
+;; Unified inference entry point
+;; ---------------------------------------------------------------------------
+
+(defn infer
+  "Unified inference entry point. Dispatches to all inference methods.
+   opts is a map with :method and method-specific options.
+   thunk is a zero-arg model function.
+
+   Methods:
+     :rejection    - rejection sampling, returns single value
+     :mh           - Metropolis-Hastings, returns list of samples
+                     opts: :samples (required), :lag (default 1), :burn (default 0), :callback fn
+     :enumeration  - exact enumeration, returns (values probs)
+                     opts: :strategy (:full, :likely-first), :max-executions
+     :importance   - importance sampling, returns (values probs)
+                     opts: :samples (default 1000)
+     :forward      - forward sampling (ignores factors/conditions), returns list of samples
+                     opts: :samples (required)
+     :mh-scored    - MH with scores, returns list of {:value :score} maps
+                     opts: :samples (required), :lag (default 1), :burn (default 0), :callback fn
+     :map          - MAP inference via MH, returns single highest-scoring value
+                     opts: :samples (default 1000), :lag (default 1), :burn (default 0)"
+  [opts thunk]
+  (let [{:keys [method samples lag burn callback strategy max-executions]
+         :or {lag 1 burn 0}} opts]
+    (case method
+      :rejection   (rejection-query-fn thunk)
+      :mh          (mh-query-fn samples lag burn callback thunk)
+      :enumeration (enumeration-query-fn
+                     (cond-> {}
+                       strategy       (assoc :strategy strategy)
+                       max-executions (assoc :max-executions max-executions))
+                     thunk)
+      :importance  (importance-query-fn (or samples 1000) thunk)
+      :forward     (forward-query-fn samples thunk)
+      :mh-scored   (mh-query-scored-fn samples lag burn callback thunk)
+      :map         (map-query-fn (or samples 1000) lag burn thunk)
+      (throw (ex-info (str "infer: unknown method " method) {:method method})))))

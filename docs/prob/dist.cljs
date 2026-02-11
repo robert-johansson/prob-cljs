@@ -459,6 +459,19 @@
    (->Categorical (vec categories) (vec weights))))
 
 ;; ---------------------------------------------------------------------------
+;; Entropy
+;; ---------------------------------------------------------------------------
+
+(defn entropy
+  "Shannon entropy of a discrete distribution: -sum(p * log(p)).
+   Distribution must implement IEnumerable."
+  [d]
+  (let [support (enumerate* d)
+        log-probs (mapv #(observe* d %) support)
+        probs (mapv js/Math.exp log-probs)]
+    (- (reduce + 0.0 (map (fn [p] (if (zero? p) 0.0 (* p (js/Math.log p)))) probs)))))
+
+;; ---------------------------------------------------------------------------
 ;; Delta (point mass)
 ;; ---------------------------------------------------------------------------
 
@@ -615,6 +628,42 @@
    dists is a seq of distributions, weights is a seq of non-negative weights."
   [dists weights]
   (->Mixture (vec dists) (vec weights)))
+
+;; ---------------------------------------------------------------------------
+;; KDE (Kernel Density Estimation)
+;; ---------------------------------------------------------------------------
+
+(defrecord KDE [data bandwidth]
+  IDistribution
+  (sample* [this]
+    (let [n (count data)
+          raw-sample (fn []
+                       (binding [erp/*trace-state* nil]
+                         (let [xi (nth data (js/Math.floor (* (erp/rand) n)))]
+                           (erp/gaussian xi bandwidth))))]
+      (if erp/*trace-state*
+        (erp/trace-choice! :kde raw-sample
+          #(let [log-terms (mapv (fn [xi] (gaussian-log-prob xi bandwidth %)) data)]
+             (- (math/log-sum-exp log-terms) (js/Math.log n))))
+        (raw-sample))))
+  (observe* [_ x]
+    (let [n (count data)
+          log-terms (mapv (fn [xi] (gaussian-log-prob xi bandwidth x)) data)]
+      (- (math/log-sum-exp log-terms) (js/Math.log n)))))
+
+(defn kde-dist
+  "Kernel Density Estimation distribution with Gaussian kernel.
+   data is a seq of numbers. bandwidth is optional (defaults to Silverman's rule)."
+  ([data]
+   (let [d (vec data)
+         n (count d)
+         mu (/ (reduce + 0.0 d) n)
+         v (/ (reduce + 0.0 (map (fn [x] (let [z (- x mu)] (* z z))) d)) n)
+         sigma (js/Math.sqrt v)
+         h (* 1.06 sigma (js/Math.pow n -0.2))]
+     (->KDE d (max h 0.001))))
+  ([data bandwidth]
+   (->KDE (vec data) bandwidth)))
 
 ;; ---------------------------------------------------------------------------
 ;; Marginal (cached marginal distribution via inner inference)

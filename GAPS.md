@@ -29,19 +29,24 @@ Systematic comparison of prob-cljs against [webchurch](https://github.com/probmo
 | poisson | full ERP with scoring | `Poisson({mu})` | full dist | full: sample, observe (not enumerable) | **Done** |
 | categorical | — | `Categorical({ps, vs})` | labeled weighted discrete | full: sample, observe, enumerate | **Done** |
 
+### Additional distributions
+
+| Distribution | webchurch | WebPPL | Anglican | prob-cljs | Status |
+|---|---|---|---|---|---|
+| delta | — | `Delta({v})` | — | `delta-dist`: sample, observe, enumerate | **Done** |
+| cauchy | — | `Cauchy({location, scale})` | — | `cauchy-dist`: sample, observe (inverse-transform) | **Done** |
+| laplace | — | `Laplace({location, scale})` | `(laplace loc scale)` | `laplace-dist`: sample, observe (inverse-transform) | **Done** |
+| log-normal | — | `LogNormal({mu, sigma})` | — | `lognormal-dist`: sample, observe (`exp(gaussian)`) | **Done** |
+| student-t | — | `StudentT({df, location, scale})` | `(student-t nu)` + location-scale | `student-t-dist`: sample, observe (Gaussian/Gamma ratio) | **Done** |
+| mixture | — | `Mixture({dists, ps})` | — | `mixture-dist`: sample, observe (`log-sum-exp` scoring) | **Done** |
+| KDE | — | `KDE({data, width})` | — | `kde-dist`: Gaussian kernel, Silverman bandwidth, sample, observe | **Done** |
+
 ### Missing distributions
 
 | Distribution | webchurch | WebPPL | Anglican | prob-cljs | Priority |
 |---|---|---|---|---|---|
-| **delta** | — | `Delta({v})` | — | not implemented | High (trivial; useful for MAP, mixture components) |
-| **cauchy** | — | `Cauchy({location, scale})` | — | not implemented | High (easy: inverse-transform sampling) |
-| **laplace** | — | `Laplace({location, scale})` | `(laplace loc scale)` | not implemented | High (easy: inverse-transform sampling) |
-| **log-normal** | — | `LogNormal({mu, sigma})` | — | not implemented | High (easy: `exp(gaussian(mu, sigma))`) |
-| **student-t** | — | `StudentT({df, location, scale})` | `(student-t nu)` + location-scale | not implemented | High (medium: ratio of Gaussian and Gamma) |
-| **mixture** | — | `Mixture({dists, ps})` | — | not implemented | High (medium: weighted combination of dists) |
 | **uniform-discrete** | — | — | `(uniform-discrete min max)` | not implemented | Medium |
 | **logit-normal** | — | `LogitNormal({mu, sigma, a, b})` | — | not implemented | Medium (sigmoid transform of Gaussian) |
-| **KDE** | — | `KDE({data, width})` | — | not implemented | Medium (Gaussian kernel, Silverman bandwidth) |
 | **chi-squared** | — | — | `(chi-squared nu)` | not implemented | Medium |
 | **multivariate-bernoulli** | — | `MultivariateBernoulli({ps})` | — | not implemented | Low (vector of independent Bernoulli) |
 | **diag-cov-gaussian** | — | `DiagCovGaussian({mu, sigma})` | — | not implemented | Low (needs vector abstraction) |
@@ -60,11 +65,11 @@ prob-cljs implements a full distribution protocol matching Anglican's approach:
 
 All existing distributions implement `IDistribution`. Discrete distributions implement `IEnumerable`. Gaussian and Beta implement `IProposable` with continuous drift kernels (Gaussian: symmetric random walk; Beta: kappa=10 reparameterized proposal). Bernoulli, Multinomial, Categorical, UniformDraw, and RandomInteger implement `IProposable` with smart discrete proposals (deterministic toggle for Bernoulli, exclude-current-value for others). `Marginal` record wraps inner inference output as a full distribution (`sample*`, `observe*`, `enumerate*`).
 
-### Distribution utilities (missing)
+### Distribution utilities
 
-| Capability | WebPPL | Anglican | prob-cljs | Priority |
+| Capability | WebPPL | Anglican | prob-cljs | Status |
 |---|---|---|---|---|
-| `entropy` on discrete dists | Yes | — | not implemented | Medium (easy: `-sum(p * log(p))`) |
+| `entropy` on discrete dists | Yes | — | `(entropy dist)` computes `-sum(p * log(p))` | **Done** |
 | `isContinuous` / `isDiscrete` flag | Yes | Via type check | not implemented | Low |
 | Distribution serialization (JSON round-trip) | Yes | — | not implemented | Low |
 | Reparameterization (`base`/`transform`) | Yes (for variational inference) | — | not implemented | Low (only useful with VI) |
@@ -111,16 +116,16 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 | MH / MCMC | Real single-site trace MH | Single-site MH with drift kernels, burn-in, lag | LMH, RMH, ALMH | Real single-site trace MH with drift proposals | **Done** |
 | MH scored | — | Via callbacks | Weighted samples | `mh-query-scored-fn` returns `{:value :score}` maps | **Done** |
 | MAP | — | `onlyMAP` flag on MCMC | Simulated annealing | `map-query-fn` returns highest-scoring MH sample | **Done** |
-| Exact enumeration | Trace-based, iterates all ERP combinations | Depth-first, breadth-first, likelyFirst (priority queue) | Not emphasized | Trace-based, odometer over all combinations | **Done** |
+| Exact enumeration | Trace-based, iterates all ERP combinations | Depth-first, breadth-first, likelyFirst (priority queue) | Not emphasized | Trace-based: full odometer + likelyFirst priority queue | **Done** |
 | Importance sampling | — | Built into rejection with weights | Weighted prior sampling | N runs with score normalization, aggregates duplicates | **Done** |
 | `condition` | Sets flag on trace | `factor(bool ? 0 : -Inf)` | Via observe | Throws exception (rejection-style) | **Done** |
 | `condition-equal` | Soft conditioning via enumerate | — | — | Enumerate thunk, factor log(P(return=value)) | **Done** |
 | `factor` | Adds to trace logprob (exact) | Adds to trace logprob | Via observe log-weight | Exact in MH mode, probabilistic in rejection mode | **Done** |
 | `observe` | — | Equivalent to factor(dist.score(val)) | Via observe log-weight | Delegates to factor via dist protocol | **Done** |
-| Forward sampling | — | `method: 'forward'` (ignores factors) | — | not implemented | Easy |
-| MCMC burn-in / thinning | — | `burn`, `lag` options on MCMC | — | not implemented | Easy |
-| MCMC callbacks / hooks | — | `callbacks` array on MCMC | — | not implemented | Easy |
-| Unified inference entry | — | `Infer(options, model)` dispatches to all methods | — | Separate macros per method | Medium |
+| Forward sampling | — | `method: 'forward'` (ignores factors) | — | `forward-query-fn`: condition/factor/observe become no-ops | **Done** |
+| MCMC burn-in / thinning | — | `burn`, `lag` options on MCMC | — | `(mh-query-fn n lag burn thunk)` 4-arity | **Done** |
+| MCMC callbacks / hooks | — | `callbacks` array on MCMC | — | Optional callback fn: `{:iter :value :score}` per kept sample | **Done** |
+| Unified inference entry | — | `Infer(options, model)` dispatches to all methods | — | `(infer {:method :mh :samples 1000 :burn 100} thunk)` | **Done** |
 | Incremental rejection | — | Reject at factor statements with `maxScore` bound | — | not implemented | Medium |
 
 ### prob-cljs MH implementation
@@ -134,22 +139,23 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 
 ### prob-cljs enumeration implementation
 
-1. **Discovery pass**: execute thunk once with `:enum-discovery true` to find all choice points and their domains
-2. **Iteration**: odometer over all combinations (product of domain sizes)
+1. **Discovery pass**: execute thunk once with `:enum-discovery true` to find all choice points, their domains, and per-value log-probs
+2. **Strategies**: `:full` (exhaustive odometer) or `:likely-first` (priority queue exploring high-probability combinations first)
 3. **Replay**: for each combo, build trace and replay via `make-replay-state`
 4. **Collection**: `{:value return-val :log-prob (sum-choice-log-probs + score)}`; skip rejections
 5. **Normalization**: `log-sum-exp` for numerical stability; aggregate duplicate return values
-6. **Guards**: error if >1M combos or non-enumerable ERP encountered
+6. **Options**: `:max-executions` limits exploration for both strategies; `:strategy :likely-first` uses priority queue
+7. **Guards**: error if >1M combos (full strategy without max-executions) or non-enumerable ERP encountered
 
 ### Missing inference algorithms
 
 | Algorithm | Source | Type | Description | Feasibility |
 |---|---|---|---|---|
-| **Forward sampling** | WebPPL | Sampling | Run model ignoring factors, collect prior samples | Easy (no new infrastructure) |
+| ~~**Forward sampling**~~ | WebPPL | Sampling | ~~Run model ignoring factors, collect prior samples~~ | **Done** via `forward-query-fn` |
 | **AIS** | WebPPL, Anglican | Annealing | Annealed Importance Sampling with temperature schedule | Medium (uses existing MH kernel) |
 | **ALMH** | Anglican | MCMC | Adaptive LMH with UCB bandit scheduling for faster mixing | Medium |
 | **Kernel composition** | WebPPL | MCMC | `sequence`, `repeat` combinators for MCMC kernels | Medium |
-| **Enumeration strategies** | WebPPL | Exact | `likelyFirst` (priority queue), `breadthFirst`, time/tree-size limits | Medium |
+| ~~**Enumeration strategies**~~ | WebPPL | Exact | ~~`likelyFirst` (priority queue), execution limits~~ | **Done**: `:likely-first` + `:max-executions` |
 | **SMC** | WebPPL, Anglican | Particle | Sequential Monte Carlo with systematic resampling | Hard (requires interruptible execution) |
 | **IncrementalMH** | WebPPL | MCMC | C3 algorithm with adaptive caching, incremental re-execution | Hard (requires CPS + caching transforms) |
 | **PMCMC / Particle Gibbs** | WebPPL, Anglican | PMCMC | Conditional SMC with retained particle | Hard (requires SMC) |
@@ -198,7 +204,13 @@ prob-cljs has no random process abstraction (but `DPmem` covers the main nonpara
 
 ### Unified inference entry point
 
-**WebPPL** has `Infer(options, model)` which dispatches to any inference method based on `options.method`. prob-cljs uses separate macros (`rejection-query`, `mh-query`, `enumeration-query`, `importance-query`) and corresponding `-fn` functions. A unified `infer` function dispatching on an options map would be more ergonomic.
+prob-cljs has both per-method macros (`rejection-query`, `mh-query`, `enumeration-query`, `importance-query`, `forward-query`) and a unified `infer` function:
+
+```clojure
+(infer {:method :mh :samples 1000 :lag 1 :burn 100 :callback my-fn} model-thunk)
+```
+
+Supports `:rejection`, `:mh`, `:enumeration`, `:importance`, `:forward`, `:mh-scored`, and `:map` methods with method-specific options.
 
 ### `predict` -- Labeled output collection
 
@@ -218,7 +230,7 @@ Anglican wraps an entire query into a distribution object that can be `sample`d,
 
 ### `cache` -- LRU-cached deterministic functions
 
-**WebPPL-specific.** `cache(fn, maxSize)` provides bounded deterministic memoization. Easy to add.
+prob-cljs has `(cache f)` and `(cache f max-size)` providing LRU-bounded deterministic memoization. Default max-size is 1000.
 
 ### Per-particle memoization
 
@@ -232,7 +244,7 @@ prob-cljs's `mem` is now **trace-aware**: during inference, the cache is stored 
 |---|---|---|---|---|---|
 | `mem` | Deterministic memoization | JSON-keyed memoization | Per-particle memoization | Trace-aware memoization (cache in trace state) | **Done** |
 | `DPmem` | Dirichlet Process memoization (CRP) | `DPmem` in header (beta-bernoulli / dirichlet-discrete) | Via random process protocol | CRP table selection, trace-aware, returns single function | **Done** |
-| `cache` (LRU) | — | `cache(fn, maxSize)` | — | not implemented | Easy |
+| `cache` (LRU) | — | `cache(fn, maxSize)` | — | `(cache f max-size)` with LRU eviction | **Done** |
 
 ---
 
@@ -278,11 +290,11 @@ Required for: HMC, variational inference (BBVB/ELBO). Not needed for MCMC or SMC
 | `weighted-variance` | — | `empirical-variance` | Yes | **Done** |
 | `expectation` | Yes | Yes | Yes | **Done** |
 | `empirical-distribution` | — | Yes | Yes | **Done** |
-| `sd` (standard deviation) | Yes | — | not implemented | Easy (trivial: `sqrt(variance)`) |
+| `sd` (standard deviation) | Yes | — | Yes | **Done** |
 | `skew` | Yes | Yes | not implemented | Low priority |
 | `kurtosis` | Yes | Yes | not implemented | Low priority |
 | `mode` | Yes | — | not implemented | Low priority |
-| `kde` (function) | Yes (Epanechnikov kernel) | — | not implemented | Medium |
+| `kde` (function) | Yes (Epanechnikov kernel) | — | `kde-dist` (Gaussian kernel, Silverman bandwidth) | **Done** |
 | KL divergence | — | Yes | not implemented | Low priority |
 | L2 distance | — | Yes | not implemented | Low priority |
 | Kolmogorov-Smirnov distance | — | Yes | not implemented | Low priority |
@@ -344,30 +356,25 @@ The effective gap for builtins is small because ClojureScript's standard library
 
 ## Priority Roadmap (remaining work)
 
-### Phase 1: Easy Wins (pure ClojureScript, no new infrastructure)
+### Phase 1: Easy Wins — all **Done**
 
 1. ~~**Importance sampling**~~ -- **Done.** `importance-query-fn` / `importance-query` macro.
 
-2. **MCMC burn-in and thinning** -- Add `burn` and `lag` options to `mh-query-fn`. WebPPL has these; they're standard MCMC practice.
+2. ~~**MCMC burn-in and thinning**~~ -- **Done.** `(mh-query-fn n lag burn thunk)` 4-arity with burn-in support.
 
-3. **Forward sampling** -- Run model ignoring factors, collect prior samples. Useful for prior predictive checks.
+3. ~~**Forward sampling**~~ -- **Done.** `forward-query-fn` / `forward-query` macro. Binds `*forward-mode*` so condition/factor/observe are no-ops.
 
-4. **New easy distributions:**
-   - **Delta** -- trivial: always returns `v`, score is `0` or `-Inf`. Useful for MAP, mixture components.
-   - **Cauchy** -- inverse-transform: `location + scale * tan(pi * (u - 0.5))`
-   - **Laplace** -- inverse-transform: `location - scale * sign(u - 0.5) * ln(1 - 2|u - 0.5|)`
-   - **LogNormal** -- `exp(gaussian(mu, sigma))`, log-prob is Gaussian log-prob minus `x`
-   - **StudentT** -- ratio of Gaussian and chi-squared (via Gamma)
+4. ~~**New easy distributions**~~ -- **Done.** Delta, Cauchy, Laplace, LogNormal, StudentT all implemented in `dist.cljs` with full sample/observe support.
 
-5. **Mixture distribution** -- `(mixture-dist dists probs)`: weighted combination of component distributions. Sample by choosing component, then sampling from it. Score by `log-sum-exp` of component scores.
+5. ~~**Mixture distribution**~~ -- **Done.** `(mixture-dist dists probs)` with `log-sum-exp` scoring.
 
-6. **Unified `infer` entry point** -- `(infer {:method :mh :samples 1000 :burn 100} model-fn)` dispatching to existing methods. More ergonomic than separate macros.
+6. ~~**Unified `infer` entry point**~~ -- **Done.** `(infer {:method :mh :samples 1000 :burn 100 :callback fn} thunk)` dispatches to all 7 methods.
 
-7. **Entropy on discrete distributions** -- `-sum(p * log(p))` on enumerable distributions.
+7. ~~**Entropy on discrete distributions**~~ -- **Done.** `(entropy dist)` computes `-sum(p * log(p))` on any IEnumerable distribution.
 
 ### Phase 2: Better Inference (medium effort)
 
-8. **Enumeration strategies** -- WebPPL's `likelyFirst` (priority queue using ClojureScript `sorted-set-by`), `breadthFirst`, execution count limits, time limits.
+8. ~~**Enumeration strategies**~~ -- **Done.** `:likely-first` strategy with priority-queue exploration of high-probability combinations first. `:max-executions` limits for both strategies.
 
 9. **AIS (Annealed Importance Sampling)** -- Temperature schedule from prior to posterior using existing MH kernel. Present in both WebPPL and Anglican.
 
@@ -375,11 +382,11 @@ The effective gap for builtins is small because ClojureScript's standard library
 
 11. **Adaptive MH (ALMH)** -- UCB bandit scheduling for site selection, faster mixing.
 
-12. **KDE distribution** -- Gaussian kernel, Silverman bandwidth rule. Useful for smoothing empirical distributions.
+12. ~~**KDE distribution**~~ -- **Done.** `(kde-dist data)` with Gaussian kernel, Silverman bandwidth. Also `(kde-dist data bandwidth)` for manual bandwidth.
 
 13. **MCMC kernel composition** -- `sequence`, `repeat` combinators for building compound kernels.
 
-14. **Inference callbacks/hooks** -- Iteration, sample, and finish hooks for monitoring convergence.
+14. ~~**Inference callbacks/hooks**~~ -- **Done.** Optional callback fn on `mh-query-fn` and `mh-query-scored-fn`. Called with `{:iter :value :score}` for each kept sample.
 
 ### Phase 3: Interruptible Execution
 
@@ -426,11 +433,15 @@ The effective gap for builtins is small because ClojureScript's standard library
 
 28. ~~**Weighted sample utilities**~~ -- **Done.** `weighted-mean`, `weighted-variance`, `empirical-distribution`, `expectation`.
 
-29. **Additional statistics** -- `sd`, `skew`, `kurtosis`, `mode`, KL divergence, L2/KS distances.
+29. ~~**`sd` (standard deviation)**~~ -- **Done.** `(sd lst)` = `sqrt(variance)`.
 
-30. **Additional visualizations** -- `viz.auto` (smart chart selection), heat map, marginals display.
+30. ~~**`cache` (LRU memoization)**~~ -- **Done.** `(cache f)` or `(cache f max-size)` with LRU eviction.
 
-31. **Matrix operations** -- Cholesky, inverse, determinant (pure ClojureScript or optional dep).
+31. **Additional statistics** -- `skew`, `kurtosis`, `mode`, KL divergence, L2/KS distances.
+
+32. **Additional visualizations** -- `viz.auto` (smart chart selection), heat map, marginals display.
+
+33. **Matrix operations** -- Cholesky, inverse, determinant (pure ClojureScript or optional dep).
 
 ---
 

@@ -86,6 +86,8 @@
 (def mh-query-scored-fn inference/mh-query-scored-fn)
 (def map-query-fn inference/map-query-fn)
 (def condition-equal inference/condition-equal)
+(def forward-query-fn inference/forward-query-fn)
+(def infer inference/infer)
 
 ;; ---------------------------------------------------------------------------
 ;; New distributions
@@ -97,6 +99,8 @@
 (def lognormal-dist dist/lognormal-dist)
 (def student-t-dist dist/student-t-dist)
 (def mixture-dist dist/mixture-dist)
+(def kde-dist dist/kde-dist)
+(def entropy dist/entropy)
 
 ;; ---------------------------------------------------------------------------
 ;; Distribution: Marginal
@@ -109,7 +113,9 @@
 ;; ---------------------------------------------------------------------------
 
 (def mem builtins/mem)
+(def cache builtins/cache)
 (def DPmem builtins/DPmem)
+(def sd builtins/sd)
 (def mean builtins/mean)
 (def variance builtins/variance)
 (def weighted-mean builtins/weighted-mean)

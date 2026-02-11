@@ -202,6 +202,9 @@
         m (/ (reduce + 0 a) n)]
     (/ (reduce + 0 (map #(js/Math.pow (- % m) 2) a)) n)))
 
+(defn sd [lst]
+  (js/Math.sqrt (variance lst)))
+
 (defn weighted-mean [values weights]
   (let [vs (vec values) ws (vec weights)
         tw (reduce + 0.0 ws)]
@@ -358,6 +361,34 @@
             (let [result (apply f args)]
               (vswap! local-cache assoc args result)
               result)))))))
+
+;; ---------------------------------------------------------------------------
+;; Cache (LRU-bounded deterministic memoization)
+;; ---------------------------------------------------------------------------
+
+(defn cache
+  "LRU-bounded deterministic memoization.
+   (cache f) uses default max-size of 1000. (cache f n) uses max-size n."
+  ([f] (cache f 1000))
+  ([f max-size]
+   (let [store (volatile! {})
+         order (volatile! [])]
+     (fn [& args]
+       (let [cached (get @store args ::not-found)]
+         (if (not= cached ::not-found)
+           ;; Hit: move to end of access order
+           (do
+             (vswap! order (fn [o] (conj (vec (remove #(= % args) o)) args)))
+             cached)
+           ;; Miss: compute, store, evict if needed
+           (let [result (apply f args)]
+             (vswap! store assoc args result)
+             (vswap! order conj args)
+             (when (> (count @order) max-size)
+               (let [oldest (first @order)]
+                 (vswap! store dissoc oldest)
+                 (vswap! order (fn [o] (vec (rest o))))))
+             result)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; DPmem (Dirichlet Process memoization)

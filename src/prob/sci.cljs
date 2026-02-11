@@ -75,6 +75,8 @@
    'lognormal-dist      (sci/copy-var dist/lognormal-dist dist-ns)
    'student-t-dist      (sci/copy-var dist/student-t-dist dist-ns)
    'mixture-dist        (sci/copy-var dist/mixture-dist dist-ns)
+   'kde-dist            (sci/copy-var dist/kde-dist dist-ns)
+   'entropy             (sci/copy-var dist/entropy dist-ns)
    'marginal-dist       (sci/copy-var dist/marginal-dist dist-ns)})
 
 ;; ---------------------------------------------------------------------------
@@ -104,7 +106,9 @@
    'conditional-fn       (sci/copy-var inference/conditional-fn inference-ns)
    'mh-query-scored-fn  (sci/copy-var inference/mh-query-scored-fn inference-ns)
    'map-query-fn        (sci/copy-var inference/map-query-fn inference-ns)
-   'condition-equal     (sci/copy-var inference/condition-equal inference-ns)})
+   'condition-equal     (sci/copy-var inference/condition-equal inference-ns)
+   'forward-query-fn   (sci/copy-var inference/forward-query-fn inference-ns)
+   'infer              (sci/copy-var inference/infer inference-ns)})
 
 ;; ---------------------------------------------------------------------------
 ;; prob.builtins
@@ -196,6 +200,8 @@
    'compose        (sci/copy-var builtins/compose builtins-ns)
    'identity-fn    (sci/copy-var builtins/identity-fn builtins-ns)
    'mem            (sci/copy-var builtins/mem builtins-ns)
+   'cache          (sci/copy-var builtins/cache builtins-ns)
+   'sd             (sci/copy-var builtins/sd builtins-ns)
    'DPmem          (sci/copy-var builtins/DPmem builtins-ns)
    'make-gensym    (sci/copy-var builtins/make-gensym builtins-ns)
    'gensym'        (sci/copy-var builtins/gensym' builtins-ns)
@@ -260,15 +266,21 @@
    'mh-query-scored-fn (sci/copy-var core/mh-query-scored-fn core-ns)
    'map-query-fn       (sci/copy-var core/map-query-fn core-ns)
    'condition-equal    (sci/copy-var core/condition-equal core-ns)
+   'forward-query-fn  (sci/copy-var core/forward-query-fn core-ns)
+   'infer             (sci/copy-var core/infer core-ns)
    'delta-dist         (sci/copy-var core/delta-dist core-ns)
    'cauchy-dist        (sci/copy-var core/cauchy-dist core-ns)
    'laplace-dist       (sci/copy-var core/laplace-dist core-ns)
    'lognormal-dist     (sci/copy-var core/lognormal-dist core-ns)
    'student-t-dist     (sci/copy-var core/student-t-dist core-ns)
    'mixture-dist       (sci/copy-var core/mixture-dist core-ns)
+   'kde-dist           (sci/copy-var core/kde-dist core-ns)
+   'entropy            (sci/copy-var core/entropy core-ns)
    'marginal-dist      (sci/copy-var core/marginal-dist core-ns)
    'mem                (sci/copy-var core/mem core-ns)
+   'cache              (sci/copy-var core/cache core-ns)
    'DPmem              (sci/copy-var core/DPmem core-ns)
+   'sd                 (sci/copy-var core/sd core-ns)
    'mean               (sci/copy-var core/mean core-ns)
    'variance           (sci/copy-var core/variance core-ns)
    'weighted-mean      (sci/copy-var core/weighted-mean core-ns)
@@ -301,6 +313,9 @@
 (defn ^:macro map-query [_ _ n lag & body]
   `(prob.core/map-query-fn ~n ~lag (fn [] ~@body)))
 
+(defn ^:macro forward-query [_ _ n & body]
+  `(prob.core/forward-query-fn ~n (fn [] ~@body)))
+
 (defn ^:macro query [_ _ method & body]
   `(prob.core/conditional-fn ~method (fn [] ~@body)))
 
@@ -311,6 +326,7 @@
    'map-query         (sci/copy-var map-query macros-ns)
    'importance-query  (sci/copy-var importance-query macros-ns)
    'enumeration-query (sci/copy-var enumeration-query macros-ns)
+   'forward-query     (sci/copy-var forward-query macros-ns)
    'query             (sci/copy-var query macros-ns)})
 
 ;; ---------------------------------------------------------------------------

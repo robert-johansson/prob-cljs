@@ -66,7 +66,8 @@
                            (assoc-in [:new-trace addr] entry))]
                  (if (:enum-discovery s)
                    (update s :enum-domains conj
-                           {:addr addr :domain domain :erp-id erp-id})
+                           {:addr addr :domain domain :erp-id erp-id
+                            :log-probs (when domain (mapv log-prob-fn domain))})
                    s))))
      value)))
 

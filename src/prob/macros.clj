@@ -81,6 +81,16 @@
   [n lag & body]
   `(prob.core/map-query-fn ~n ~lag (fn [] ~@body)))
 
+(defmacro forward-query
+  "Forward sampling: run body n times from the prior.
+   factor/observe/condition are no-ops.
+
+   Example:
+     (forward-query 100 (flip 0.7))
+   ;=> [true true false true ...]"
+  [n & body]
+  `(prob.core/forward-query-fn ~n (fn [] ~@body)))
+
 (defmacro query
   "Create a reusable conditional sampler.
    method is a list like '(rejection), '(enumerate), or '(mh lag).

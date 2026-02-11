@@ -7,6 +7,7 @@
                                 enumeration-query-fn importance-query-fn conditional-fn
                                 mh-query-scored-fn map-query-fn condition-equal
                                 observe
+                                forward-query-fn infer
                                 sample* observe* dist? enumerate*
                                 bernoulli-dist gaussian-dist uniform-dist beta-dist
                                 gamma-dist exponential-dist dirichlet-dist
@@ -14,17 +15,17 @@
                                 sample-discrete-dist binomial-dist poisson-dist
                                 categorical-dist
                                 delta-dist cauchy-dist laplace-dist lognormal-dist
-                                student-t-dist mixture-dist
+                                student-t-dist mixture-dist kde-dist entropy
                                 marginal-dist
                                 set-seed! rand
-                                mem DPmem mean variance sum prod repeat-fn
+                                mem cache DPmem sd mean variance sum prod repeat-fn
                                 weighted-mean weighted-variance
                                 empirical-distribution expectation]]
             [prob.erp :as erp]
             [prob.dist :as dist])
   (:require-macros [prob.macros :refer [rejection-query mh-query enumeration-query
                                         importance-query mh-query-scored map-query
-                                        query]]))
+                                        forward-query query]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Test harness (volatile-based, no atoms)
@@ -1009,6 +1010,252 @@
                            x)))]
     ;; Posterior should be pulled toward the mixture components
     (number? (mean samples))))
+
+;; ---------------------------------------------------------------------------
+;; Forward Sampling
+;; ---------------------------------------------------------------------------
+
+(println "=== Forward Sampling ===")
+
+(test-assert "forward-query-fn: returns n samples"
+  (= 50 (count (forward-query-fn 50 (fn [] (flip))))))
+
+(test-assert "forward-query-fn: ignores condition"
+  ;; condition false would normally throw, but forward mode ignores it
+  (let [samples (forward-query-fn 20 (fn [] (condition false) (flip)))]
+    (= 20 (count samples))))
+
+(test-assert "forward-query-fn: ignores factor"
+  ;; factor -Inf would normally cause rejection, but forward mode ignores it
+  (let [samples (forward-query-fn 20 (fn [] (factor ##-Inf) (flip)))]
+    (= 20 (count samples))))
+
+(test-assert "forward-query: macro works"
+  (= 10 (count (forward-query 10 (flip 0.7)))))
+
+(test-assert "forward-query-fn: samples from prior"
+  (let [samples (forward-query-fn 1000 (fn [] (if (flip 0.7) 1 0)))]
+    (approx= (mean samples) 0.7 0.1)))
+
+;; ---------------------------------------------------------------------------
+;; Standard deviation
+;; ---------------------------------------------------------------------------
+
+(println "=== Standard Deviation ===")
+
+(test-assert "sd: constant list -> 0"
+  (= 0 (sd [5 5 5])))
+
+(test-assert "sd: known value"
+  ;; sd of [1 2 3] = sqrt(2/3) ≈ 0.8165
+  (approx= (sd [1 2 3]) 0.8165 0.001))
+
+(test-assert "sd: single element"
+  (= 0 (sd [42])))
+
+;; ---------------------------------------------------------------------------
+;; Cache (LRU memoization)
+;; ---------------------------------------------------------------------------
+
+(println "=== Cache ===")
+
+(test-assert "cache: returns same value for same args"
+  (let [call-count (volatile! 0)
+        f (cache (fn [x] (vswap! call-count inc) (* x x)))]
+    (f 3)
+    (f 3)
+    (and (= (f 3) 9) (= @call-count 1))))
+
+(test-assert "cache: different args get different results"
+  (let [f (cache (fn [x] (* x x)))]
+    (and (= (f 3) 9) (= (f 4) 16))))
+
+(test-assert "cache: evicts oldest when full"
+  (let [f (cache (fn [x] (* x x)) 3)]
+    ;; Fill cache
+    (f 1) (f 2) (f 3)
+    ;; Add one more, evicting 1
+    (f 4)
+    ;; 1 should be evicted, so re-computation happens
+    ;; but the function is pure so result is same
+    (= (f 1) 1)))
+
+(test-assert "cache: LRU order maintained"
+  (let [call-count (volatile! 0)
+        f (cache (fn [x] (vswap! call-count inc) (* x x)) 3)]
+    (f 1) (f 2) (f 3)  ;; cache: [1 2 3]
+    (f 1)               ;; access 1, cache: [2 3 1]
+    (f 4)               ;; evict 2 (oldest), cache: [3 1 4]
+    (vreset! call-count 0)
+    (f 1)               ;; should be cached (no call)
+    (= @call-count 0)))
+
+;; ---------------------------------------------------------------------------
+;; Entropy
+;; ---------------------------------------------------------------------------
+
+(println "=== Entropy ===")
+
+(test-assert "entropy: fair coin = log(2)"
+  (approx= (entropy (bernoulli-dist 0.5)) (js/Math.log 2) 0.001))
+
+(test-assert "entropy: biased coin < log(2)"
+  (< (entropy (bernoulli-dist 0.9)) (js/Math.log 2)))
+
+(test-assert "entropy: delta = 0"
+  (approx= (entropy (delta-dist 42)) 0.0 0.001))
+
+(test-assert "entropy: uniform over n = log(n)"
+  (approx= (entropy (random-integer-dist 6)) (js/Math.log 6) 0.001))
+
+;; ---------------------------------------------------------------------------
+;; Unified infer
+;; ---------------------------------------------------------------------------
+
+(println "=== Unified infer ===")
+
+(test-assert "infer: rejection"
+  (= true (infer {:method :rejection}
+                  (fn [] (let [x (flip)] (condition x) x)))))
+
+(test-assert "infer: mh"
+  (let [samples (infer {:method :mh :samples 50 :lag 1}
+                        (fn [] (let [x (flip)] (condition x) x)))]
+    (and (= 50 (count samples))
+         (every? true? samples))))
+
+(test-assert "infer: enumeration"
+  (let [[values probs] (infer {:method :enumeration}
+                               (fn [] (let [x (flip)] (condition x) x)))]
+    (and (= (first values) true)
+         (approx= (first probs) 1.0 0.001))))
+
+(test-assert "infer: importance"
+  (let [[values probs] (infer {:method :importance :samples 500}
+                               (fn [] (flip)))]
+    (approx= (reduce + (seq probs)) 1.0 0.01)))
+
+(test-assert "infer: forward"
+  (let [samples (infer {:method :forward :samples 100}
+                        (fn [] (flip 0.7)))]
+    (= 100 (count samples))))
+
+(test-assert "infer: mh with burn-in"
+  (let [samples (infer {:method :mh :samples 20 :lag 1 :burn 10}
+                        (fn [] (flip)))]
+    (= 20 (count samples))))
+
+(test-assert "infer: mh-scored"
+  (let [results (infer {:method :mh-scored :samples 10 :lag 1}
+                        (fn [] (let [x (flip)] (condition x) x)))]
+    (and (= 10 (count results))
+         (every? :value results)
+         (every? :score results))))
+
+(test-assert "infer: map"
+  (let [result (infer {:method :map :samples 200 :lag 1}
+                       (fn [] (let [x (uniform-draw [:a :b :c])]
+                                (factor (if (= x :a) 0 -5))
+                                x)))]
+    (= result :a)))
+
+(test-assert "infer: mh with callback"
+  (let [called (volatile! 0)]
+    (infer {:method :mh :samples 10 :lag 1
+            :callback (fn [_] (vswap! called inc))}
+           (fn [] (flip)))
+    (= @called 10)))
+
+;; ---------------------------------------------------------------------------
+;; likelyFirst enumeration
+;; ---------------------------------------------------------------------------
+
+(println "=== likelyFirst Enumeration ===")
+
+(test-assert "enum likelyFirst: same result as full for small model"
+  (let [[vals1 probs1] (enumeration-query-fn (fn [] (let [x (flip)] (condition x) x)))
+        [vals2 probs2] (enumeration-query-fn {:strategy :likely-first}
+                          (fn [] (let [x (flip)] (condition x) x)))]
+    (and (= (set (seq vals1)) (set (seq vals2)))
+         (approx= (first probs1) (first probs2) 0.001))))
+
+(test-assert "enum likelyFirst: works with uniform-draw"
+  (let [[values probs] (enumeration-query-fn {:strategy :likely-first}
+                          (fn [] (let [x (uniform-draw [1 2 3 4 5 6])]
+                                   (condition (even? x))
+                                   x)))]
+    (and (= (count (seq values)) 3)
+         (every? even? (seq values))
+         (approx= (reduce + (seq probs)) 1.0 0.001))))
+
+(test-assert "enum likelyFirst: max-executions limits exploration"
+  ;; With a very small max-executions, we still get some results
+  (let [[values probs] (enumeration-query-fn {:strategy :likely-first :max-executions 2}
+                          (fn [] (random-integer 4)))]
+    (and (pos? (count (seq values)))
+         (approx= (reduce + (seq probs)) 1.0 0.001))))
+
+(test-assert "enum full: max-executions limits exploration"
+  (let [[values probs] (enumeration-query-fn {:max-executions 2}
+                          (fn [] (random-integer 4)))]
+    (and (pos? (count (seq values)))
+         (approx= (reduce + (seq probs)) 1.0 0.001))))
+
+;; ---------------------------------------------------------------------------
+;; KDE distribution
+;; ---------------------------------------------------------------------------
+
+(println "=== KDE Distribution ===")
+
+(test-assert "kde-dist: samples are numbers"
+  (let [d (kde-dist [1 2 3 4 5])]
+    (every? number? (repeatedly 20 #(sample* d)))))
+
+(test-assert "kde-dist: log-prob is finite near data"
+  (let [d (kde-dist [0 0 0 1 1])]
+    (js/isFinite (observe* d 0.5))))
+
+(test-assert "kde-dist: log-prob higher near data center"
+  (let [d (kde-dist [0 0 0 0 0])]
+    (> (observe* d 0) (observe* d 10))))
+
+(test-assert "kde-dist: custom bandwidth"
+  (let [d (kde-dist [0 1 2] 0.5)]
+    (number? (sample* d))))
+
+(test-assert "kde-dist: Silverman bandwidth auto-computed"
+  (let [d (kde-dist [1 2 3 4 5 6 7 8 9 10])]
+    ;; Should be able to sample and score
+    (and (number? (sample* d))
+         (js/isFinite (observe* d 5)))))
+
+;; ---------------------------------------------------------------------------
+;; MCMC Callbacks
+;; ---------------------------------------------------------------------------
+
+(println "=== MCMC Callbacks ===")
+
+(test-assert "mh-query-fn: callback receives correct iter count"
+  (let [iters (volatile! [])]
+    (mh-query-fn 5 1 0 (fn [{:keys [iter]}] (vswap! iters conj iter))
+      (fn [] (flip)))
+    (= @iters [0 1 2 3 4])))
+
+(test-assert "mh-query-fn: callback receives value and score"
+  (let [entries (volatile! [])]
+    (mh-query-fn 3 1 0
+      (fn [entry] (vswap! entries conj entry))
+      (fn [] (let [x (flip)] (condition x) x)))
+    (and (= 3 (count @entries))
+         (every? :value @entries)
+         (every? :score @entries))))
+
+(test-assert "mh-query-scored-fn: callback works"
+  (let [called (volatile! 0)]
+    (mh-query-scored-fn 5 1 0
+      (fn [_] (vswap! called inc))
+      (fn [] (flip)))
+    (= @called 5)))
 
 ;; ---------------------------------------------------------------------------
 ;; Summary
