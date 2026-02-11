@@ -199,7 +199,7 @@ prob-cljs's `mem` is now **trace-aware**: during inference, the cache is stored 
 | Capability | webchurch | Anglican | prob-cljs | Status |
 |---|---|---|---|---|
 | `mem` | Deterministic memoization | Per-particle memoization | Trace-aware memoization (cache in trace state) | **Done** |
-| `DPmem` | Dirichlet Process memoization (CRP) | Via random process protocol | CRP table selection, trace-aware, returns `[fn get-tables-fn]` | **Done** |
+| `DPmem` | Dirichlet Process memoization (CRP) | Via random process protocol | CRP table selection, trace-aware, returns single function | **Done** |
 
 ---
 
@@ -256,7 +256,7 @@ Anglican's `stat.cljc` provides functions for working with weighted samples. pro
 | `curry` / `uncurry` | Implemented | — | not implemented | Minor gap |
 | `read-file` / `read-csv` / `write-csv` | Implemented | — | not implemented | Minor (users have `js/require "fs"`) |
 | `set-seed` | PRNG seeding | Via runtime config | `set-seed!` with xoshiro128** PRNG | **Done** |
-| Visualization | Full Vega-based viz suite | — (external tools) | SVG-based: hist, density, scatter, barplot | **Done** (browser only) |
+| Visualization | Full Vega-based viz suite | — (external tools) | SVG-based: hist, density, scatter, barplot, lineplot, table | **Done** (browser only) |
 
 ---
 
