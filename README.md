@@ -16,7 +16,7 @@ Runs on:
 # Run the demo
 nbb -cp src examples/prob-demo.cljs
 
-# Run tests (187 tests)
+# Run tests (215 tests)
 nbb -cp src:test test/prob_tests.cljs
 ```
 
@@ -137,6 +137,9 @@ Distribution constructors return objects implementing the `IDistribution` protoc
 | `(student-t-dist df loc scale)` | Student's t |
 | `(mixture-dist dists probs)` | Mixture of distributions |
 | `(kde-dist data)` | Kernel density estimate (Silverman bandwidth) |
+| `(uniform-discrete-dist lo hi)` | Discrete uniform on [lo, hi] (enumerable, proposable) |
+| `(chi-squared-dist df)` | Chi-squared (Gamma wrapper) |
+| `(logit-normal-dist mu sigma)` | Logit-normal; samples in (0, 1) |
 | `(marginal-dist values probs)` | Empirical marginal from inference |
 
 Protocol operations:
@@ -147,7 +150,10 @@ Protocol operations:
 | `(observe* dist value)` | Log-probability of value under dist |
 | `(enumerate* dist)` | Support of discrete distribution |
 | `(entropy dist)` | Shannon entropy of discrete distribution |
+| `(kl-divergence p q)` | KL divergence between discrete distributions |
 | `(dist? x)` | Check if x is a distribution |
+| `(discrete? x)` | Check if x has finite support |
+| `(continuous? x)` | Check if x is continuous |
 
 ### Inference
 
@@ -199,6 +205,7 @@ From `prob.core`:
 | `(mem f)` | Trace-aware stochastic memoization |
 | `(cache f)` / `(cache f n)` | LRU-bounded deterministic memoization |
 | `(DPmem alpha f)` | Dirichlet Process memoization (CRP) |
+| `(mode lst)` | Most frequent value |
 | `(mean lst)` | Mean |
 | `(variance lst)` | Variance |
 | `(sd lst)` | Standard deviation |
@@ -254,7 +261,7 @@ The `docs/` directory contains a full deployment with interactive ProbMods tutor
 src/prob/
   core.cljs       - Public API (re-exports everything)
   erp.cljs        - Elementary Random Primitives (trace-aware sampling)
-  dist.cljs       - Distribution protocol + 21 distribution types
+  dist.cljs       - Distribution protocol + 24 distribution types
   inference.cljs  - Inference: rejection, MH, enumeration, importance, forward, MAP
   math.cljs       - Special functions: log-gamma, digamma, erf, log-sum-exp
   builtins.cljs   - Utilities: list ops, math, strings, mem, cache, DPmem, stats
@@ -269,7 +276,7 @@ examples/
   prob-demo.cljs  - Comprehensive demo
   ink-task-list/  - React/Ink terminal UI example
 test/
-  prob_tests.cljs - Test suite (187 tests)
+  prob_tests.cljs - Test suite (215 tests)
 ```
 
 ## How It Works
