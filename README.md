@@ -16,7 +16,7 @@ Runs on:
 # Run the demo
 nbb -cp src examples/prob-demo.cljs
 
-# Run tests (261 tests)
+# Run tests (268 tests)
 nbb -cp src:test test/prob_tests.cljs
 ```
 
@@ -228,6 +228,7 @@ From `prob.core`:
 | `(empirical-distribution samples)` | Frequency map |
 | `(sum lst)` / `(prod lst)` | Sum / product |
 | `(repeat-fn n f)` | Call f n times, collect results |
+| `(softmax utilities)` / `(softmax utilities beta)` | Softmax (Luce choice rule); converts utilities to probabilities with inverse temperature β (default 1) |
 | `(set-seed! n)` | Seed the PRNG (xoshiro128**) |
 
 ### Math
@@ -291,7 +292,7 @@ examples/
   prob-demo.cljs  - Comprehensive demo
   ink-task-list/  - React/Ink terminal UI example
 test/
-  prob_tests.cljs - Test suite (261 tests)
+  prob_tests.cljs - Test suite (268 tests)
 ```
 
 ## How It Works
