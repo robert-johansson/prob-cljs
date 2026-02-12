@@ -83,11 +83,17 @@
     <li><a href="#rejection-query">rejection-query</a></li>
     <li><a href="#mh-query">mh-query</a></li>
     <li><a href="#enumeration-query">enumeration-query</a></li>
+    <li><a href="#forward-query">forward-query</a></li>
+    <li><a href="#importance-query">importance-query</a></li>
+    <li><a href="#map-query">map-query</a></li>
+    <li><a href="#mh-query-scored">mh-query-scored</a></li>
+    <li><a href="#infer">infer</a></li>
 
     <li class="section-group"><a href="#conditioning">Conditioning</a></li>
     <li><a href="#condition">condition</a></li>
     <li><a href="#factor">factor</a></li>
     <li><a href="#observe">observe</a></li>
+    <li><a href="#condition-equal">condition-equal</a></li>
 
     <li class="section-group"><a href="#utilities">Utilities</a></li>
     <li><a href="#mem">mem</a></li>
@@ -612,6 +618,82 @@
   "P(a,b | a or b)")</code></pre>
 </div>
 
+<div class="fn-entry" id="forward-query">
+<h3><a href="#forward-query"><code>forward-query</code></a></h3>
+<div class="fn-signature">(forward-query n &amp; body) (forward-query-fn n thunk)</div>
+<p class="fn-description">Forward sampling from the prior. Runs the model <em>n</em> times with <code>factor</code>, <code>observe</code>, and <code>condition</code> as no-ops. Returns a vector of <em>n</em> unweighted prior samples. Useful for visualizing the prior distribution before adding observations.</p>
+<pre><code>;; Visualize the prior over a latent parameter
+(let [samples (forward-query 1000
+                (let [mu (gaussian 0 3)]
+                  (observe (gaussian-dist mu 1) 2.5)  ; ignored in forward mode
+                  mu))]
+  (display "prior mean:" (.toFixed (mean samples) 3))
+  (density samples "prior over mu (observations ignored)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="importance-query">
+<h3><a href="#importance-query"><code>importance-query</code></a></h3>
+<div class="fn-signature">(importance-query n &amp; body) (importance-query-fn n thunk)</div>
+<p class="fn-description">Importance sampling with <em>n</em> weighted samples. Returns <code>(values probs)</code> like <code>enumeration-query</code>. Each sample is weighted by the accumulated <code>factor</code>/<code>observe</code> scores, then normalized. More scalable than enumeration for models with many random choices.</p>
+<pre><code>;; Importance sampling over a discrete model
+(barplot
+  (importance-query 5000
+    (let [x (uniform-draw [1 2 3 4 5])]
+      (observe (gaussian-dist x 0.5) 3.2)
+      x))
+  "P(x | obs=3.2) via importance sampling")</code></pre>
+</div>
+
+<div class="fn-entry" id="map-query">
+<h3><a href="#map-query"><code>map-query</code></a></h3>
+<div class="fn-signature">(map-query n lag &amp; body) (map-query-fn n lag thunk)</div>
+<p class="fn-description">MAP (maximum a posteriori) inference. Runs MH to collect <em>n</em> scored samples with thinning <em>lag</em>, then returns the single highest-scoring value. Useful when you want the most likely explanation rather than the full posterior.</p>
+<pre><code>;; Find the most likely die given an observation
+(let [best (map-query 1000 1
+             (let [die (uniform-draw [:d4 :d6 :d8 :d12 :d20])
+                   sides (get {:d4 4 :d6 6 :d8 8 :d12 12 :d20 20} die)
+                   roll (uniform-draw (range 1 (inc sides)))]
+               (condition (= roll 7))
+               die))]
+  (display "MAP die:" best))</code></pre>
+</div>
+
+<div class="fn-entry" id="mh-query-scored">
+<h3><a href="#mh-query-scored"><code>mh-query-scored</code></a></h3>
+<div class="fn-signature">(mh-query-scored n lag &amp; body) (mh-query-scored-fn n lag thunk)</div>
+<p class="fn-description">Like <code>mh-query</code> but returns a list of <code>{:value v :score s}</code> maps, where <em>score</em> is the log-probability of each sample. Useful for diagnostics, finding the MAP estimate manually, or weighted post-processing.</p>
+<pre><code>;; See values with their log-scores
+(let [results (mh-query-scored 200 1
+                (let [p (beta 2 2)]
+                  (condition (flip p))
+                  (condition (flip p))
+                  (condition (flip p))
+                  (.toFixed p 2)))
+      best (apply max-key :score results)]
+  (display "best value:" (:value best) "score:" (.toFixed (:score best) 3))
+  (hist (map :value results) "posterior samples with scores"))</code></pre>
+</div>
+
+<div class="fn-entry" id="infer">
+<h3><a href="#infer"><code>infer</code></a></h3>
+<div class="fn-signature">(infer opts thunk)</div>
+<p class="fn-description">Unified entry point for all inference methods. Dispatches based on <code>:method</code> key in <em>opts</em>. Available methods: <code>:rejection</code>, <code>:mh</code>, <code>:enumeration</code>, <code>:importance</code>, <code>:forward</code>, <code>:mh-scored</code>, <code>:map</code>. Each method accepts its own options (e.g. <code>:samples</code>, <code>:lag</code>, <code>:burn</code>). SMC and particle Gibbs also exist but require CPS-transformed models.</p>
+<pre><code>;; Same model, different inference methods
+(let [model (fn []
+              (let [x (uniform-draw [1 2 3 4 5])]
+                (factor (* 0.5 x))
+                x))]
+  ;; Exact enumeration
+  (barplot (infer {:method :enumeration} model)
+    "enumeration (exact)")
+  ;; MH sampling
+  (hist (infer {:method :mh :samples 1000 :lag 1} model)
+    "MH (1000 samples)")
+  ;; Importance sampling
+  (barplot (infer {:method :importance :samples 2000} model)
+    "importance (2000 samples)"))</code></pre>
+</div>
+
 <!-- ============================================================ -->
 <h2 id="conditioning"><a href="#conditioning">Conditioning</a></h2>
 <p>Conditioning constrains generative models to match observations.</p>
@@ -655,6 +737,23 @@
                   mu))]
   (display "estimated mean:" (.toFixed (mean samples) 3))
   (density samples "posterior over mu"))</code></pre>
+</div>
+
+<div class="fn-entry" id="condition-equal">
+<h3><a href="#condition-equal"><code>condition-equal</code></a></h3>
+<div class="fn-signature">(condition-equal thunk value)</div>
+<p class="fn-description">Soft conditioning via inner enumeration. Enumerates <em>thunk</em> exhaustively, computes \(P(\text{return} = \text{value})\), and adds \(\log P\) as a factor score. Useful for conditioning on the output of an inner generative model without nesting full inference manually.</p>
+<pre><code>;; Condition on the output of an inner model
+(barplot
+  (enumeration-query
+    (let [rain (flip 0.3)
+          sprinkler (flip (if rain 0.01 0.4))]
+      ;; Condition on observing wet grass via inner model
+      (condition-equal
+        (fn [] (or rain sprinkler))
+        true)
+      (list :rain rain :sprinkler sprinkler)))
+  "P(rain, sprinkler | wet grass)")</code></pre>
 </div>
 
 <!-- ============================================================ -->
@@ -754,7 +853,11 @@ function ensureScittleImports() {
       "(ns prob.macros)" +
       "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
       "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
-      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))" +
+      "(defmacro forward-query [n & body] `(prob.core/forward-query-fn ~n (fn [] ~@body)))" +
+      "(defmacro importance-query [n & body] `(prob.core/importance-query-fn ~n (fn [] ~@body)))" +
+      "(defmacro map-query [n lag & body] `(prob.core/map-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro mh-query-scored [n lag & body] `(prob.core/mh-query-scored-fn ~n ~lag (fn [] ~@body)))"
     );
 
     scittle.core.eval_string(
@@ -762,7 +865,9 @@ function ensureScittleImports() {
       "                              sample-discrete beta gamma dirichlet exponential" +
       "                              binomial poisson categorical rand set-seed!" +
       "                              condition factor observe rejection-query-fn mh-query-fn" +
-      "                              enumeration-query-fn mem mean variance sd sum prod" +
+      "                              enumeration-query-fn forward-query-fn importance-query-fn" +
+      "                              map-query-fn mh-query-scored-fn infer condition-equal" +
+      "                              mem mean variance sd sum prod" +
       "                              sample* observe* dist? enumerate*" +
       "                              DPmem cache log-gamma-fn log-beta-fn erf digamma]])" +
       "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
@@ -775,7 +880,8 @@ function ensureScittleImports() {
       "                              uniform-discrete-dist chi-squared-dist logit-normal-dist" +
       "                              entropy kl-divergence discrete? continuous?]])" +
       "(require '[prob.builtins :refer [expt]])" +
-      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query" +
+      "                                  forward-query importance-query map-query mh-query-scored]])" +
       "(require '[prob.viz :refer [hist density scatter barplot display lineplot table]])"
     );
 
