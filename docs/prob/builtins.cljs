@@ -2,6 +2,7 @@
   "Built-in functions for probabilistic programming.
    Includes list operations, math, string ops, comparisons, and more.
    These are available for direct use or re-export through prob.core."
+  (:refer-clojure :exclude [gensym])
   (:require [prob.erp :as erp]))
 
 (declare equal?)
@@ -360,7 +361,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn mem [f]
-  (let [fn-id (gensym "mem")
+  (let [fn-id (cljs.core/gensym "mem")
         local-cache (volatile! {})]
     (fn [& args]
       (if erp/*trace-state*
@@ -418,7 +419,7 @@
    alpha is the concentration parameter. f is the function to memoize.
    Uses Chinese Restaurant Process for table selection."
   [alpha f]
-  (let [dp-id (gensym "dp")
+  (let [dp-id (cljs.core/gensym "dp")
         local-state (volatile! {})]
     (fn [& args]
       (let [key [dp-id (vec args)]
@@ -463,7 +464,7 @@
 
 (def ^:private default-gensym (make-gensym "g"))
 
-(defn gensym' [] (default-gensym))
+(defn gensym [] (default-gensym))
 
 ;; ---------------------------------------------------------------------------
 ;; I/O

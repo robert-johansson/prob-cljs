@@ -217,7 +217,7 @@
    'softmax        (sci/copy-var builtins/softmax builtins-ns)
    'DPmem          (sci/copy-var builtins/DPmem builtins-ns)
    'make-gensym    (sci/copy-var builtins/make-gensym builtins-ns)
-   'gensym'        (sci/copy-var builtins/gensym' builtins-ns)
+   'gensym         (sci/copy-var builtins/gensym builtins-ns)
    'display        (sci/copy-var builtins/display builtins-ns)
    'error          (sci/copy-var builtins/error builtins-ns)
    'sample         (sci/copy-var builtins/sample builtins-ns)
