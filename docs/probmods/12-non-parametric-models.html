@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ProbMods: Non-parametric Models</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="../js/physics.js"></script>
+  <script>ProbPhysics.setup();</script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Probabilistic Models of Cognition</a></div>
+    <ul id="nav">
+      <li><a href="11-mixture-models.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+      <li><a href="index.html">Next &rarr;</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+
+<h1 id="chapter-title">12. Non-parametric Models</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#prelude">Prelude: Sampling from a Discrete Distribution</a></li>
+<li><a href="#dirichlet-process">Infinite Discrete Distributions: The Dirichlet Process</a></li>
+<li><a href="#dpmem">Stochastic Memoization with DPmem</a></li>
+<li><a href="#dp-properties">Properties of DP Memoized Procedures</a></li>
+<li><a href="#infinite-mixture">Infinite Mixture Models</a></li>
+<li><a href="#crp">The Chinese Restaurant Process</a></li>
+<li><a href="#goldwater">Example: Goldwater Model 1</a></li>
+<li><a href="#infinite-hmm">Example: Infinite Hidden Markov Models</a></li>
+<li><a href="#irm">Example: The Infinite Relational Model</a></li>
+<li><a href="#crosscat">Example: CrossCat</a></li>
+<li><a href="#other-nonparametric">Other Non-Parametric Distributions</a></li>
+<li><a href="#hierarchical">Hierarchical Combinations of Non-parametric Processes</a></li>
+</ul>
+</div>
+
+
+<p>In the chapter on <a href="11-mixture-models.html">Mixture Models</a> we saw a simple way to construct a model with an unbounded number of categories &mdash; simply place uncertainty over the number of categories that are &ldquo;actually&rdquo; in the world. In this chapter we describe another approach which instead posits an infinite number of (mostly unused) categories actually in the world. The <em>non-parametric</em>, or <em>infinite</em>, models have a number of useful mathematical properties.</p>
+
+
+<h1 id="prelude"><a href="#prelude">Prelude: Sampling from a Discrete Distribution</a></h1>
+
+<p>The <code>sample-discrete</code> function draws from a discrete distribution given a list of probabilities. If it wasn&rsquo;t built-in and the only random primitive you could use was <code>flip</code>, how could you sample from discrete? One solution is to recursively walk down the list of probabilities, deciding whether to stop on each step. For instance, in <code>(sample-discrete [0.2 0.3 0.1 0.4])</code> there is a 0.2 probability of stopping on the first flip, a 0.3/0.8 probability of stopping on the second flip (given that we didn&rsquo;t stop on the first), and so on. We can start by turning the list of probabilities into a list of <em>residual</em> probabilities &mdash; the probability we will stop on each step, given that we haven&rsquo;t stopped yet:</p>
+
+<pre><code>(defn residuals [probs]
+  (if (empty? probs)
+    []
+    (cons (/ (first probs) (sum probs))
+          (residuals (rest probs)))))
+
+(residuals [0.2 0.3 0.1 0.4])</code></pre>
+
+<p>Now to sample from the discrete distribution we simply walk down this list, deciding when to stop:</p>
+
+<pre><code>(defn residuals [probs]
+  (if (empty? probs)
+    []
+    (cons (/ (first probs) (sum probs))
+          (residuals (rest probs)))))
+
+(defn my-sample-discrete [resid]
+  (if (empty? resid)
+    nil
+    (if (flip (first resid))
+      1
+      (+ 1 (my-sample-discrete (rest resid))))))
+
+(hist (repeatedly 5000 (fn [] (my-sample-discrete (residuals [0.2 0.3 0.1 0.4])))) "stop?")</code></pre>
+
+
+<h1 id="dirichlet-process"><a href="#dirichlet-process">Infinite Discrete Distributions: The Dirichlet Process</a></h1>
+
+<p>We have seen several examples of mixture models where the mixture components are chosen from a multinomial distribution and the weights of the mixture components are drawn from a Dirichlet prior. Both multinomial and Dirichlet distributions are defined for fixed numbers of categories &mdash; now, imagine generalizing the combination of Dirichlet and multinomial, to a multinomial over <em>infinitely</em> many categories of components. This would solve the problem of &ldquo;running out of categories,&rdquo; because there would always be more categories that hadn&rsquo;t yet been used for any observation.</p>
+
+<p>Just as the Dirichlet distribution defines a prior on parameters for a multinomial with \(K\) possible outcomes, the <em>Dirichlet process</em> defines a prior on parameters for a multinomial with \(K = \infty\) &mdash; an infinite number of possible outcomes.</p>
+
+<p>First, we imagine drawing an infinite sequence of samples from a beta distribution with parameters \(1,\ \alpha\). We write this infinite set of draws as \(\left\{\beta'_k\right\}_{k=1}^{\infty}\).</p>
+
+\[\beta'_k \sim \text{Beta}\left(1,\alpha\right)\]
+
+<p>Ultimately we would like to define a distribution on an infinite set of discrete outcomes that will represent our categories or mixture components, but we start by defining a distribution on the natural numbers. The probability of the natural number \(k\) is given by:</p>
+
+\[\beta_k = \prod_{i=1}^{k-1}\left(1-\beta'_i\right)\cdot\beta'_k\]
+
+<p>How can this be interpreted as a generative process? Imagine &ldquo;walking&rdquo; down the natural numbers in order, flipping a coin with weight \(\beta'_i\) for each one; if the coin comes up <code>false</code>, we continue to the next natural number; if the coin comes up <code>true</code>, we stop and return the current natural number. Convince yourself that the probability of getting natural number \(k\) is given by \(\beta_k\) above.</p>
+
+<p>To formalize this as a program, we define a function, <code>pick-a-stick</code>, that walks down the list of \(\beta'_k\)s (called <em>sticks</em> in the statistics and machine learning literatures) and flips a coin at each one: if the coin comes up <code>true</code>, it returns the index associated with that stick, if the coin comes up <code>false</code> the function recurses to the next natural number.</p>
+
+<pre><code>(defn pick-a-stick [sticks j]
+  (if (flip (sticks j))
+    j
+    (pick-a-stick sticks (+ j 1))))
+
+(defn make-sticks [alpha]
+  (let [sticks (mem (fn [x] (beta 1.0 alpha)))]
+    (fn [] (pick-a-stick sticks 1))))
+
+(def my-sticks (make-sticks 1))
+
+(hist (repeatedly 1000 my-sticks) "Dirichlet Process")</code></pre>
+
+<p><code>pick-a-stick</code> is a higher-order function that takes another function called <code>sticks</code>, which returns the stick weight for each stick. <code>pick-a-stick</code> is also a <em>recursive</em> function &mdash; one that calls itself.</p>
+
+<p>Notice that <code>sticks</code> uses <code>mem</code> to associate a particular draw from <code>beta</code> with each natural number. When we call it again with the same index we will get back the same stick weight. This (crucially) means that we construct the \(\beta'_k\)s only &ldquo;lazily&rdquo; when we need them &mdash; even though we started by imagining an infinite set of &ldquo;sticks&rdquo; we only ever construct a finite subset of them.</p>
+
+<p>We can put these ideas together in a function called <code>make-sticks</code> which takes the \(\alpha\) parameter as an input and returns a function which samples stick indices. This way of constructing a Dirichlet Process is known as the <em>stick-breaking</em> construction (Sethuraman, 1994).</p>
+
+
+<h2 id="dpmem"><a href="#dpmem">Stochastic Memoization with <code>DPmem</code></a></h2>
+
+<p>The above construction of the Dirichlet process defines a distribution over the infinite set of natural numbers. We quite often want a distribution not over the natural numbers themselves, but over an infinite set of samples from some other distribution (called the <em>base distribution</em>): we can generalize the Dirichlet process to this setting by using <code>mem</code> to associate to each natural number a draw from the base distribution.</p>
+
+<pre><code>(defn pick-a-stick [sticks j]
+  (if (flip (sticks j))
+    j
+    (pick-a-stick sticks (+ j 1))))
+
+(defn make-sticks [alpha]
+  (let [sticks (mem (fn [x] (beta 1.0 alpha)))]
+    (fn [] (pick-a-stick sticks 1))))
+
+(defn dp-thunk [alpha base-dist]
+  (let [augmented-proc (mem (fn [stick-index] (base-dist)))
+        dp (make-sticks alpha)]
+    (fn [] (augmented-proc (dp)))))
+
+(def memoized-gaussian (dp-thunk 1.0 (fn [] (gaussian 0.0 1.0))))
+
+(density (vec (repeatedly 10000 (fn [] (gaussian 0.0 1.0)))) "Base Distribution")
+(density (vec (repeatedly 10000 memoized-gaussian)) "Dirichlet Process")</code></pre>
+
+<p>We can do a similar transformation to <em>any</em> function: we associate to every argument and natural number pair a sample from the function, then use the Dirichlet process to define a new function with the same signature. This useful higher-order distribution is called <code>DPmem</code>:</p>
+
+<pre><code>(defn pick-a-stick [sticks j]
+  (if (flip (sticks j))
+    j
+    (pick-a-stick sticks (+ j 1))))
+
+(defn make-sticks [alpha]
+  (let [sticks (mem (fn [x] (beta 1.0 alpha)))]
+    (fn [] (pick-a-stick sticks 1))))
+
+(defn my-DPmem [alpha base-dist]
+  (let [augmented-proc (mem (fn [args stick-index] (apply base-dist args)))
+        dp (mem (fn [args] (make-sticks alpha)))]
+    (fn [&amp; argsin]
+      (let [stick-index ((dp argsin))]
+        (augmented-proc argsin stick-index)))))
+
+(def memoized-gaussian (my-DPmem 1.0 gaussian))
+
+(density (vec (repeatedly 10000 (fn [] (gaussian 0.0 1.0)))) "Base Distribution")
+(density (vec (repeatedly 10000 (fn [] (memoized-gaussian 0.0 1.0)))) "Dirichlet Process")</code></pre>
+
+<p>In a probabilistic setting a function applied to some inputs may evaluate to a different value on each execution. By wrapping such a function in <code>mem</code> we associate a randomly sampled value with each combination of arguments. We have seen how this is useful in defining <em>random world</em> style semantics, by persistently associating individual random draws with particular <code>mem</code>&rsquo;d values. However, it is also natural to consider generalizing the notion of memoization itself to the stochastic case. Since <code>DPmem</code> is a higher-order function that transforms a function into one that <em>sometimes</em> reuses its return values we call it a <em>stochastic memoizer</em> (Goodman, Mansinghka, Roy, Bonawitz, &amp; Tenenbaum, 2008).</p>
+
+<p>prob-cljs provides a built-in <code>DPmem</code> (using the Chinese Restaurant Process construction, described below) that we will use for all remaining examples in this chapter.</p>
+
+
+<h2 id="dp-properties"><a href="#dp-properties">Properties of DP Memoized Procedures</a></h2>
+
+<p>A function defines a distribution. When we wrap such a function in <code>DPmem</code> the resulting function defines a new Dirichlet process distribution. The underlying distribution associated with <code>proc</code> is called the <em>base measure</em> of the Dirichlet process and is often written \(\mu\) or sometimes \(G_0\). In the following example we stochastically memoize a normal distribution.</p>
+
+<pre><code>(def memoized-normal (DPmem 1.0 (fn [] (gaussian 0 1.0))))
+
+(density (vec (repeatedly 100 memoized-normal)) "DPmem normal")</code></pre>
+
+<p>The DP is said to <em>concentrate</em> the base measure. Draws from a normal distribution are real-valued. However, draws from a DP are discrete (with probability one). By probabilistically memoizing a normal distribution we take the probability mass that the Gaussian spreads across the real line and <em>concentrate</em> it into a countable number of specific points. Compare the result of the previous computation with the result of sampling from a normal distribution itself.</p>
+
+<pre><code>(def memoized-gaussian (DPmem 1.0 gaussian))
+
+(density (vec (repeatedly 10000 (fn [] (gaussian 0.0 1.0)))) "Base Distribution")
+(density (vec (repeatedly 10000 (fn [] (memoized-gaussian 0.0 1.0)))) "Dirichlet Process")</code></pre>
+
+<p>In the stick-breaking construction stick heights become shorter on average as we walk further down the number line. This means that earlier draws from the DP are more likely to be redrawn than later draws. When we use the DP to construct <code>DPmem</code> the memoized function will therefore tend to favor <em>reuse</em> of earlier computed values. Intuitively, we will use <code>DPmem</code> when we need to model reuse of samples in a scenario where we do not know in advance how many samples we need.</p>
+
+
+<h2 id="infinite-mixture"><a href="#infinite-mixture">Infinite Mixture Models</a></h2>
+
+<p>We now return to the problem of categorization with an unknown number of categories. We can use the Dirichlet process to construct a distribution over an infinite set of (potential) bags:</p>
+
+<pre><code>(def colors ['blue 'green 'red])
+
+(def samples
+  (mh-query
+   200 100
+   (let [phi (dirichlet [1 1 1])
+         alpha 0.1
+         prototype (mapv (fn [w] (* alpha w)) phi)
+         bag->prototype (mem (fn [bag] (dirichlet prototype)))
+         get-bag (DPmem 1.0 gensym)
+         obs->bag (mem (fn [obs-name] (get-bag)))
+         draw-marble (mem (fn [obs-name]
+                            (multinomial colors (bag->prototype (obs->bag obs-name)))))]
+     (condition (and
+                  (= 'red (draw-marble 'obs1))
+                  (= 'red (draw-marble 'obs2))
+                  (= 'blue (draw-marble 'obs3))
+                  (= 'blue (draw-marble 'obs4))
+                  (= 'red (draw-marble 'obs5))
+                  (= 'blue (draw-marble 'obs6))))
+     [(= (obs->bag 'obs1) (obs->bag 'obs2))
+      (= (obs->bag 'obs1) (obs->bag 'obs3))])))
+
+(hist (map first samples) "obs1 and obs2 same category?")
+(hist (map second samples) "obs1 and obs3 same category?")</code></pre>
+
+<p>A model like this is called an <em>infinite mixture model</em>; in this case an infinite Dirichlet-multinomial mixture model, since the observations (the colors) come from a multinomial distribution with Dirichlet prior. The essential addition in this model is that we have <code>DPmem</code>&rsquo;d a <code>gensym</code> function to provide a collection of reusable category (bag) labels:</p>
+
+<pre><code>(def reusable-categories (DPmem 1.0 gensym))
+
+(hist (repeatedly 20 reusable-categories) "reusable categories")</code></pre>
+
+<p>To generate our observation in this infinite mixture model we first sample a category label from the memoized <code>gensym</code>. Since the Dirichlet process tends to reuse earlier choices (more than later ones), our data will tend to cluster together in earlier components. However, there is no a priori bound on the number of latent classes, rather there is just a bias towards fewer classes. The strength of this bias is controlled by the DP concentration parameter \(\alpha\). When \(\alpha\) is high, we will tolerate a larger number of classes, when it is low we will strongly favor fewer classes. In general, the number of classes grows proportional to \(\alpha \log(N)\) where \(N\) is the number of observations.</p>
+
+<p>We can use this basic template to create infinite mixture models with any type of observation distribution. For instance here is an infinite Gaussian mixture model:</p>
+
+<pre><code>(def class-distribution (DPmem 1.0 gensym))
+
+(def object->class
+  (mem (fn [object] (class-distribution))))
+
+(def class->gaussian-parameters
+  (mem (fn [klass] [(gaussian 65 10) (gaussian 0 8)])))
+
+(defn sample-height [object]
+  (apply gaussian (class->gaussian-parameters (object->class object))))
+
+(mapv sample-height ['tom 'dick 'harry 'bill 'fred])</code></pre>
+
+<p>There are, of course, many possible observation models that can be used in the infinite mixture. One advantage of using abstract objects to represent our data is that we can associate different observation models with different aspects of the data.</p>
+
+
+<h1 id="crp"><a href="#crp">Another View of the DP: The Chinese Restaurant Process</a></h1>
+
+<p>The Chinese Restaurant Process is an alternate, but equivalent, way to construct the Dirichlet process. The CRP is usually described as a sequential sampling scheme using the metaphor of a restaurant.</p>
+
+<p>We imagine a restaurant with an infinite number of tables. The first customer enters the restaurant and sits at the first unoccupied table. The \((N+1)\)th customer enters the restaurant and sits at either an already occupied table or a new, unoccupied table, according to the following distribution.</p>
+
+\[\tau^{(N+1)} | \tau^{(1)},\ldots, \tau^{(N)},\alpha \sim \sum_{i=1}^{K} \frac{y_i}{N + \alpha} \delta_{\tau_{i}} + \frac{\alpha}{N + \alpha} \delta_{\tau_{K+1}}\]
+
+<p>\(N\) is the total number of customers in the restaurant. \(K\) is the total number of occupied tables. \(\tau^{(j)}\) refers to the table chosen by the \(j\)th customer. \(\tau_i\) refers to the \(i\)th occupied table. \(y_i\) is the number of customers seated at table \(\tau_i\); \(\delta_{\tau}\) is the \(\delta\)-distribution which puts all of its mass on table \(\tau\). \(\alpha \geq 0\) is the <em>concentration parameter</em> of the model.</p>
+
+<p>In other words, customers sit at an already-occupied table with probability proportional to the number of individuals at that table, or at a new table with probability controlled by the parameter \(\alpha\).</p>
+
+<p>Each table has a <em>dish</em> associated with it. When the first customer sits at a new table, a dish is sampled from the base distribution \(\mu\). From then on, all customers who are seated at that table share this dish.</p>
+
+<p>The CRP can be used to define a stochastic memoizer just as the Dirichlet process. We let the dish at each table be drawn from the underlying function. When we seat a customer we emit the dish labeling the table where the customer sat. When we seat a customer at an existing table, it corresponds to retrieving a value from the memory. When we seat a customer at a new table it corresponds to computing a fresh value from our memoized random function and storing it as the dish at the new table.</p>
+
+<p>The probability of a particular CRP partition can be written in closed form as:</p>
+
+\[P(\vec{y})=\frac{\alpha^{K}\Gamma[\alpha]\prod_{j=0}^{K}\Gamma[y_{j}]}{\Gamma[\alpha+\sum_{j=0}^{K}y_{j}]}\]
+
+<p>Where \(\vec{y}\) is the vector of counts of customers at each table and \(\Gamma(\cdot)\) is the gamma function. This shows that for a CRP the vector of counts is sufficient.</p>
+
+<p>As a distribution, the CRP has a number of useful properties. It implements a simplicity bias: it assigns higher probability to partitions which (1) have fewer customers, (2) have fewer tables, and (3) for a fixed number of customers \(N\), assign them to the smallest number of tables. Thus the CRP favors simple restaurants and implements a rich-get-richer scheme.</p>
+
+<p>The built-in <code>DPmem</code> in prob-cljs uses exactly this Chinese Restaurant Process construction.</p>
+
+
+<h2 id="goldwater"><a href="#goldwater">Example: Goldwater Model 1</a></h2>
+
+<p>(Adapted from Goldwater, S., Griffiths, T. L., and Johnson, M. (2009). A Bayesian framework for word segmentation: Exploring the effects of context. <em>Cognition</em>, 112:21&ndash;54.)</p>
+
+<pre><code>(def phones ['a 'e 'i 'o 'u 'k 't 'p 'g 'd 'b 's 'th 'f])
+(def phone-weights (dirichlet (vec (repeat (count phones) 1))))
+
+(def num-words 10)
+
+(defn sample-phone []
+  (multinomial phones phone-weights))
+
+(defn sample-phone-sequence []
+  (vec (repeatedly (max 1 (poisson 3.0)) sample-phone)))
+
+(def sample-word
+  (DPmem 1.0
+         (fn [] (sample-phone-sequence))))
+
+(defn sample-utterance []
+  (vec (repeatedly num-words sample-word)))
+
+(sample-utterance)</code></pre>
+
+
+<h2 id="infinite-hmm"><a href="#infinite-hmm">Example: Infinite Hidden Markov Models</a></h2>
+
+<p>Just as when we considered a mixture model over an unknown number of latent categories, we may wish to have a hidden Markov model over an unknown number of latent symbols. We can do this by again using a reusable source of state symbols:</p>
+
+<pre><code>(def vocabulary ['chef 'omelet 'soup 'eat 'work 'bake])
+
+(defn get-state [] (DPmem 0.5 gensym))
+
+(def state->transition-model
+  (mem (fn [state] (DPmem 1.0 (get-state)))))
+
+(defn transition [state]
+  ((state->transition-model state)))
+
+(def state->observation-model
+  (mem (fn [state] (dirichlet (vec (repeat (count vocabulary) 1))))))
+
+(defn observation [state]
+  (multinomial vocabulary (state->observation-model state)))
+
+(defn sample-words [last-state]
+  (if (flip 0.2)
+    []
+    (cons (observation last-state) (sample-words (transition last-state)))))
+
+(vec (sample-words 'start))</code></pre>
+
+<p>This model is known as the &ldquo;infinite hidden Markov model.&rdquo; Notice how the transition model uses a separate DPmemoized function for each latent state: with some probability it will reuse a transition from this state, otherwise it will transition to a new state drawn from the globally shared source of state symbols &mdash; a DPmemoized <code>gensym</code>.</p>
+
+
+<h2 id="irm"><a href="#irm">Example: The Infinite Relational Model</a></h2>
+
+<p>(Adapted from: Kemp, C., Tenenbaum, J. B., Griffiths, T. L., Yamada, T. &amp; Ueda, N. (2006). Learning systems of concepts with an infinite relational model. <em>Proceedings of the 21st National Conference on Artificial Intelligence</em>.)</p>
+
+<p>Much semantic knowledge is inherently <em>relational</em>. Given some relational data, the IRM learns to cluster objects into classes such that whether or not the relation holds depends on the <em>pair</em> of object classes. For instance, we can imagine trying to infer social groups from the relation of who talks to who:</p>
+
+<pre><code>(def samples
+  (mh-query
+   100 50
+
+   (let [class-distribution (DPmem 1.0 gensym)
+         object->class (mem (fn [object] (class-distribution)))
+         classes->parameters (mem (fn [class1 class2] (beta 0.5 0.5)))
+         talks (fn [object1 object2]
+                 (flip (classes->parameters (object->class object1) (object->class object2))))]
+     (condition (and (talks 'tom 'fred)
+                     (talks 'tom 'jim)
+                     (talks 'jim 'fred)
+                     (not (talks 'mary 'fred))
+                     (not (talks 'mary 'jim))
+                     (not (talks 'sue 'fred))
+                     (not (talks 'sue 'tom))
+                     (not (talks 'ann 'jim))
+                     (not (talks 'ann 'tom))
+                     (talks 'mary 'sue)
+                     (talks 'mary 'ann)
+                     (talks 'ann 'sue)))
+     [(= (object->class 'tom) (object->class 'fred))
+      (= (object->class 'tom) (object->class 'mary))])))
+
+(hist (map first samples) "tom and fred in same group?")
+(hist (map second samples) "tom and mary in same group?")</code></pre>
+
+<p>We see that the model invents two classes (the &ldquo;boys&rdquo; and the &ldquo;girls&rdquo;) such that the boys talk to each other and the girls talk to each other, but girls don&rsquo;t talk to boys. Note that there is much missing data (unobserved potential relations) in this example.</p>
+
+
+<h2 id="crosscat"><a href="#crosscat">Example: CrossCat</a></h2>
+
+<p>(Adapted from: Shafto, P., Kemp, C., Mansinghka, V., Gordon, M., and Tenenbaum, J. B. (2006). Learning cross-cutting systems of categories. <em>Proceedings of the Twenty-Eighth Annual Conference of the Cognitive Science Society</em>.)</p>
+
+<p>Often we have data where each object is associated with a number of features. In many cases, we can predict how these features generalize by assigning the objects to classes. However, in some cases objects can be categorized into multiple categories, and different features are predicted by different category memberships. CrossCat is a model where features themselves cluster into <em>kinds</em>. Within each kind, objects cluster into categories which predict the feature values.</p>
+
+<pre><code>(def kind-distribution (DPmem 1.0 (make-gensym "kind")))
+
+(def feature->kind
+  (mem (fn [feature] (kind-distribution))))
+
+(def kind->class-distribution
+  (mem (fn [kind] (DPmem 1.0 (make-gensym "class")))))
+
+(def feature-kind-object->class
+  (mem (fn [kind object] ((kind->class-distribution kind)))))
+
+(def class->parameters
+  (mem (fn [object-class] (beta 1 1))))
+
+(defn has-feature? [object feature]
+  (flip (class->parameters (feature-kind-object->class (feature->kind feature) object))))
+
+(has-feature? 'eggs 'breakfast)</code></pre>
+
+
+<h1 id="other-nonparametric"><a href="#other-nonparametric">Other Non-Parametric Distributions</a></h1>
+
+<p>The Dirichlet Process is the best known example of a <em>non-parametric distribution</em>. The term <em>non-parametric</em> refers to statistical models whose size or complexity can grow with the data, rather than being specified in advance. There are a number of other such distributions that are worth knowing.</p>
+
+<h3>Pitman-Yor Distributions</h3>
+
+<p>Many models in the literature use a small generalization of the CRP known as the Pitman-Yor process (PYP). It is identical to the CRP except for having an extra parameter, \(a\), which introduces a dependency between the probability of sitting at a new table and the number of tables already occupied.</p>
+
+\[\tau^{(N+1)} | \tau^{(1)},\ldots,\tau^{(N)}, a, b \sim \sum_{i=1}^{K} \frac{y_i - a}{N + b} \delta_{\tau_{i}} + \frac{Ka + b}{N + b} \delta_{\tau_{K+1}}\]
+
+<p>Here \(b \geq 0\) corresponds to the CRP \(\alpha\) parameter. \(0 \leq a \leq 1\) is a new <em>discount</em> parameter which moves a fraction of a unit of probability mass from each occupied table to the new table. When \(a = 0\) the distribution becomes the single-parameter CRP. The \(a\) parameter can be thought of as controlling the <em>productivity</em> of a restaurant: how much sitting at a new table depends on how many tables already exist.</p>
+
+<h3>The Indian Buffet Process</h3>
+
+<p>The Indian Buffet Process is an infinite distribution on <em>sets</em> of draws from a base measure (rather than a single draw as in the CRP). Where the CRP assigns each customer to exactly one table, the IBP allows each customer to visit multiple &ldquo;dishes&rdquo; at a buffet, producing binary feature matrices with an unbounded number of features.</p>
+
+
+<h1 id="hierarchical"><a href="#hierarchical">Hierarchical Combinations of Non-parametric Processes</a></h1>
+
+<p>In the <a href="09-hierarchical-models.html">Hierarchical Models</a> chapter, we explored how additional levels of abstraction can lead to important effects in learning dynamics, such as transfer learning and the blessing of abstraction. In this section, we talk about two ways in which hierarchical non-parametric models can be built.</p>
+
+<h3>The Nested Chinese Restaurant Process</h3>
+
+<p>We have seen how the DP/CRP can be used to learn mixture models where the number of categories is infinite. However, the categories are unstructured, whereas real life categories have complex relationships with one another &mdash; for example, they are often organized into hierarchies. The <em>Nested Chinese Restaurant Process</em> (nCRP) is one way to learn such hierarchies (Blei, Griffiths, Jordan, &amp; Tenenbaum, 2004). The idea is that tables in a CRP can refer to <em>other restaurants</em> that represent lower-level categories.</p>
+
+<pre><code>(def top-gensym (make-gensym "t"))
+(def top-level-category (DPmem 1.0 top-gensym))
+
+(def subordinate-gensym (make-gensym "s"))
+(def subordinate-category
+  (DPmem 1.0
+         (fn [parent-category]
+           [(subordinate-gensym) parent-category])))
+
+(defn sample-category [] (subordinate-category (top-level-category)))
+
+(table (cons ["subordinate" "top"]
+             (repeatedly 10 sample-category))
+       "Nested Categories")</code></pre>
+
+<p>Each call to <code>sample-category</code> returns a vector consisting of a subordinate-level category followed by the corresponding top-level category. These categories are represented by gensyms, and, because they are drawn from a DP-memoized version of gensym, there is no <em>a priori</em> limit on the number of possible categories at each level.</p>
+
+<p>The nCRP gives us a way of constructing unbounded sets of hierarchically nested categories, but how can we use such structured categories to generate data? The code below shows one way:</p>
+
+<pre><code>(def top-gensym (make-gensym "t"))
+(def possible-observations ['a 'b 'c 'd 'e 'f 'g])
+
+(def top-level-category (DPmem 1.0 top-gensym))
+(def top-level-category->parameters
+  (mem (fn [cat] (dirichlet (vec (repeat (count possible-observations) 1.0))))))
+
+(def subordinate-gensym (make-gensym "s"))
+(def subordinate-category
+  (DPmem 1.0
+         (fn [parent-category]
+           [(subordinate-gensym) parent-category])))
+
+(def subordinate-category->parameters
+  (mem (fn [cat] (dirichlet (top-level-category->parameters (second cat))))))
+
+(defn sample-category [] (subordinate-category (top-level-category)))
+
+(defn sample-observation []
+  (multinomial possible-observations (subordinate-category->parameters (sample-category))))
+
+(vec (repeatedly 10 sample-observation))</code></pre>
+
+<p>Each category is associated with a multinomial distribution over the observations. This distribution is drawn from a Dirichlet prior for each subordinate-level category. However, the <em>pseudocounts</em> for the Dirichlet distribution for each subordinate-level category are drawn from another Dirichlet distribution associated with the <strong>top-level</strong> category &mdash; all of the subordinate level categories which share a top-level category also have similar distributions over observations.</p>
+
+
+<h3>The Hierarchical Dirichlet Process</h3>
+
+<p>It is also possible to build a hierarchical model using a Dirichlet Process at each level. This model is known as the <em>Hierarchical Dirichlet Process</em> (HDP) (Teh, Jordan, Beal, &amp; Blei, 2006).</p>
+
+<pre><code>(def base-measure (fn [] (poisson 20)))
+(def top-level (DPmem 10.0 base-measure))
+(def sample-obs
+  (DPmem 1.0
+         (fn [component] (top-level))))
+
+(hist (vec (repeatedly 1000 base-measure)) "Draws from Base Measure (poisson 20)")
+(hist (vec (repeatedly 1000 top-level)) "Draws from Top Level DP")
+(hist (vec (repeatedly 1000 (fn [] (sample-obs 'component1)))) "Draws from Component DP 1")
+(hist (vec (repeatedly 1000 (fn [] (sample-obs 'component2)))) "Draws from Component DP 2")
+(hist (vec (repeatedly 1000 (fn [] (sample-obs 'component3)))) "Draws from Component DP 3")</code></pre>
+
+<p>In an HDP, there are several component Dirichlet Processes. These component DPs all share another DP (called <code>top-level</code>) as their base measure. The top-level DP concentrates the base distribution into a number of points. Each of the component DPs then further concentrates this distribution &mdash; sharing the points chosen by the top-level DP, but further concentrating it, each in their own way.</p>
+
+
+<h3>Combining nCRP and HDP</h3>
+
+<p>A natural move is to combine the nCRP and HDP: the nCRP can be used to sample an unbounded set of hierarchically structured categories, and the HDP can be used to make these categories share observations in interesting ways.</p>
+
+<pre><code>(def top-gensym (make-gensym "t"))
+(def top-level-category (DPmem 1.0 top-gensym))
+
+(def root-category (DPmem 10.0 (fn [] (poisson 20))))
+
+(def sample-from-top-level-category
+  (DPmem 1.0 (fn [cat] (root-category))))
+
+(def subordinate-gensym (make-gensym "s"))
+(def subordinate-category
+  (DPmem 1.0
+         (fn [parent-category]
+           [(subordinate-gensym) parent-category])))
+
+(defn sample-category [] (subordinate-category (top-level-category)))
+
+(def sample-obs
+  (DPmem 1.0
+         (fn [cat]
+           (sample-from-top-level-category (second cat)))))
+
+(dotimes [_ 3]
+  (let [category (sample-category)
+        subordinate (first category)
+        top (second category)]
+    (hist (vec (repeatedly 500 (fn [] (sample-obs category))))
+          (str "Top: " top ", Sub: " subordinate))
+    (hist (vec (repeatedly 500 (fn [] (sample-from-top-level-category top))))
+          (str "Top Level: " top))))</code></pre>
+
+<p>Note that the nCRP and the HDP represent very different ways to construct distributions with hierarchically arranged non-parametric distributions. The nCRP builds a hierarchy of category types, while the HDP shares observations between multiple DPs.</p>
+
+
+<h3>Prototypes and Exemplars</h3>
+
+<p>An important debate in psychology has concerned the nature of <em>concepts</em>. In <em>prototype</em> theories, concepts are based on a single stored prototype; objects are categorized by comparison to this stored representation. In <em>exemplar</em> theories, people store all examples of a concept, and new objects are classified by comparison with all of these stored instances.</p>
+
+<p>These two models can be seen as opposite ends of a spectrum: one estimates the category based on a single member (prototype), the other based on every member (exemplar). There are clearly many intermediate points where each category can be viewed as a mixture over \(K\) clusters. Griffiths, Canini, Sanborn, and Navarro (2007) show how a large number of different models of categorization can be unified by viewing them all as special cases of a Hierarchical Dirichlet Process which learns how many clusters each category should be represented by. In particular, they show that learners can undergo a transition from prototype to exemplar representations during the course of learning.</p>
+
+
+<h1 id="references"><a href="#references">References</a></h1>
+
+<p>Blei, D. M., Griffiths, T. L., Jordan, M. I., &amp; Tenenbaum, J. B. (2004). Hierarchical topic models and the nested Chinese restaurant process. In <em>Advances in Neural Information Processing Systems 16</em>.</p>
+<p>Goldwater, S., Griffiths, T. L., &amp; Johnson, M. (2009). A Bayesian framework for word segmentation: Exploring the effects of context. <em>Cognition</em>, <em>112</em>, 21&ndash;54.</p>
+<p>Goodman, N. D., Mansinghka, V. K., Roy, D. M., Bonawitz, K., &amp; Tenenbaum, J. B. (2008). Church: a language for generative models. In <em>Uncertainty in Artificial Intelligence</em>.</p>
+<p>Griffiths, T. L., Canini, K. R., Sanborn, A. N., &amp; Navarro, D. J. (2007). Unifying rational models of categorization via the hierarchical Dirichlet process. In <em>Proceedings of the Twenty-Ninth Annual Conference of the Cognitive Science Society</em>.</p>
+<p>Kemp, C., Tenenbaum, J. B., Griffiths, T. L., Yamada, T., &amp; Ueda, N. (2006). Learning systems of concepts with an infinite relational model. In <em>Proceedings of the 21st National Conference on Artificial Intelligence</em>.</p>
+<p>Sethuraman, J. (1994). A constructive definition of Dirichlet priors. <em>Statistica Sinica</em>, <em>4</em>(2), 639&ndash;650.</p>
+<p>Shafto, P., Kemp, C., Mansinghka, V., Gordon, M., &amp; Tenenbaum, J. B. (2006). Learning cross-cutting systems of categories. In <em>Proceedings of the Twenty-Eighth Annual Conference of the Cognitive Science Society</em>.</p>
+<p>Teh, Y. W., Jordan, M. I., Beal, M. J., &amp; Blei, D. M. (2006). Hierarchical Dirichlet processes. <em>Journal of the American Statistical Association</em>, <em>101</em>(476), 1566&ndash;1581.</p>
+
+
+  </div>
+  <div class="chapter-nav">
+    <a href="11-mixture-models.html">&larr; Chapter 11: Mixture Models</a>
+    <a href="index.html">Back to Index</a>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/cps_transform.cljc',
+    '../prob/cps.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod DPmem" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt member pair null? equal? make-list length" +
+      "                                  string-append abs sample fold iota make-gensym gensym]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot lineplot table display run-physics animate-physics]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre:not(.norun)').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>
