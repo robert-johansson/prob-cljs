@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>prob-cljs API Reference</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="header">
+  <div id="logotype"><a href="../index.html">prob-cljs</a></div>
+  <ul id="nav">
+    <li><a href="../index.html">Home</a></li>
+    <li><a href="../probmods/index.html">ProbMods</a></li>
+    <li><a href="https://github.com/robert-johansson/prob-cljs">GitHub</a></li>
+  </ul>
+</div>
+
+<div id="page-wrapper">
+<nav id="sidebar">
+  <div class="sidebar-title">API Reference</div>
+  <ul>
+    <li class="section-group"><a href="#erp">Elementary Random Primitives</a></li>
+    <li><a href="#flip">flip</a></li>
+    <li><a href="#gaussian">gaussian</a></li>
+    <li><a href="#beta">beta</a></li>
+
+    <li class="section-group"><a href="#distributions">Distributions</a></li>
+    <li><a href="#bernoulli-dist">bernoulli-dist</a></li>
+    <li><a href="#gaussian-dist">gaussian-dist</a></li>
+    <li><a href="#mixture-dist">mixture-dist</a></li>
+
+    <li class="section-group"><a href="#inference">Inference</a></li>
+    <li><a href="#rejection-query">rejection-query</a></li>
+    <li><a href="#mh-query">mh-query</a></li>
+    <li><a href="#enumeration-query">enumeration-query</a></li>
+
+    <li class="section-group"><a href="#conditioning">Conditioning</a></li>
+    <li><a href="#condition">condition</a></li>
+    <li><a href="#factor">factor</a></li>
+    <li><a href="#observe">observe</a></li>
+
+    <li class="section-group"><a href="#utilities">Utilities</a></li>
+    <li><a href="#mem">mem</a></li>
+    <li><a href="#mean">mean</a></li>
+    <li><a href="#DPmem">DPmem</a></li>
+
+    <li class="section-group"><a href="#math">Math</a></li>
+    <li><a href="#log-gamma-fn">log-gamma-fn</a></li>
+    <li><a href="#erf">erf</a></li>
+  </ul>
+</nav>
+
+<div id="content">
+<h1 id="page-title">API Reference</h1>
+<p>Interactive reference for the prob-cljs probabilistic programming library. All code examples are editable and runnable in the browser. Functions are available via <code>(require '[prob.core :as prob])</code> or imported individually.</p>
+
+<!-- ============================================================ -->
+<h2 id="erp"><a href="#erp">Elementary Random Primitives</a></h2>
+<p>ERPs are trace-aware sampling functions. Inside inference they participate in the MH trace; outside they are pure samplers.</p>
+
+<div class="fn-entry" id="flip">
+<h3><a href="#flip"><code>flip</code></a></h3>
+<div class="fn-signature">(flip) (flip p)</div>
+<p class="fn-description">Bernoulli trial. Returns <code>true</code> with probability <em>p</em> (default 0.5), <code>false</code> otherwise. The simplest random primitive.</p>
+<pre><code>(hist (repeatedly 1000 flip) "fair coin")
+(hist (repeatedly 1000 #(flip 0.8)) "biased coin p=0.8")</code></pre>
+</div>
+
+<div class="fn-entry" id="gaussian">
+<h3><a href="#gaussian"><code>gaussian</code></a></h3>
+<div class="fn-signature">(gaussian) (gaussian mu sigma)</div>
+<p class="fn-description">Sample from a Gaussian (normal) distribution with mean <em>mu</em> and standard deviation <em>sigma</em>. Defaults to \(\mathcal{N}(0, 1)\).</p>
+<pre><code>(density (repeatedly 1000 gaussian) "standard normal N(0,1)")
+(density (repeatedly 1000 #(gaussian 5 2)) "N(5, 2)")</code></pre>
+</div>
+
+<div class="fn-entry" id="beta">
+<h3><a href="#beta"><code>beta</code></a></h3>
+<div class="fn-signature">(beta a b)</div>
+<p class="fn-description">Sample from a Beta distribution with shape parameters <em>a</em> and <em>b</em>. Returns a value in (0, 1). Commonly used as a prior for probabilities.</p>
+<pre><code>(density (repeatedly 1000 #(beta 2 5)) "Beta(2, 5)")
+(density (repeatedly 1000 #(beta 0.5 0.5)) "Beta(0.5, 0.5)")</code></pre>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="distributions"><a href="#distributions">Distributions</a></h2>
+<p>Distribution objects implement the <code>IDistribution</code> protocol with <code>sample*</code> and <code>observe*</code>. Discrete distributions also implement <code>IEnumerable</code> with <code>enumerate*</code>.</p>
+
+<div class="fn-entry" id="bernoulli-dist">
+<h3><a href="#bernoulli-dist"><code>bernoulli-dist</code></a></h3>
+<div class="fn-signature">(bernoulli-dist) (bernoulli-dist p)</div>
+<p class="fn-description">Create a Bernoulli distribution object. Supports <code>sample*</code>, <code>observe*</code>, and <code>enumerate*</code>.</p>
+<pre><code>(let [d (bernoulli-dist 0.7)]
+  (display "sample:" (sample* d))
+  (display "log P(true):" (observe* d true))
+  (display "log P(false):" (observe* d false))
+  (display "support:" (enumerate* d)))</code></pre>
+</div>
+
+<div class="fn-entry" id="gaussian-dist">
+<h3><a href="#gaussian-dist"><code>gaussian-dist</code></a></h3>
+<div class="fn-signature">(gaussian-dist) (gaussian-dist mu sigma)</div>
+<p class="fn-description">Create a Gaussian distribution object. Continuous, so no <code>enumerate*</code>. Use <code>observe*</code> to compute the log-density at a point.</p>
+<pre><code>(let [d (gaussian-dist 0 1)]
+  (display "sample:" (sample* d))
+  (display "log p(0):" (.toFixed (observe* d 0) 4))
+  (display "log p(1.96):" (.toFixed (observe* d 1.96) 4))
+  (density (repeatedly 500 #(sample* d)) "samples from N(0,1)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="mixture-dist">
+<h3><a href="#mixture-dist"><code>mixture-dist</code></a></h3>
+<div class="fn-signature">(mixture-dist components weights)</div>
+<p class="fn-description">Mixture of distributions. <em>components</em> is a sequence of distribution objects, <em>weights</em> are the mixing proportions (need not sum to 1, will be normalized).</p>
+<pre><code>(let [d (mixture-dist [(gaussian-dist -2 0.5) (gaussian-dist 2 0.5)] [1 1])]
+  (density (repeatedly 1000 #(sample* d)) "bimodal mixture"))</code></pre>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="inference"><a href="#inference">Inference</a></h2>
+<p>Inference algorithms condition generative models on observations. The macro forms wrap the body in a thunk automatically.</p>
+
+<div class="fn-entry" id="rejection-query">
+<h3><a href="#rejection-query"><code>rejection-query</code></a></h3>
+<div class="fn-signature">(rejection-query &amp; body)</div>
+<p class="fn-description">Run the body repeatedly until all <code>condition</code> constraints are satisfied, then return the value. Simple but can be slow when the condition is unlikely. Macro over <code>rejection-query-fn</code>.</p>
+<pre><code>;; Sample a die roll conditioned on being > 4
+(rejection-query
+  (let [die (uniform-draw [1 2 3 4 5 6])]
+    (condition (> die 4))
+    die))</code></pre>
+</div>
+
+<div class="fn-entry" id="mh-query">
+<h3><a href="#mh-query"><code>mh-query</code></a></h3>
+<div class="fn-signature">(mh-query num-samples lag &amp; body)</div>
+<p class="fn-description">Metropolis-Hastings inference. Draws <em>num-samples</em> from the posterior using single-site trace-based MH with thinning interval <em>lag</em>. Supports continuous and discrete random choices. Macro over <code>mh-query-fn</code>.</p>
+<pre><code>;; Estimate a coin's bias from observations
+(let [data [true true true false true]
+      samples (mh-query 500 1
+                (let [p (beta 1 1)]
+                  (doseq [d data] (condition (= d (flip p))))
+                  p))]
+  (display "estimated bias:" (.toFixed (mean samples) 3))
+  (density samples "posterior over p"))</code></pre>
+</div>
+
+<div class="fn-entry" id="enumeration-query">
+<h3><a href="#enumeration-query"><code>enumeration-query</code></a></h3>
+<div class="fn-signature">(enumeration-query &amp; body)</div>
+<p class="fn-description">Exact posterior by enumerating all possible executions. Returns <code>[values probabilities]</code>. Only works when all random choices are discrete and finite. Macro over <code>enumeration-query-fn</code>.</p>
+<pre><code>;; Exact posterior: P(A, B | A or B)
+(barplot
+  (enumeration-query
+    (let [a (flip) b (flip)]
+      (condition (or a b))
+      (list a b)))
+  "P(a,b | a or b)")</code></pre>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="conditioning"><a href="#conditioning">Conditioning</a></h2>
+<p>Conditioning constrains generative models to match observations.</p>
+
+<div class="fn-entry" id="condition">
+<h3><a href="#condition"><code>condition</code></a></h3>
+<div class="fn-signature">(condition pred)</div>
+<p class="fn-description">Hard constraint: reject the current execution if <em>pred</em> is false. In rejection sampling, throws a rejection sentinel. In MH, sets the score to \(-\infty\).</p>
+<pre><code>(hist
+  (repeatedly 1000
+    #(rejection-query
+       (let [x (uniform-draw (range 1 11))]
+         (condition (even? x))
+         x)))
+  "uniform over even numbers 1-10")</code></pre>
+</div>
+
+<div class="fn-entry" id="factor">
+<h3><a href="#factor"><code>factor</code></a></h3>
+<div class="fn-signature">(factor log-weight)</div>
+<p class="fn-description">Soft constraint: add <em>log-weight</em> to the execution score. In rejection mode, probabilistically accepts with \(e^{\text{log-weight}}\). In MH, accumulates into the trace score.</p>
+<pre><code>;; Soft-condition: prefer larger values
+(barplot
+  (enumeration-query
+    (let [x (uniform-draw [1 2 3 4 5])]
+      (factor (* 0.5 x))
+      x))
+  "soft preference for larger values")</code></pre>
+</div>
+
+<div class="fn-entry" id="observe">
+<h3><a href="#observe"><code>observe</code></a></h3>
+<div class="fn-signature">(observe dist value)</div>
+<p class="fn-description">Condition on observing <em>value</em> from distribution <em>dist</em>. Equivalent to <code>(factor (observe* dist value))</code>. The standard way to incorporate data.</p>
+<pre><code>;; Infer mean given noisy observations
+(let [data [2.1 1.8 2.3 1.9 2.0]
+      samples (mh-query 500 1
+                (let [mu (gaussian 0 5)]
+                  (doseq [d data]
+                    (observe (gaussian-dist mu 0.3) d))
+                  mu))]
+  (display "estimated mean:" (.toFixed (mean samples) 3))
+  (density samples "posterior over mu"))</code></pre>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="utilities"><a href="#utilities">Utilities</a></h2>
+<p>Helper functions for memoization, statistics, and stochastic processes.</p>
+
+<div class="fn-entry" id="mem">
+<h3><a href="#mem"><code>mem</code></a></h3>
+<div class="fn-signature">(mem f)</div>
+<p class="fn-description">Stochastic memoization. Wraps <em>f</em> so that repeated calls with the same arguments return the same (random) value. Trace-aware: memoized values participate in MH proposals and roll back on rejection.</p>
+<pre><code>;; Each person gets a persistent random eye color
+(let [eye-color (mem (fn [person] (uniform-draw ["blue" "brown" "green"])))]
+  (display "alice:" (eye-color "alice"))
+  (display "alice again:" (eye-color "alice"))
+  (display "bob:" (eye-color "bob")))</code></pre>
+</div>
+
+<div class="fn-entry" id="mean">
+<h3><a href="#mean"><code>mean</code></a></h3>
+<div class="fn-signature">(mean coll)</div>
+<p class="fn-description">Arithmetic mean of a collection of numbers.</p>
+<pre><code>(let [samples (repeatedly 1000 #(gaussian 5 2))]
+  (display "mean:" (.toFixed (mean samples) 3))
+  (display "variance:" (.toFixed (variance samples) 3))
+  (display "sd:" (.toFixed (sd samples) 3)))</code></pre>
+</div>
+
+<div class="fn-entry" id="DPmem">
+<h3><a href="#DPmem"><code>DPmem</code></a></h3>
+<div class="fn-signature">(DPmem alpha f)</div>
+<p class="fn-description">Dirichlet Process memoization. Uses a Chinese Restaurant Process with concentration <em>alpha</em> to decide whether to reuse a previous result or generate a new one by calling <em>f</em>. Useful for non-parametric clustering.</p>
+<pre><code>;; DP-memoized color generator: creates clusters of reuse
+(let [get-color (DPmem 1.0 (fn [category] (uniform-draw ["red" "blue" "green" "yellow"])))]
+  (hist (repeatedly 20 #(get-color "fruit")) "DP-memoized colors"))</code></pre>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="math"><a href="#math">Math</a></h2>
+<p>Special mathematical functions. Pure ClojureScript, zero dependencies.</p>
+
+<div class="fn-entry" id="log-gamma-fn">
+<h3><a href="#log-gamma-fn"><code>log-gamma-fn</code></a></h3>
+<div class="fn-signature">(log-gamma-fn z)</div>
+<p class="fn-description">Log of the Gamma function, \(\ln\Gamma(z)\). Uses the Lanczos approximation with ~15 digit accuracy.</p>
+<pre><code>;; ln(Gamma(5)) = ln(4!) = ln(24)
+(display "log-gamma-fn(5):" (.toFixed (log-gamma-fn 5) 6))
+(display "ln(24):" (.toFixed (js/Math.log 24) 6))
+;; Stirling check: ln(Gamma(100))
+(display "log-gamma-fn(100):" (.toFixed (log-gamma-fn 100) 4))</code></pre>
+</div>
+
+<div class="fn-entry" id="erf">
+<h3><a href="#erf"><code>erf</code></a></h3>
+<div class="fn-signature">(erf x)</div>
+<p class="fn-description">The error function, \(\operatorname{erf}(x) = \frac{2}{\sqrt{\pi}} \int_0^x e^{-t^2} dt\). Abramowitz &amp; Stegun approximation with max error ~1.5&times;10<sup>-7</sup>.</p>
+<pre><code>;; erf(0) = 0, erf(inf) -> 1
+(display "erf(0):" (erf 0))
+(display "erf(1):" (.toFixed (erf 1) 6))
+(display "erf(2):" (.toFixed (erf 2) 6))
+;; P(|X| < 1) for standard normal = erf(1/sqrt(2))
+(display "P(|Z|<1):" (.toFixed (erf (/ 1 (js/Math.sqrt 2))) 4))</code></pre>
+</div>
+
+</div><!-- #content -->
+</div><!-- #page-wrapper -->
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/cps_transform.cljc',
+    '../prob/cps.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sd sum prod" +
+      "                              sample* observe* dist? enumerate*" +
+      "                              DPmem cache log-gamma-fn log-beta-fn erf digamma]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist" +
+      "                              delta-dist cauchy-dist laplace-dist lognormal-dist" +
+      "                              student-t-dist mixture-dist kde-dist" +
+      "                              uniform-discrete-dist chi-squared-dist logit-normal-dist]])" +
+      "(require '[prob.builtins :refer [expt]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot display lineplot table]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#content pre').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+
+// Sidebar highlight on scroll
+(function() {
+  var links = document.querySelectorAll('#sidebar a[href^="#"]');
+  var sections = [];
+  links.forEach(function(a) {
+    var id = a.getAttribute('href').slice(1);
+    var el = document.getElementById(id);
+    if (el) sections.push({ el: el, a: a, li: a.parentElement });
+  });
+  function update() {
+    var scrollY = window.scrollY + 80;
+    var current = null;
+    sections.forEach(function(s) {
+      if (s.el.offsetTop <= scrollY) current = s;
+    });
+    sections.forEach(function(s) { s.li.classList.remove('active'); });
+    if (current) current.li.classList.add('active');
+  }
+  window.addEventListener('scroll', update, { passive: true });
+  update();
+})();
+</script>
+</body>
+</html>
