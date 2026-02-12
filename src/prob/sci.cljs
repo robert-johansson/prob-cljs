@@ -11,7 +11,8 @@
             [prob.dist :as dist]
             [prob.math :as math]
             [prob.core :as core]
-            [prob.cps :as cps]))
+            [prob.cps :as cps]
+            [prob.macros :as macros]))
 
 ;; ---------------------------------------------------------------------------
 ;; SCI namespace objects
@@ -338,45 +339,17 @@
 ;; prob.macros (SCI macros — ^:macro functions with [&form &env & args])
 ;; ---------------------------------------------------------------------------
 
-(defn ^:macro rejection-query [_ _ & body]
-  `(prob.core/rejection-query-fn (fn [] ~@body)))
-
-(defn ^:macro mh-query [_ _ n lag & body]
-  `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))
-
-(defn ^:macro importance-query [_ _ n & body]
-  `(prob.core/importance-query-fn ~n (fn [] ~@body)))
-
-(defn ^:macro enumeration-query [_ _ & body]
-  `(prob.core/enumeration-query-fn (fn [] ~@body)))
-
-(defn ^:macro mh-query-scored [_ _ n lag & body]
-  `(prob.core/mh-query-scored-fn ~n ~lag (fn [] ~@body)))
-
-(defn ^:macro map-query [_ _ n lag & body]
-  `(prob.core/map-query-fn ~n ~lag (fn [] ~@body)))
-
-(defn ^:macro forward-query [_ _ n & body]
-  `(prob.core/forward-query-fn ~n (fn [] ~@body)))
-
-(defn ^:macro query [_ _ method & body]
-  `(prob.core/conditional-fn ~method (fn [] ~@body)))
-
-(defn ^:macro smc-query [_ _ n-particles & body]
-  (let [[opts body] (if (map? (first body))
-                      [(first body) (rest body)]
-                      [{} body])
-        cps-body (cps/cps-of-expr (cons 'do body) 'k__final)]
-    `(prob.core/smc-query-fn ~n-particles ~opts
-       (fn [~'k__final ~'$state] ~cps-body))))
-
+(defn ^:macro rejection-query [_ _ & body] (macros/rejection-query* body))
+(defn ^:macro mh-query [_ _ n lag & body] (macros/mh-query* n lag body))
+(defn ^:macro importance-query [_ _ n & body] (macros/importance-query* n body))
+(defn ^:macro enumeration-query [_ _ & body] (macros/enumeration-query* body))
+(defn ^:macro mh-query-scored [_ _ n lag & body] (macros/mh-query-scored* n lag body))
+(defn ^:macro map-query [_ _ n lag & body] (macros/map-query* n lag body))
+(defn ^:macro forward-query [_ _ n & body] (macros/forward-query* n body))
+(defn ^:macro query [_ _ method & body] (macros/query* method body))
+(defn ^:macro smc-query [_ _ n-particles & body] (macros/smc-query* n-particles body))
 (defn ^:macro particle-gibbs-query [_ _ n-particles n-samples & body]
-  (let [[opts body] (if (map? (first body))
-                      [(first body) (rest body)]
-                      [{} body])
-        cps-body (cps/cps-of-expr (cons 'do body) 'k__final)]
-    `(prob.core/particle-gibbs-fn ~n-particles ~n-samples ~opts
-       (fn [~'k__final ~'$state] ~cps-body))))
+  (macros/particle-gibbs-query* n-particles n-samples body))
 
 (def macros-namespace
   {'rejection-query   (sci/copy-var rejection-query macros-ns)
