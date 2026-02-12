@@ -265,6 +265,46 @@
           (cons dist-ctor evaled-args)
           k '$state)))))
 
+(def ^:dynamic *m-loop-fn* nil)
+
+(defn- m-cps-of-loop [bindings body k]
+  (let [pairs (partition 2 bindings)
+        loop-vars (mapv first pairs)
+        init-exprs (mapv second pairs)
+        loop-sym (m-fresh-sym "loop")
+        loop-fn-params (vec (concat loop-vars ['k '$state]))
+        loop-fn-body (binding [*m-loop-fn* loop-sym]
+                       (m-cps-of-expr (cons 'do body) 'k))
+        loop-fn (list 'fn loop-sym loop-fn-params loop-fn-body)]
+    (m-cps-of-args init-exprs
+      (fn [evaled-inits]
+        (list (list 'fn [loop-sym '$state]
+                (concat (list loop-sym) evaled-inits (list k '$state)))
+              loop-fn '$state)))))
+
+(defn- m-cps-of-recur [args k]
+  (when-not *m-loop-fn*
+    (throw (ex-info "cps: recur outside of loop" {:args args})))
+  (m-cps-of-args args
+    (fn [evaled-args]
+      (concat (list *m-loop-fn*) evaled-args (list k '$state)))))
+
+(defn- m-cps-of-case [test-expr clauses k]
+  (if (m-atomic? test-expr)
+    (let [pairs (partition 2 clauses)
+          has-default (odd? (count clauses))
+          default (when has-default (last clauses))
+          case-clauses (mapcat (fn [[val expr]]
+                                 [val (m-cps-of-expr expr k)])
+                               pairs)]
+      (if has-default
+        (concat (list 'case test-expr) case-clauses (list (m-cps-of-expr default k)))
+        (concat (list 'case test-expr) case-clauses)))
+    (let [t (m-fresh-sym "case")]
+      (m-cps-of-expr test-expr
+        (list 'fn [t '$state]
+          (m-cps-of-case t clauses k))))))
+
 (defn- m-cps-of-application [f args k]
   (m-cps-of-args (cons f args)
     (fn [evaled]
@@ -371,6 +411,19 @@
               params (if has-name (nth form 2) (second form))
               body (if has-name (drop 3 form) (drop 2 form))]
           (m-cps-of-fn params (vec body) k))
+
+        (= op 'loop)
+        (let [bindings (vec (second form))
+              body (drop 2 form)]
+          (m-cps-of-loop bindings (vec body) k))
+
+        (= op 'recur)
+        (m-cps-of-recur (rest form) k)
+
+        (= op 'case)
+        (let [test-expr (nth form 1)
+              clauses (drop 2 form)]
+          (m-cps-of-case test-expr (vec clauses) k))
 
         (or (= op 'sample*) (= op 'prob.core/sample*)
             (= op 'prob.dist/sample*)

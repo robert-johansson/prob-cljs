@@ -279,6 +279,69 @@
           (cons dist-ctor evaled-args)
           k '$state)))))
 
+(def ^:dynamic *loop-fn*
+  "When non-nil, the symbol of the current enclosing loop's CPS function.
+   Used by cps-of-expr to handle recur."
+  nil)
+
+(defn- cps-of-loop
+  "CPS transform of (loop [bindings...] body).
+   Creates a named CPS function that recur calls back into.
+   Binds *loop-fn* so that recur inside the body generates a
+   direct CPS call to the loop function.
+
+   (loop [x init-x, y init-y] body)
+   →
+   (let [loop-fn (fn loop-fn [x y k $state] <CPS of body>)]
+     <CPS of init-x then init-y, then call loop-fn>)"
+  [bindings body k]
+  (let [pairs (partition 2 bindings)
+        loop-vars (mapv first pairs)
+        init-exprs (mapv second pairs)
+        loop-sym (fresh-sym "loop")
+        ;; Build the loop function body with *loop-fn* bound
+        loop-fn-params (vec (concat loop-vars ['k '$state]))
+        loop-fn-body (binding [*loop-fn* loop-sym]
+                       (cps-of-expr (cons 'do body) 'k))
+        loop-fn (list 'fn loop-sym loop-fn-params loop-fn-body)]
+    ;; CPS-evaluate init exprs, then call the loop function
+    (cps-of-args init-exprs
+      (fn [evaled-inits]
+        (list (list 'fn [loop-sym '$state]
+                (concat (list loop-sym) evaled-inits (list k '$state)))
+              loop-fn '$state)))))
+
+(defn- cps-of-recur
+  "CPS transform of (recur args...).
+   Evaluates args in CPS, then calls the enclosing loop function directly."
+  [args k]
+  (when-not *loop-fn*
+    (throw (ex-info "cps: recur outside of loop" {:args args})))
+  (cps-of-args args
+    (fn [evaled-args]
+      (concat (list *loop-fn*) evaled-args (list k '$state)))))
+
+(defn- cps-of-case
+  "CPS transform of (case test-expr val1 result1 val2 result2 ... default?).
+   Evaluates test-expr, then dispatches via case with each branch CPS'd."
+  [test-expr clauses k]
+  (if (atomic? test-expr)
+    ;; Build case form with CPS'd branches
+    (let [pairs (partition 2 clauses)
+          has-default (odd? (count clauses))
+          default (when has-default (last clauses))
+          case-clauses (mapcat (fn [[val expr]]
+                                 [val (cps-of-expr expr k)])
+                               pairs)]
+      (if has-default
+        (concat (list 'case test-expr) case-clauses (list (cps-of-expr default k)))
+        (concat (list 'case test-expr) case-clauses)))
+    ;; Non-atomic test: evaluate first
+    (let [t (fresh-sym "case")]
+      (cps-of-expr test-expr
+        (list 'fn [t '$state]
+          (cps-of-case t clauses k))))))
+
 (defn- cps-of-application
   "CPS transform of a function call (f arg1 arg2 ...).
    Assumes f is a primitive (non-CPS) function."
@@ -293,9 +356,9 @@
   "Transform a form into CPS. k is a continuation (symbol or form).
    The transformed code calls (k result $state) when done.
 
-   Handles: let, if, do, fn, when, when-not, cond, and, or,
-   sample*/sample, observe, factor, condition, ERP calls, and
-   primitive function application."
+   Handles: let, if, do, fn, when, when-not, cond, case, and, or,
+   loop/recur, sample*/sample, observe, factor, condition, ERP calls,
+   and primitive function application."
   [form k]
   (cond
     ;; nil, booleans, numbers, strings, keywords
@@ -415,6 +478,22 @@
               params (if has-name (nth form 2) (second form))
               body (if has-name (drop 3 form) (drop 2 form))]
           (cps-of-fn params (vec body) k))
+
+        ;; loop
+        (= op 'loop)
+        (let [bindings (vec (second form))
+              body (drop 2 form)]
+          (cps-of-loop bindings (vec body) k))
+
+        ;; recur
+        (= op 'recur)
+        (cps-of-recur (rest form) k)
+
+        ;; case
+        (= op 'case)
+        (let [test-expr (nth form 1)
+              clauses (drop 2 form)]
+          (cps-of-case test-expr (vec clauses) k))
 
         ;; sample* / sample
         (or (= op 'sample*) (= op 'prob.core/sample*)

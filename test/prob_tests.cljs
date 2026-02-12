@@ -1663,6 +1663,98 @@
     (< err-large 0.1)))
 
 ;; ---------------------------------------------------------------------------
+;; SMC loop/recur
+;; ---------------------------------------------------------------------------
+
+(println "=== SMC loop/recur ===")
+
+(test-assert "smc loop: simple counting loop"
+  (let [results (smc-query 200
+                  (loop [i 0, acc 0]
+                    (if (>= i 10)
+                      acc
+                      (recur (inc i) (inc acc)))))]
+    (every? #(= 10 %) results)))
+
+(test-assert "smc loop: accumulate flip results"
+  (let [results (smc-query 500
+                  (loop [i 0, total 0]
+                    (if (>= i 5)
+                      total
+                      (recur (inc i) (+ total (if (flip 0.5) 1 0))))))]
+    ;; Mean of 5 Bernoulli(0.5) should be 2.5
+    (approx= (mean results) 2.5 0.5)))
+
+(test-assert "smc loop: loop with observations"
+  ;; Iterate over observation sequence
+  (let [obs [true true false]
+        results (smc-query 1000
+                  (let [p (beta 1 1)]
+                    (loop [i 0]
+                      (when (< i 3)
+                        (observe (bernoulli-dist p) (nth obs i))
+                        (recur (inc i))))
+                    p))
+        m (mean results)]
+    ;; Beta(1,1) + 2T + 1F = Beta(3,2), mean = 0.6
+    (approx= m 0.6 0.15)))
+
+(test-assert "smc loop: recur with probabilistic args"
+  ;; recur args contain random choices
+  (let [results (smc-query 500
+                  (loop [i 0, items []]
+                    (if (>= i 3)
+                      items
+                      (recur (inc i) (conj items (flip 0.5))))))]
+    (and (every? #(= 3 (count %)) results)
+         (every? #(every? boolean? %) results))))
+
+(test-assert "smc loop: nested loop produces correct result"
+  (let [results (smc-query 200
+                  (loop [i 0, sum 0]
+                    (if (>= i 3)
+                      sum
+                      (recur (inc i) (+ sum i)))))]
+    ;; 0 + 1 + 2 = 3
+    (every? #(= 3 %) results)))
+
+;; ---------------------------------------------------------------------------
+;; SMC case
+;; ---------------------------------------------------------------------------
+
+(println "=== SMC case ===")
+
+(test-assert "smc case: basic dispatch"
+  (let [results (smc-query 300
+                  (let [x (random-integer 3)]
+                    (case x
+                      0 :zero
+                      1 :one
+                      2 :two)))]
+    (and (some #(= :zero %) results)
+         (some #(= :one %) results)
+         (some #(= :two %) results))))
+
+(test-assert "smc case: with default"
+  (let [results (smc-query 200
+                  (case (random-integer 3)
+                    0 :zero
+                    :other))]
+    (and (some #(= :zero %) results)
+         (some #(= :other %) results))))
+
+(test-assert "smc case: with observe"
+  (let [results (smc-query 1000
+                  (let [x (flip 0.5)]
+                    (case x
+                      true (do (observe (bernoulli-dist 0.9) true) :heads)
+                      false (do (observe (bernoulli-dist 0.1) true) :tails))))
+        dist (empirical-distribution results)]
+    ;; P(heads) ∝ 0.5 * 0.9 = 0.45, P(tails) ∝ 0.5 * 0.1 = 0.05
+    ;; P(heads) = 0.9
+    (approx= (get dist :heads 0) 0.9 0.1)))
+
+;; ---------------------------------------------------------------------------
 ;; Summary
 ;; ---------------------------------------------------------------------------
 
