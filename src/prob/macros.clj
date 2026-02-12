@@ -108,6 +108,8 @@
 (defmacro smc-query
   "Sequential Monte Carlo inference with n-particles.
    CPS-transforms the model body at macro expansion time.
+   Optionally accepts an opts map as first body form:
+     (smc-query 100 {:rejuv-steps 5} ...)
 
    Example:
      (smc-query 100
@@ -118,6 +120,28 @@
          p))
    ;=> list of weighted samples"
   [n-particles & body]
-  (let [cps-body (ct/cps-of-expr (cons 'do body) 'k__final)]
-    `(prob.core/smc-query-fn ~n-particles
+  (let [[opts body] (if (map? (first body))
+                      [(first body) (rest body)]
+                      [{} body])
+        cps-body (ct/cps-of-expr (cons 'do body) 'k__final)]
+    `(prob.core/smc-query-fn ~n-particles ~opts
+       (fn [~'k__final ~'$state] ~cps-body))))
+
+(defmacro particle-gibbs-query
+  "Particle Gibbs (PMCMC) inference.
+   n-particles: particles per SMC sweep. n-samples: MCMC samples to collect.
+   Optionally accepts an opts map: {:burn :lag :rejuv-steps}
+
+   Example:
+     (particle-gibbs-query 20 200 {:burn 50}
+       (let [p (beta 1 1)]
+         (observe (bernoulli-dist p) true)
+         (observe (bernoulli-dist p) false)
+         p))"
+  [n-particles n-samples & body]
+  (let [[opts body] (if (map? (first body))
+                      [(first body) (rest body)]
+                      [{} body])
+        cps-body (ct/cps-of-expr (cons 'do body) 'k__final)]
+    `(prob.core/particle-gibbs-fn ~n-particles ~n-samples ~opts
        (fn [~'k__final ~'$state] ~cps-body))))

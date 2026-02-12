@@ -6,7 +6,7 @@
                                 condition factor rejection-query-fn mh-query-fn
                                 enumeration-query-fn importance-query-fn conditional-fn
                                 mh-query-scored-fn map-query-fn condition-equal
-                                observe smc-query-fn
+                                observe smc-query-fn particle-gibbs-fn
                                 forward-query-fn infer
                                 sample* observe* dist? enumerate*
                                 bernoulli-dist gaussian-dist uniform-dist beta-dist
@@ -28,7 +28,8 @@
             [prob.cps :as cps])
   (:require-macros [prob.macros :refer [rejection-query mh-query enumeration-query
                                         importance-query mh-query-scored map-query
-                                        forward-query query smc-query]]))
+                                        forward-query query smc-query
+                                        particle-gibbs-query]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Test harness (volatile-based, no atoms)
@@ -1792,6 +1793,163 @@
     ;; P(heads) ∝ 0.5 * 0.9 = 0.45, P(tails) ∝ 0.5 * 0.1 = 0.05
     ;; P(heads) = 0.9
     (approx= (get dist :heads 0) 0.9 0.1)))
+
+;; ---------------------------------------------------------------------------
+;; SMC Rejuvenation
+;; ---------------------------------------------------------------------------
+
+(println "=== SMC Rejuvenation ===")
+
+(test-assert "smc rejuv: returns correct sample count"
+  (let [results (smc-query 100 {:rejuv-steps 3}
+                  (let [p (beta 1 1)]
+                    (observe (bernoulli-dist p) true)
+                    p))]
+    (= 100 (count results))))
+
+(test-assert "smc rejuv: Beta-Bernoulli conjugate posterior"
+  ;; Beta(1,1) + 3 true + 1 false = Beta(4,2), mean = 4/6 ≈ 0.667
+  (let [results (smc-query 500 {:rejuv-steps 5}
+                  (let [p (beta 1 1)]
+                    (observe (bernoulli-dist p) true)
+                    (observe (bernoulli-dist p) true)
+                    (observe (bernoulli-dist p) true)
+                    (observe (bernoulli-dist p) false)
+                    p))
+        m (mean results)]
+    (approx= m 0.667 0.15)))
+
+(test-assert "smc rejuv: handles zero-sample models"
+  ;; No sample points — rejuv should be a no-op
+  (let [results (smc-query 100 {:rejuv-steps 5}
+                  42)]
+    (every? #(= 42 %) results)))
+
+(test-assert "smc rejuv: works with discrete distributions"
+  (let [results (smc-query 500 {:rejuv-steps 3}
+                  (let [x (flip 0.5)]
+                    (observe (bernoulli-dist 0.9) x)
+                    x))
+        p-true (mean (map #(if % 1 0) results))]
+    ;; P(true) = 0.9*0.5 / (0.9*0.5 + 0.1*0.5) = 0.9
+    (approx= p-true 0.9 0.1)))
+
+(test-assert "smc rejuv: multiple observes with rejuvenation"
+  ;; Beta(1,1) + 5 true = Beta(6,1), mean = 6/7 ≈ 0.857
+  (let [results (smc-query 300 {:rejuv-steps 3}
+                  (let [p (beta 1 1)]
+                    (observe (bernoulli-dist p) true)
+                    (observe (bernoulli-dist p) true)
+                    (observe (bernoulli-dist p) true)
+                    (observe (bernoulli-dist p) true)
+                    (observe (bernoulli-dist p) true)
+                    p))
+        m (mean results)]
+    (approx= m 0.857 0.15)))
+
+(test-assert "smc rejuv: rejuv-steps 0 is same as plain SMC"
+  (let [results (smc-query 200 {:rejuv-steps 0}
+                  (let [p (beta 1 1)]
+                    (observe (bernoulli-dist p) true)
+                    p))]
+    (= 200 (count results))))
+
+(test-assert "smc rejuv: condition + rejuv works"
+  (let [results (smc-query 500 {:rejuv-steps 3}
+                  (let [a (flip 0.5)
+                        b (flip 0.5)]
+                    (condition (or a b))
+                    (list a b)))
+        dist (empirical-distribution results)]
+    ;; P(false false) = 0
+    (= 0 (get dist (list false false) 0))))
+
+(test-assert "smc rejuv: opts map is optional (backward compatible)"
+  (let [results (smc-query 100
+                  (flip 0.5))]
+    (= 100 (count results))))
+
+;; ---------------------------------------------------------------------------
+;; Particle Gibbs
+;; ---------------------------------------------------------------------------
+
+(println "=== Particle Gibbs ===")
+
+(test-assert "pg: returns correct sample count"
+  (let [results (particle-gibbs-query 10 20
+                  (let [p (beta 1 1)]
+                    (observe (bernoulli-dist p) true)
+                    p))]
+    (= 20 (count results))))
+
+(test-assert "pg: posterior mean correct (Beta-Bernoulli)"
+  ;; Beta(1,1) + 2T + 1F = Beta(3,2), mean = 0.6
+  (let [results (particle-gibbs-query 20 100 {:burn 20}
+                  (let [p (beta 1 1)]
+                    (observe (bernoulli-dist p) true)
+                    (observe (bernoulli-dist p) true)
+                    (observe (bernoulli-dist p) false)
+                    p))
+        m (mean results)]
+    (approx= m 0.6 0.15)))
+
+(test-assert "pg: with rejuvenation"
+  (let [results (particle-gibbs-query 15 50 {:burn 10 :rejuv-steps 2}
+                  (let [p (beta 1 1)]
+                    (observe (bernoulli-dist p) true)
+                    (observe (bernoulli-dist p) true)
+                    p))
+        m (mean results)]
+    ;; Beta(3,1), mean = 0.75
+    (approx= m 0.75 0.2)))
+
+(test-assert "pg: burn-in and lag work"
+  (let [results (particle-gibbs-query 10 30 {:burn 5 :lag 1}
+                  (let [p (beta 1 1)]
+                    (observe (bernoulli-dist p) true)
+                    p))]
+    (= 30 (count results))))
+
+(test-assert "pg: discrete model"
+  (let [results (particle-gibbs-query 15 100 {:burn 10}
+                  (let [x (flip 0.5)]
+                    (observe (bernoulli-dist 0.9) x)
+                    x))
+        p-true (mean (map #(if % 1 0) results))]
+    ;; P(true|obs=true) = 0.9
+    (approx= p-true 0.9 0.15)))
+
+(test-assert "pg: particle-gibbs-fn direct call"
+  (let [results (particle-gibbs-fn 10 20
+                  (fn [k $state]
+                    (cps/cps-sample (beta-dist 1 1)
+                      (fn [p $state]
+                        (cps/cps-observe (bernoulli-dist p) true
+                          (fn [_ $state]
+                            (k p $state))
+                          $state))
+                      $state)))]
+    (= 20 (count results))))
+
+(test-assert "pg: via infer dispatch"
+  (let [results (infer {:method :particle-gibbs :particles 10 :samples 20 :burn 5}
+                  (fn [k $state]
+                    (cps/cps-sample (beta-dist 1 1)
+                      (fn [p $state]
+                        (cps/cps-observe (bernoulli-dist p) true
+                          (fn [_ $state]
+                            (k p $state))
+                          $state))
+                      $state)))]
+    (= 20 (count results))))
+
+(test-assert "pg: callback invoked"
+  (let [called (volatile! 0)]
+    (particle-gibbs-query 10 10 {:burn 2 :callback (fn [_] (vswap! called inc))}
+      (let [p (beta 1 1)]
+        (observe (bernoulli-dist p) true)
+        p))
+    (= @called 10)))
 
 ;; ---------------------------------------------------------------------------
 ;; Summary

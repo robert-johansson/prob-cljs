@@ -117,6 +117,7 @@
    'condition-equal     (sci/copy-var inference/condition-equal inference-ns)
    'forward-query-fn   (sci/copy-var inference/forward-query-fn inference-ns)
    'smc-query-fn       (sci/copy-var inference/smc-query-fn inference-ns)
+   'particle-gibbs-fn  (sci/copy-var inference/particle-gibbs-fn inference-ns)
    'infer              (sci/copy-var inference/infer inference-ns)})
 
 ;; ---------------------------------------------------------------------------
@@ -279,6 +280,7 @@
    'condition-equal    (sci/copy-var core/condition-equal core-ns)
    'forward-query-fn  (sci/copy-var core/forward-query-fn core-ns)
    'smc-query-fn      (sci/copy-var core/smc-query-fn core-ns)
+   'particle-gibbs-fn (sci/copy-var core/particle-gibbs-fn core-ns)
    'cps-sample        (sci/copy-var core/cps-sample core-ns)
    'cps-observe       (sci/copy-var core/cps-observe core-ns)
    'cps-factor        (sci/copy-var core/cps-factor core-ns)
@@ -361,8 +363,19 @@
   `(prob.core/conditional-fn ~method (fn [] ~@body)))
 
 (defn ^:macro smc-query [_ _ n-particles & body]
-  (let [cps-body (cps/cps-of-expr (cons 'do body) 'k__final)]
-    `(prob.core/smc-query-fn ~n-particles
+  (let [[opts body] (if (map? (first body))
+                      [(first body) (rest body)]
+                      [{} body])
+        cps-body (cps/cps-of-expr (cons 'do body) 'k__final)]
+    `(prob.core/smc-query-fn ~n-particles ~opts
+       (fn [~'k__final ~'$state] ~cps-body))))
+
+(defn ^:macro particle-gibbs-query [_ _ n-particles n-samples & body]
+  (let [[opts body] (if (map? (first body))
+                      [(first body) (rest body)]
+                      [{} body])
+        cps-body (cps/cps-of-expr (cons 'do body) 'k__final)]
+    `(prob.core/particle-gibbs-fn ~n-particles ~n-samples ~opts
        (fn [~'k__final ~'$state] ~cps-body))))
 
 (def macros-namespace
@@ -374,7 +387,8 @@
    'enumeration-query (sci/copy-var enumeration-query macros-ns)
    'forward-query     (sci/copy-var forward-query macros-ns)
    'query             (sci/copy-var query macros-ns)
-   'smc-query         (sci/copy-var smc-query macros-ns)})
+   'smc-query         (sci/copy-var smc-query macros-ns)
+   'particle-gibbs-query (sci/copy-var particle-gibbs-query macros-ns)})
 
 ;; ---------------------------------------------------------------------------
 ;; Combined config

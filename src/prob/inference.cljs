@@ -536,6 +536,153 @@
         log-sum-sq (math/log-sum-exp (mapv #(* 2 %) log-w-norm))]
     (js/Math.exp (- log-sum-sq))))
 
+(defn- replay-cps-to-observe
+  "Re-run cps-model from the start, replaying sample values from trace.
+   At propose-addr, uses propose-value instead of the trace value.
+   Stops when observe-count reaches target-observes.
+   Returns {:trace :observe-lp :factor-lp :cont :state} or nil if hard constraint fails."
+  [cps-model old-trace propose-addr propose-value target-observes]
+  (let [init-state {:addr 0 :log-weight 0.0
+                    :trace {} :observe-count 0
+                    :observe-lp 0.0 :factor-lp 0.0}]
+    (loop [checkpoint (run-cps-particle cps-model init-state)]
+      (cond
+        ;; Result: model finished before reaching target observes
+        (cps/result? checkpoint)
+        {:trace (get-in checkpoint [:state :trace])
+         :observe-lp (get-in checkpoint [:state :observe-lp])
+         :factor-lp (get-in checkpoint [:state :factor-lp])
+         :cont nil
+         :state (:state checkpoint)}
+
+        ;; Sample: replay from trace or use proposed value
+        (cps/sample? checkpoint)
+        (let [addr (:addr checkpoint)
+              d (:dist checkpoint)
+              v (if (= addr propose-addr)
+                  propose-value
+                  (get-in old-trace [addr :value]))
+              cont (:cont checkpoint)
+              state (:state checkpoint)]
+          (if (nil? v)
+            ;; New address not in old trace — sample fresh
+            (let [v (dist/sample* d)
+                  lp (dist/observe* d v)
+                  state (update state :trace assoc addr {:dist d :value v :log-prob lp})]
+              (recur (run-cps-particle (fn [_ _] (cont v state)) state)))
+            ;; Replay value from trace
+            (let [lp (dist/observe* d v)
+                  state (update state :trace assoc addr {:dist d :value v :log-prob lp})]
+              (recur (run-cps-particle (fn [_ _] (cont v state)) state)))))
+
+        ;; Observe: accumulate and check if we've hit target
+        (cps/observe? checkpoint)
+        (let [olp (dist/observe* (:dist checkpoint) (:value checkpoint))
+              state (-> (:state checkpoint)
+                      (update :observe-count inc)
+                      (update :observe-lp + olp))]
+          (if (= ##-Inf olp)
+            nil ;; hard constraint failure
+            (if (= (:observe-count state) target-observes)
+              ;; Reached target — return paused state
+              {:trace (:trace state)
+               :observe-lp (:observe-lp state)
+               :factor-lp (:factor-lp state)
+               :cont (:cont checkpoint)
+               :state state}
+              ;; Continue past this observe
+              (recur (run-cps-particle
+                       (fn [_ _] ((:cont checkpoint) nil state))
+                       state)))))
+
+        ;; Factor: accumulate and continue
+        (cps/factor? checkpoint)
+        (let [score (:score checkpoint)
+              state (-> (:state checkpoint)
+                      (update :factor-lp + score))]
+          (if (= ##-Inf score)
+            nil ;; hard factor rejection
+            (recur (run-cps-particle
+                     (fn [_ _] ((:cont checkpoint) nil state))
+                     state))))
+
+        :else
+        (throw (ex-info "replay-cps: unexpected checkpoint" {:checkpoint checkpoint}))))))
+
+(defn- rejuvenate-particle
+  "Run K MH steps on a particle paused at an Observe checkpoint.
+   Returns particle with potentially updated state and continuation."
+  [cps-model particle target-observes k-steps]
+  (let [get-state (fn [p] (:state p))
+        initial-trace (get-in particle [:state :trace])
+        initial-observe-lp (get-in particle [:state :observe-lp] 0.0)
+        initial-factor-lp (get-in particle [:state :factor-lp] 0.0)]
+    (loop [step 0
+           current-trace initial-trace
+           current-observe-lp initial-observe-lp
+           current-factor-lp initial-factor-lp
+           current-cont (:cont particle)
+           current-state (:state particle)]
+      (if (>= step k-steps)
+        ;; Return updated particle
+        (let [state (assoc current-state
+                      :trace current-trace
+                      :observe-lp current-observe-lp
+                      :factor-lp current-factor-lp)]
+          (assoc particle :state state :cont current-cont))
+        ;; One MH step
+        (let [trace-addrs (vec (keys current-trace))
+              n-addrs (count trace-addrs)]
+          (if (zero? n-addrs)
+            ;; No sample addresses to propose on
+            particle
+            (let [;; Pick random address
+                  addr (nth trace-addrs (js/Math.floor (* (erp/rand) n-addrs)))
+                  old-entry (get current-trace addr)
+                  old-dist (:dist old-entry)
+                  old-value (:value old-entry)
+                  ;; Propose new value
+                  [propose-value fwd-lp rev-lp]
+                  (if (satisfies? dist/IProposable old-dist)
+                    (binding [erp/*trace-state* nil]
+                      (dist/propose* old-dist old-value))
+                    [(binding [erp/*trace-state* nil]
+                       (dist/sample* old-dist))
+                     nil nil])
+                  ;; Replay with proposed value
+                  replay-result (replay-cps-to-observe
+                                  cps-model current-trace addr propose-value target-observes)]
+              (if (nil? replay-result)
+                ;; Replay failed (hard constraint) — reject
+                (recur (inc step) current-trace current-observe-lp current-factor-lp
+                       current-cont current-state)
+                ;; Compute MH acceptance ratio
+                (let [new-trace (:trace replay-result)
+                      new-observe-lp (:observe-lp replay-result)
+                      new-factor-lp (:factor-lp replay-result)
+                      new-n (count new-trace)
+                      old-n n-addrs
+                      ;; Base ratio: observe + factor scores + dimension correction
+                      log-accept (+ (- new-observe-lp current-observe-lp)
+                                    (- new-factor-lp current-factor-lp)
+                                    (- (js/Math.log old-n) (js/Math.log new-n)))
+                      ;; Drift proposal correction
+                      log-accept (if fwd-lp
+                                   (let [new-entry (get new-trace addr)
+                                         new-lp (:log-prob new-entry)
+                                         old-lp (:log-prob old-entry)]
+                                     (+ log-accept
+                                        (- new-lp old-lp)
+                                        (- rev-lp fwd-lp)))
+                                   log-accept)]
+                  (if (< (js/Math.log (erp/rand)) log-accept)
+                    ;; Accept
+                    (recur (inc step) new-trace new-observe-lp new-factor-lp
+                           (:cont replay-result) (:state replay-result))
+                    ;; Reject
+                    (recur (inc step) current-trace current-observe-lp current-factor-lp
+                           current-cont current-state)))))))))))
+
 (defn smc-query-fn
   "Sequential Monte Carlo (particle filter) inference.
    n-particles: number of particles.
@@ -554,7 +701,10 @@
   ([n-particles opts cps-model]
    (let [{:keys [resample-threshold]
           :or {resample-threshold 0.5}} opts
-         init-state {:addr 0 :log-weight 0.0}
+         rejuv-steps (or (:rejuv-steps opts) 0)
+         init-state {:addr 0 :log-weight 0.0
+                     :trace {} :observe-count 0
+                     :observe-lp 0.0 :factor-lp 0.0}
          ;; Initialize all particles
          particles (vec (repeatedly n-particles
                     #(run-cps-particle cps-model init-state)))
@@ -568,9 +718,14 @@
                      ;; All at Sample checkpoint
                      (every? cps/sample? particles)
                      (let [advanced (mapv (fn [p]
-                                           (let [v (dist/sample* (:dist p))
+                                           (let [d (:dist p)
+                                                 v (dist/sample* d)
                                                  cont (:cont p)
-                                                 state (:state p)]
+                                                 state (:state p)
+                                                 addr (:addr p)
+                                                 lp (dist/observe* d v)
+                                                 state (update state :trace assoc addr
+                                                         {:dist d :value v :log-prob lp})]
                                              (run-cps-particle
                                                (fn [_ _] (cont v state))
                                                state)))
@@ -580,10 +735,18 @@
                      ;; All at Observe checkpoint
                      (every? cps/observe? particles)
                      (let [;; Compute observation log-weights
-                           log-weights (mapv (fn [p]
-                                              (+ (get-in p [:state :log-weight] 0.0)
-                                                 (dist/observe* (:dist p) (:value p))))
-                                            particles)
+                           obs-lps (mapv (fn [p]
+                                          (dist/observe* (:dist p) (:value p)))
+                                        particles)
+                           log-weights (mapv (fn [p olp]
+                                              (+ (get-in p [:state :log-weight] 0.0) olp))
+                                            particles obs-lps)
+                           ;; Update observe tracking in state
+                           particles (mapv (fn [p olp]
+                                            (-> p
+                                              (update-in [:state :observe-count] inc)
+                                              (update-in [:state :observe-lp] + olp)))
+                                          particles obs-lps)
                            ;; Resample if ESS is low
                            ess (effective-sample-size log-weights)
                            should-resample (< ess (* resample-threshold n-particles))
@@ -595,6 +758,13 @@
                                        (mapv (fn [p lw]
                                                (assoc-in p [:state :log-weight] lw))
                                              particles log-weights))
+                           ;; Rejuvenation: run K MH steps on each particle after resampling
+                           target-obs (get-in (first resampled) [:state :observe-count] 0)
+                           rejuvenated (if (and (pos? rejuv-steps) should-resample
+                                                (pos? (count (:trace (:state (first resampled))))))
+                                         (mapv #(rejuvenate-particle cps-model % target-obs rejuv-steps)
+                                               resampled)
+                                         resampled)
                            ;; Continue all particles past the observe
                            advanced (mapv (fn [p]
                                            (let [cont (:cont p)
@@ -602,15 +772,16 @@
                                              (run-cps-particle
                                                (fn [_ _] (cont nil state))
                                                state)))
-                                         resampled)]
+                                         rejuvenated)]
                        (recur advanced))
 
                      ;; All at Factor checkpoint
                      (every? cps/factor? particles)
-                     (let [;; Accumulate factor scores into weights
+                     (let [;; Accumulate factor scores into weights and factor-lp
                            updated (mapv (fn [p]
-                                          (let [state (update (:state p) :log-weight
-                                                        (fnil + 0.0) (:score p))
+                                          (let [state (-> (:state p)
+                                                        (update :log-weight (fnil + 0.0) (:score p))
+                                                        (update :factor-lp + (:score p)))
                                                 cont (:cont p)]
                                             (assoc p :state state :cont cont)))
                                         particles)
@@ -641,25 +812,33 @@
                                              (cps/result? p) p
 
                                              (cps/sample? p)
-                                             (let [v (dist/sample* (:dist p))
+                                             (let [d (:dist p)
+                                                   v (dist/sample* d)
                                                    cont (:cont p)
-                                                   state (:state p)]
+                                                   state (:state p)
+                                                   addr (:addr p)
+                                                   lp (dist/observe* d v)
+                                                   state (update state :trace assoc addr
+                                                           {:dist d :value v :log-prob lp})]
                                                (run-cps-particle
                                                  (fn [_ _] (cont v state))
                                                  state))
 
                                              (cps/observe? p)
-                                             (let [lw (dist/observe* (:dist p) (:value p))
-                                                   state (update (:state p) :log-weight
-                                                           (fnil + 0.0) lw)
+                                             (let [olp (dist/observe* (:dist p) (:value p))
+                                                   state (-> (:state p)
+                                                           (update :log-weight (fnil + 0.0) olp)
+                                                           (update :observe-count inc)
+                                                           (update :observe-lp + olp))
                                                    cont (:cont p)]
                                                (run-cps-particle
                                                  (fn [_ _] (cont nil state))
                                                  state))
 
                                              (cps/factor? p)
-                                             (let [state (update (:state p) :log-weight
-                                                           (fnil + 0.0) (:score p))
+                                             (let [state (-> (:state p)
+                                                           (update :log-weight (fnil + 0.0) (:score p))
+                                                           (update :factor-lp + (:score p)))
                                                    cont (:cont p)]
                                                (run-cps-particle
                                                  (fn [_ _] (cont nil state))
@@ -679,6 +858,335 @@
          ;; Resample to produce unweighted samples
          (let [resampled (multinomial-resample final-particles log-weights n-particles)]
            (mapv :value resampled)))))))
+
+;; ---------------------------------------------------------------------------
+;; Particle Gibbs (PMCMC)
+;; ---------------------------------------------------------------------------
+
+(defn- mapv-indexed
+  "Like mapv but passes [index element] to f."
+  [f coll]
+  (into [] (map-indexed f coll)))
+
+(defn- conditional-resample
+  "Resample N-1 particles, always retaining particle 0 (the reference).
+   Returns vector of N particles where particle 0 is preserved."
+  [particles log-weights n]
+  (let [;; Reference particle is always kept at index 0
+        ref (first particles)
+        ;; Resample remaining N-1 from all particles proportional to weights
+        rest-particles (multinomial-resample particles log-weights (dec n))
+        ;; Zero out weights on resampled particles
+        rest-zeroed (mapv #(assoc-in % [:state :log-weight] 0.0) rest-particles)]
+    (into [(assoc-in ref [:state :log-weight] 0.0)] rest-zeroed)))
+
+(defn- conditional-smc
+  "One conditional SMC sweep. Particle 0 follows the reference trajectory.
+   Returns vector of final particles with weights."
+  [n-particles opts cps-model reference]
+  (let [{:keys [resample-threshold rejuv-steps]
+         :or {resample-threshold 0.5 rejuv-steps 0}} opts
+        ref-trace (:trace reference)
+        init-state {:addr 0 :log-weight 0.0
+                    :trace {} :observe-count 0
+                    :observe-lp 0.0 :factor-lp 0.0}
+        ;; Initialize all particles
+        particles (vec (repeatedly n-particles
+                   #(run-cps-particle cps-model init-state)))
+        ;; Process particles until all are Result
+        process (fn process [particles]
+                  (cond
+                    ;; All done
+                    (every? cps/result? particles)
+                    particles
+
+                    ;; All at Sample checkpoint
+                    (every? cps/sample? particles)
+                    (let [advanced (mapv-indexed
+                                    (fn [idx p]
+                                      (let [d (:dist p)
+                                            addr (:addr p)
+                                            ;; Particle 0 uses reference trace values
+                                            v (if (and (zero? idx)
+                                                       (contains? ref-trace addr))
+                                                (get-in ref-trace [addr :value])
+                                                (dist/sample* d))
+                                            cont (:cont p)
+                                            state (:state p)
+                                            lp (dist/observe* d v)
+                                            state (update state :trace assoc addr
+                                                    {:dist d :value v :log-prob lp})]
+                                        (run-cps-particle
+                                          (fn [_ _] (cont v state))
+                                          state)))
+                                    particles)]
+                      (recur advanced))
+
+                    ;; All at Observe checkpoint
+                    (every? cps/observe? particles)
+                    (let [obs-lps (mapv (fn [p]
+                                         (dist/observe* (:dist p) (:value p)))
+                                       particles)
+                          log-weights (mapv (fn [p olp]
+                                             (+ (get-in p [:state :log-weight] 0.0) olp))
+                                           particles obs-lps)
+                          particles (mapv (fn [p olp]
+                                           (-> p
+                                             (update-in [:state :observe-count] inc)
+                                             (update-in [:state :observe-lp] + olp)))
+                                         particles obs-lps)
+                          ess (effective-sample-size log-weights)
+                          should-resample (< ess (* resample-threshold n-particles))
+                          resampled (if should-resample
+                                      (conditional-resample particles log-weights n-particles)
+                                      (mapv (fn [p lw]
+                                              (assoc-in p [:state :log-weight] lw))
+                                            particles log-weights))
+                          target-obs (get-in (first resampled) [:state :observe-count] 0)
+                          rejuvenated (if (and (pos? rejuv-steps) should-resample
+                                               (pos? (count (:trace (:state (first resampled))))))
+                                        (mapv #(rejuvenate-particle cps-model % target-obs rejuv-steps)
+                                              resampled)
+                                        resampled)
+                          advanced (mapv (fn [p]
+                                          (let [cont (:cont p)
+                                                state (:state p)]
+                                            (run-cps-particle
+                                              (fn [_ _] (cont nil state))
+                                              state)))
+                                        rejuvenated)]
+                      (recur advanced))
+
+                    ;; All at Factor checkpoint
+                    (every? cps/factor? particles)
+                    (let [updated (mapv (fn [p]
+                                         (let [state (-> (:state p)
+                                                       (update :log-weight (fnil + 0.0) (:score p))
+                                                       (update :factor-lp + (:score p)))
+                                               cont (:cont p)]
+                                           (assoc p :state state :cont cont)))
+                                       particles)
+                          log-weights (mapv #(get-in % [:state :log-weight] 0.0) updated)
+                          ess (effective-sample-size log-weights)
+                          should-resample (< ess (* resample-threshold n-particles))
+                          resampled (if should-resample
+                                      (conditional-resample updated log-weights n-particles)
+                                      updated)
+                          advanced (mapv (fn [p]
+                                          (let [cont (:cont p)
+                                                state (:state p)]
+                                            (run-cps-particle
+                                              (fn [_ _] (cont nil state))
+                                              state)))
+                                        resampled)]
+                      (recur advanced))
+
+                    ;; Mixed checkpoint types
+                    :else
+                    (let [advanced (mapv-indexed
+                                    (fn [idx p]
+                                      (cond
+                                        (cps/result? p) p
+
+                                        (cps/sample? p)
+                                        (let [d (:dist p)
+                                              addr (:addr p)
+                                              v (if (and (zero? idx)
+                                                         (contains? ref-trace addr))
+                                                  (get-in ref-trace [addr :value])
+                                                  (dist/sample* d))
+                                              cont (:cont p)
+                                              state (:state p)
+                                              lp (dist/observe* d v)
+                                              state (update state :trace assoc addr
+                                                      {:dist d :value v :log-prob lp})]
+                                          (run-cps-particle
+                                            (fn [_ _] (cont v state))
+                                            state))
+
+                                        (cps/observe? p)
+                                        (let [olp (dist/observe* (:dist p) (:value p))
+                                              state (-> (:state p)
+                                                      (update :log-weight (fnil + 0.0) olp)
+                                                      (update :observe-count inc)
+                                                      (update :observe-lp + olp))
+                                              cont (:cont p)]
+                                          (run-cps-particle
+                                            (fn [_ _] (cont nil state))
+                                            state))
+
+                                        (cps/factor? p)
+                                        (let [state (-> (:state p)
+                                                      (update :log-weight (fnil + 0.0) (:score p))
+                                                      (update :factor-lp + (:score p)))
+                                              cont (:cont p)]
+                                          (run-cps-particle
+                                            (fn [_ _] (cont nil state))
+                                            state))
+
+                                        :else
+                                        (throw (ex-info "conditional-smc: unexpected checkpoint"
+                                                        {:checkpoint p}))))
+                                    particles)]
+                      (recur advanced))))]
+    (let [final-particles (process particles)
+          log-weights (mapv #(get-in % [:state :log-weight] 0.0) final-particles)]
+      {:particles final-particles :log-weights log-weights})))
+
+(defn particle-gibbs-fn
+  "Particle Gibbs (PMCMC) inference.
+   n-particles: particles per SMC sweep. n-samples: MCMC samples to collect.
+   opts: {:burn :lag :rejuv-steps :resample-threshold :callback}
+   cps-model: CPS-transformed model function."
+  ([n-particles n-samples cps-model]
+   (particle-gibbs-fn n-particles n-samples {} cps-model))
+  ([n-particles n-samples opts cps-model]
+   (let [{:keys [burn lag callback]
+          :or {burn 0 lag 0}} opts
+         smc-opts (select-keys opts [:rejuv-steps :resample-threshold])
+         ;; Step 1: Initial unconditional SMC sweep (no reference particle)
+         first-sweep (let [init-state {:addr 0 :log-weight 0.0
+                                       :trace {} :observe-count 0
+                                       :observe-lp 0.0 :factor-lp 0.0}
+                           particles (vec (repeatedly n-particles
+                                      #(run-cps-particle cps-model init-state)))
+                           ;; Reuse the smc-query-fn process logic but keep full particles
+                           process (fn process [particles]
+                                     (cond
+                                       (every? cps/result? particles)
+                                       particles
+
+                                       (every? cps/sample? particles)
+                                       (let [advanced (mapv (fn [p]
+                                                              (let [d (:dist p)
+                                                                    v (dist/sample* d)
+                                                                    cont (:cont p)
+                                                                    state (:state p)
+                                                                    addr (:addr p)
+                                                                    lp (dist/observe* d v)
+                                                                    state (update state :trace assoc addr
+                                                                            {:dist d :value v :log-prob lp})]
+                                                                (run-cps-particle
+                                                                  (fn [_ _] (cont v state))
+                                                                  state)))
+                                                            particles)]
+                                         (recur advanced))
+
+                                       (every? cps/observe? particles)
+                                       (let [obs-lps (mapv (fn [p]
+                                                             (dist/observe* (:dist p) (:value p)))
+                                                           particles)
+                                             log-weights (mapv (fn [p olp]
+                                                                 (+ (get-in p [:state :log-weight] 0.0) olp))
+                                                               particles obs-lps)
+                                             particles (mapv (fn [p olp]
+                                                               (-> p
+                                                                 (update-in [:state :observe-count] inc)
+                                                                 (update-in [:state :observe-lp] + olp)))
+                                                             particles obs-lps)
+                                             ess (effective-sample-size log-weights)
+                                             should-resample (< ess (* (:resample-threshold smc-opts 0.5) n-particles))
+                                             resampled (if should-resample
+                                                         (mapv (fn [p]
+                                                                 (assoc-in p [:state :log-weight] 0.0))
+                                                               (multinomial-resample
+                                                                 particles log-weights n-particles))
+                                                         (mapv (fn [p lw]
+                                                                 (assoc-in p [:state :log-weight] lw))
+                                                               particles log-weights))
+                                             advanced (mapv (fn [p]
+                                                             (let [cont (:cont p)
+                                                                   state (:state p)]
+                                                               (run-cps-particle
+                                                                 (fn [_ _] (cont nil state))
+                                                                 state)))
+                                                           resampled)]
+                                         (recur advanced))
+
+                                       (every? cps/factor? particles)
+                                       (let [updated (mapv (fn [p]
+                                                             (let [state (-> (:state p)
+                                                                           (update :log-weight (fnil + 0.0) (:score p))
+                                                                           (update :factor-lp + (:score p)))
+                                                                   cont (:cont p)]
+                                                               (assoc p :state state :cont cont)))
+                                                           particles)
+                                             log-weights (mapv #(get-in % [:state :log-weight] 0.0) updated)
+                                             ess (effective-sample-size log-weights)
+                                             should-resample (< ess (* (:resample-threshold smc-opts 0.5) n-particles))
+                                             resampled (if should-resample
+                                                         (mapv (fn [p]
+                                                                   (assoc-in p [:state :log-weight] 0.0))
+                                                               (multinomial-resample
+                                                                 updated log-weights n-particles))
+                                                         updated)
+                                             advanced (mapv (fn [p]
+                                                             (let [cont (:cont p)
+                                                                   state (:state p)]
+                                                               (run-cps-particle
+                                                                 (fn [_ _] (cont nil state))
+                                                                 state)))
+                                                           resampled)]
+                                         (recur advanced))
+
+                                       :else
+                                       (let [advanced (mapv (fn [p]
+                                                              (cond
+                                                                (cps/result? p) p
+                                                                (cps/sample? p)
+                                                                (let [d (:dist p) v (dist/sample* d)
+                                                                      cont (:cont p) state (:state p)
+                                                                      addr (:addr p) lp (dist/observe* d v)
+                                                                      state (update state :trace assoc addr
+                                                                              {:dist d :value v :log-prob lp})]
+                                                                  (run-cps-particle (fn [_ _] (cont v state)) state))
+                                                                (cps/observe? p)
+                                                                (let [olp (dist/observe* (:dist p) (:value p))
+                                                                      state (-> (:state p)
+                                                                              (update :log-weight (fnil + 0.0) olp)
+                                                                              (update :observe-count inc)
+                                                                              (update :observe-lp + olp))
+                                                                      cont (:cont p)]
+                                                                  (run-cps-particle (fn [_ _] (cont nil state)) state))
+                                                                (cps/factor? p)
+                                                                (let [state (-> (:state p)
+                                                                              (update :log-weight (fnil + 0.0) (:score p))
+                                                                              (update :factor-lp + (:score p)))
+                                                                      cont (:cont p)]
+                                                                  (run-cps-particle (fn [_ _] (cont nil state)) state))
+                                                                :else (throw (ex-info "pg-init: unexpected" {:cp p}))))
+                                                            particles)]
+                                         (recur advanced))))]
+                       (let [final (process particles)
+                             lws (mapv #(get-in % [:state :log-weight] 0.0) final)]
+                         {:particles final :log-weights lws}))]
+     ;; Extract initial reference from weighted sample
+     (let [extract-ref (fn [{:keys [particles log-weights]}]
+                         (let [resampled (multinomial-resample particles log-weights 1)
+                               p (first resampled)]
+                           {:value (:value p)
+                            :trace (get-in p [:state :trace] {})}))
+           initial-ref (extract-ref first-sweep)]
+       ;; Burn-in phase
+       (let [ref-after-burn
+             (loop [i 0, ref initial-ref]
+               (if (>= i burn)
+                 ref
+                 (let [sweep (conditional-smc n-particles smc-opts cps-model ref)
+                       new-ref (extract-ref sweep)]
+                   (recur (inc i) new-ref))))]
+         ;; Collection phase
+         (loop [i 0, collected 0, ref ref-after-burn, samples (transient [])]
+           (if (>= collected n-samples)
+             (persistent! samples)
+             (let [sweep (conditional-smc n-particles smc-opts cps-model ref)
+                   new-ref (extract-ref sweep)]
+               (if (zero? (mod i (inc lag)))
+                 (do
+                   (when callback
+                     (callback {:iter collected :value (:value new-ref)}))
+                   (recur (inc i) (inc collected) new-ref (conj! samples (:value new-ref))))
+                 (recur (inc i) collected new-ref samples))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Unified inference entry point
@@ -704,7 +1212,9 @@
      :map          - MAP inference via MH, returns single highest-scoring value
                      opts: :samples (default 1000), :lag (default 1), :burn (default 0)
      :smc          - Sequential Monte Carlo, returns vector of samples
-                     opts: :particles (required), thunk must be CPS-transformed (use smc-query macro)"
+                     opts: :particles (required), :rejuv-steps, thunk must be CPS-transformed
+     :particle-gibbs - Particle Gibbs (PMCMC), returns vector of samples
+                     opts: :particles (required), :samples (required), :burn, :lag, :rejuv-steps"
   [opts thunk]
   (let [{:keys [method samples lag burn callback strategy max-executions]
          :or {lag 1 burn 0}} opts]
@@ -720,5 +1230,13 @@
       :forward     (forward-query-fn samples thunk)
       :mh-scored   (mh-query-scored-fn samples lag burn callback thunk)
       :map         (map-query-fn (or samples 1000) lag burn thunk)
-      :smc         (smc-query-fn (or (:particles opts) samples) thunk)
+      :smc         (smc-query-fn (or (:particles opts) samples)
+                                 (select-keys opts [:rejuv-steps :resample-threshold])
+                                 thunk)
+      :particle-gibbs (particle-gibbs-fn
+                        (or (:particles opts) 20)
+                        (or samples 100)
+                        (-> (select-keys opts [:rejuv-steps :resample-threshold])
+                            (assoc :burn burn :lag lag :callback callback))
+                        thunk)
       (throw (ex-info (str "infer: unknown method " method) {:method method})))))
