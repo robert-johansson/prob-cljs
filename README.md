@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo_probcljs.png" alt="prob-cljs logo" width="400">
+  <img src="prob-cljs.png" alt="prob-cljs logo" width="400">
 </p>
 
 # prob-cljs
