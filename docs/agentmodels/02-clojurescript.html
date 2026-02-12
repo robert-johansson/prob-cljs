@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AgentModels: Probabilistic Programming in ClojureScript</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Modeling Agents with Probabilistic Programs</a></div>
+    <ul id="nav">
+      <li><a href="01-introduction.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+      <li><a href="03-agents-as-programs.html">Next &rarr;</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">2. Probabilistic Programming in ClojureScript</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#clojurescript-basics">ClojureScript Basics</a></li>
+<li><a href="#randomness-and-distributions">Randomness and Distributions</a></li>
+<li><a href="#visualization">Visualization</a></li>
+<li><a href="#bayesian-inference">Bayesian Inference by Conditioning</a></li>
+<li><a href="#memoization">Persistent Randomness with <code>mem</code></a></li>
+</ul>
+</div>
+
+<p>All agent models in this book are implemented in ClojureScript with the <strong>prob-cljs</strong> library. This chapter provides a self-contained introduction to the language and its probabilistic programming features. If you are already familiar with ClojureScript and probabilistic programming, you can skim this chapter and refer back to it later.</p>
+
+<p>The only requirement to run the code in this tutorial is a modern browser (e.g. Chrome, Firefox, Safari). All code blocks are editable and runnable&mdash;click &ldquo;Run&rdquo; to execute them.</p>
+
+<h1 id="clojurescript-basics"><a href="#clojurescript-basics">ClojureScript Basics</a></h1>
+
+<p>ClojureScript is a Lisp: all expressions are written as <em>lists</em> delimited by parentheses, where the first element is the function and the rest are arguments. For example, <code>(+ 1 2)</code> calls <code>+</code> with arguments <code>1</code> and <code>2</code>.</p>
+
+<p>Functions are defined with <code>defn</code> and local bindings with <code>let</code>. Here is a function that checks whether a number is positive, and uses <code>let</code> for a local computation:</p>
+
+<pre><code>;; Functions, let-bindings, and conditionals
+(defn describe-number [x]
+  (let [absolute (if (< x 0) (- x) x)
+        label    (if (> x 0) "positive"
+                   (if (= x 0) "zero" "negative"))]
+    (display x "is" label "(absolute value:" absolute ")")))
+
+(describe-number 5)
+(describe-number -3)
+(describe-number 0)</code></pre>
+
+<p>ClojureScript has powerful built-in data structures: vectors <code>[1 2 3]</code>, maps <code>{:name "Alice" :age 30}</code>, and sets <code>#{:a :b :c}</code>. All data is <em>immutable</em>&mdash;operations return new values rather than modifying in place.</p>
+
+<p>Higher-order functions like <code>map</code>, <code>filter</code>, and <code>reduce</code> are the primary way to process collections, rather than loops:</p>
+
+<pre><code>;; Higher-order functions: map, filter, reduce
+(def xs [1 2 3 4 5 6 7 8 9 10])
+
+(display "Doubled:" (map (fn [x] (* 2 x)) xs))
+(display "Evens:" (filter even? xs))
+(display "Sum:" (reduce + 0 xs))
+(display "Squares:" (map (fn [x] (* x x)) (range 1 6)))</code></pre>
+
+<p>Maps (hash-maps) are central to ClojureScript. They are created with curly braces and accessed with keywords. Since all data is immutable, &ldquo;updating&rdquo; a map produces a new map:</p>
+
+<pre><code>;; Maps and immutability
+(def person {:name "Alice" :age 30 :likes "donuts"})
+
+(display "Name:" (:name person))
+(display "Age:" (:age person))
+
+;; assoc returns a NEW map with the change
+(def older-alice (assoc person :age 31))
+(display "Original:" person)
+(display "Updated:" older-alice)
+
+;; Nested data with update
+(def team {:alice {:score 10} :bob {:score 7}})
+(display "Team:" team)
+(display "After Alice scores:" (update-in team [:alice :score] + 5))</code></pre>
+
+<h1 id="randomness-and-distributions"><a href="#randomness-and-distributions">Randomness and Distributions</a></h1>
+
+<p>prob-cljs provides <em>stochastic primitives</em>&mdash;functions that return random samples from probability distributions. The simplest is <code>flip</code>, which returns <code>true</code> or <code>false</code> like a (possibly biased) coin toss.</p>
+
+<p>Each time you run a program containing random primitives, you get a different <em>sample</em>. By collecting many samples we can visualize the underlying distribution:</p>
+
+<pre><code>;; Discrete distributions: flip and uniform-draw
+(display "Three fair coin flips:" (flip) (flip) (flip))
+(display "Three biased flips (p=0.9):" (flip 0.9) (flip 0.9) (flip 0.9))
+
+(hist (repeatedly 1000 (fn [] (if (flip 0.7) "heads" "tails")))
+      "Biased coin (p=0.7)")</code></pre>
+
+<p>The <code>categorical</code> distribution generalizes coin flips to multiple outcomes. It takes a list of categories and a list of weights (probabilities):</p>
+
+<pre><code>;; Categorical distribution
+(defn coin-with-side []
+  (categorical ["heads" "tails" "side"] [0.45 0.45 0.10]))
+
+(hist (repeatedly 1000 coin-with-side) "Coin that can land on its edge")</code></pre>
+
+<p>For continuous quantities, <code>gaussian</code> samples from a normal distribution given a mean and standard deviation. The <code>density</code> function estimates and plots a smooth probability density from samples:</p>
+
+<pre><code>;; Continuous distributions: gaussian
+(display "Two samples from Gaussian(0,1):" (gaussian 0 1) (gaussian 0 1))
+
+(density (repeatedly 1000 (fn [] (gaussian 0 1))) "Standard Gaussian")
+(density (repeatedly 1000 (fn [] (gaussian 5 2))) "Gaussian(5, 2)")</code></pre>
+
+<p>A powerful technique is <em>stochastic recursion</em>&mdash;a recursive function where the base case is determined randomly. The <em>geometric distribution</em> counts coin flips until the first heads:</p>
+
+<pre><code>;; Stochastic recursion: geometric distribution
+(defn geometric [p]
+  (if (flip p) 0 (+ 1 (geometric p))))
+
+(hist (repeatedly 1000 (fn [] (geometric 0.6))) "Geometric(0.6)")
+(hist (repeatedly 1000 (fn [] (geometric 0.3))) "Geometric(0.3)")</code></pre>
+
+<h1 id="visualization"><a href="#visualization">Visualization</a></h1>
+
+<p>prob-cljs provides several visualization functions. We have already seen <code>hist</code> (for discrete/counted data) and <code>density</code> (for continuous data). There is also <code>barplot</code> for displaying probability distributions returned by inference, and <code>display</code> for printing text:</p>
+
+<pre><code>;; Visualization functions
+(display "=== hist: counts occurrences ===")
+(hist (repeatedly 500 (fn [] (uniform-draw ["A" "B" "C" "D"])))
+      "Uniform draw from 4 categories")
+
+(display "=== density: kernel density estimate ===")
+(density (repeatedly 500 (fn [] (+ (gaussian 0 1) (gaussian 0 1))))
+         "Sum of two Gaussians")</code></pre>
+
+<h1 id="bayesian-inference"><a href="#bayesian-inference">Bayesian Inference by Conditioning</a></h1>
+
+<p>So far we have been <em>sampling</em> from generative models&mdash;running them forward to produce data. The real power of probabilistic programming comes from <em>conditioning</em>: constraining the model to only consider executions consistent with observed data, then asking what the remaining uncertainty looks like.</p>
+
+<p>The function <code>condition</code> takes a boolean and restricts inference to executions where that boolean is <code>true</code>. With <code>enumeration-query</code>, we get exact posterior probabilities:</p>
+
+<pre><code>;; Conditioning: keep only executions where condition holds
+(def result
+  (enumeration-query
+    (let [a (flip)
+          b (flip)
+          c (flip)]
+      (condition (>= (+ (if a 1 0) (if b 1 0) (if c 1 0)) 2))
+      a)))
+
+(barplot result "P(first coin = heads | at least 2 heads)")</code></pre>
+
+<p>Here is a classic inference problem: we flip a coin three times and observe all heads. What can we infer about whether the coin is fair or trick?</p>
+
+<pre><code>;; Coin type inference
+(def coin-posterior
+  (enumeration-query
+    (let [is-trick (flip 0.5)
+          coin-weight (if is-trick 0.95 0.5)
+          flip1 (flip coin-weight)
+          flip2 (flip coin-weight)
+          flip3 (flip coin-weight)]
+      ;; We observed three heads
+      (condition (and flip1 flip2 flip3))
+      (if is-trick "trick" "fair"))))
+
+(barplot coin-posterior "P(coin type | 3 heads)")</code></pre>
+
+<p>For continuous parameters, we use <code>mh-query</code> (Metropolis-Hastings) instead of exact enumeration. Here we infer the bias of a coin from observed data:</p>
+
+<pre><code>;; Continuous inference with MH
+(def observations [true true true false true true true false true true])
+
+(def samples
+  (mh-query 2000 1
+    (let [bias (uniform 0 1)]
+      (doseq [obs observations]
+        (condition (= obs (flip bias))))
+      bias)))
+
+(density samples "Posterior on coin bias (8 heads, 2 tails)")</code></pre>
+
+<p>The <code>factor</code> function provides <em>soft conditioning</em>. Instead of the hard yes/no of <code>condition</code>, <code>factor</code> adds a log-probability score: higher scores make an execution more likely, lower scores make it less likely. This is essential for the softmax agent model in the next chapter.</p>
+
+<pre><code>;; Soft conditioning with factor
+(def soft-result
+  (enumeration-query
+    (let [n (uniform-draw [0 1 2 3])]
+      (factor (* 2 n))  ;; higher n gets exponentially more likely
+      n)))
+
+(barplot soft-result "Soft conditioning: factor(2*n)")</code></pre>
+
+<h1 id="memoization"><a href="#memoization">Persistent Randomness with <code>mem</code></a></h1>
+
+<p>When modeling a world with multiple objects, we often want each object to have randomly chosen but <em>persistent</em> properties. The <code>mem</code> function memoizes a stochastic function: the first call with given arguments samples a random value, and subsequent calls with the same arguments return that same value.</p>
+
+<pre><code>;; mem: persistent random properties
+(def eye-color
+  (mem (fn [person] (uniform-draw ["blue" "green" "brown"]))))
+
+(display "Alice:" (eye-color "Alice"))
+(display "Bob:" (eye-color "Bob"))
+(display "Alice again (same!):" (eye-color "Alice"))
+(display "Charlie:" (eye-color "Charlie"))
+(display "Bob again (same!):" (eye-color "Bob"))</code></pre>
+
+<p>This is called the <em>random world</em> style of modeling. Note that we don&rsquo;t need to specify ahead of time which people exist&mdash;the distribution over properties is defined lazily for an infinite set of possible entities. The <code>mem</code> function will be essential when we model agents with persistent preferences and beliefs in the next chapter.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="01-introduction.html">&larr; Chapter 1: Introduction</a>
+    <a href="03-agents-as-programs.html">Chapter 3: Agents as Probabilistic Programs &rarr;</a>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/cps_transform.cljc',
+    '../prob/cps.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot display]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>

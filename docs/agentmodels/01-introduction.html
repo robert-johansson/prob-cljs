@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AgentModels: Introduction</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Modeling Agents with Probabilistic Programs</a></div>
+    <ul id="nav">
+      <li><a href="index.html">Index</a></li>
+      <li><a href="02-clojurescript.html">Next &rarr;</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">1. Introduction</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#bob-and-the-donut-store">Bob and the Donut Store</a></li>
+<li><a href="#agents-as-probabilistic-programs">Agents as Probabilistic Programs</a></li>
+<li><a href="#taster">Taster: Probabilistic Programming</a></li>
+<li><a href="#overview">Plan for the Book</a></li>
+</ul>
+</div>
+
+<h1 id="bob-and-the-donut-store"><a href="#bob-and-the-donut-store">Bob and the Donut Store</a></h1>
+
+<p>Imagine watching Bob walk through a city. He could go to any of several nearby restaurants, but instead heads to one of two donut stores. Given Bob&rsquo;s movements alone, what can we infer about his preferences and beliefs?</p>
+
+<img src="img/ch1_donut.png" alt="Bob and the donut store" style="max-width: 400px; display: block; margin: 16px auto;">
+
+<p>Several explanations are possible. Maybe Bob likes donuts more than any alternative. Maybe he doesn&rsquo;t know about a closer restaurant. Maybe he thinks the other donut store is closed today. Maybe he intended to go somewhere healthier but was tempted by the smell of fresh donuts.</p>
+
+<p>Each of these explanations posits different <em>preferences</em> (utility functions) and <em>beliefs</em> (probability distributions over world states). To distinguish between them we need a formal framework for modeling agents&mdash;one that represents how beliefs and preferences combine to produce behavior.</p>
+
+<h1 id="agents-as-probabilistic-programs"><a href="#agents-as-probabilistic-programs">Agents as Probabilistic Programs</a></h1>
+
+<h2>Making Rational Plans</h2>
+
+<p>Formal models of rational agents appear across many fields. In economics, agents maximize expected utility. In cognitive science, humans are modeled as approximately Bayesian reasoners. In AI and reinforcement learning, agents learn policies that optimize cumulative reward.</p>
+
+<p>These ideas share a common structure: an agent has <em>beliefs</em> about the world, <em>preferences</em> over outcomes, and <em>chooses actions</em> to maximize expected preference satisfaction given beliefs. We implement this structure using functional probabilistic programs&mdash;programs that combine deterministic computation with random sampling and Bayesian conditioning.</p>
+
+<p>This approach lets us build agents that perform Bayesian belief updates, make sequential plans by recursively simulating future choices, and exhibit soft-maximization (where better actions are chosen with higher probability but not deterministically).</p>
+
+<h2>Learning Preferences from Behavior</h2>
+
+<p>If we model how agents with given preferences behave, we can invert the model to infer preferences from observed behavior. This inverse problem appears under different names across fields:</p>
+
+<ul>
+<li><strong>Structural estimation</strong> in economics</li>
+<li><strong>Inverse planning</strong> in cognitive science</li>
+<li><strong>Inverse reinforcement learning</strong> in machine learning</li>
+</ul>
+
+<p>In each case, the idea is the same: given a generative model of how preferences produce behavior, use Bayesian inference to recover the preferences that best explain observed actions. The probabilistic programming approach makes this inversion almost automatic&mdash;we write the forward model and let inference handle the rest.</p>
+
+<h1 id="taster"><a href="#taster">Taster: Probabilistic Programming</a></h1>
+
+<p>This book uses <a href="https://clojure.org/guides/learn/syntax">ClojureScript</a> with the <strong>prob-cljs</strong> library for all examples. Code runs directly in your browser via <a href="https://github.com/babashka/scittle">Scittle</a>&mdash;click &ldquo;Run&rdquo; to execute any code block, and edit it to experiment.</p>
+
+<p>Here is a simple example. Using the stochastic function <code>flip</code> we build a function that returns <code>"H"</code> or <code>"T"</code> with equal probability:</p>
+
+<pre><code>;; A fair coin that returns "H" or "T"
+(defn coin [] (if (flip 0.5) "H" "T"))
+
+(display "Some coin flips:" (coin) (coin) (coin))</code></pre>
+
+<p>We can use <code>flip</code> to define a sampler for the <em>geometric distribution</em>&mdash;a distribution over positive integers. The geometric distribution counts how many coin flips occur until the first heads:</p>
+
+<pre><code>;; Geometric distribution: count flips until first success
+(defn geometric [p]
+  (if (flip p) 1 (+ 1 (geometric p))))
+
+;; Sample many times and visualize the distribution
+(hist (repeatedly 1000 (fn [] (geometric 0.5))) "Geometric(0.5)")</code></pre>
+
+<h1 id="overview"><a href="#overview">Plan for the Book</a></h1>
+
+<p>The book begins by introducing probabilistic programming in ClojureScript (Chapter 2), then shows how to implement rational agents as probabilistic programs (Chapter 3). Later chapters (coming in future phases) extend this to sequential decision problems (MDPs), partially observable environments (POMDPs), multi-agent reasoning, and cognitive biases.</p>
+
+<p>Each chapter builds on the previous ones, but the code examples are self-contained&mdash;you can always run them independently to see what they do.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <span></span>
+    <a href="02-clojurescript.html">Chapter 2: Probabilistic Programming in ClojureScript &rarr;</a>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/cps_transform.cljc',
+    '../prob/cps.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot display]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>

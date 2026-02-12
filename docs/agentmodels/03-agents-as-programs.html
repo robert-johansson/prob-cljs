@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AgentModels: Agents as Probabilistic Programs</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Modeling Agents with Probabilistic Programs</a></div>
+    <ul id="nav">
+      <li><a href="02-clojurescript.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">3. Agents as Probabilistic Programs</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#deterministic-decisions">One-Shot Decisions in Deterministic Worlds</a></li>
+<li><a href="#stochastic-worlds">One-Shot Decisions in Stochastic Worlds</a></li>
+<li><a href="#soft-conditioning">Soft Conditioning with <code>factor</code></a></li>
+<li><a href="#softmax-agent">The Softmax Agent</a></li>
+<li><a href="#exercises">Exercises</a></li>
+</ul>
+</div>
+
+<p>We begin with the simplest kind of decision problem: an agent faces a single choice (e.g. choosing a restaurant) and the consequences of each action are immediate. Despite the simplicity, this setting already illustrates a key idea: <em>planning as inference</em>.</p>
+
+<h1 id="deterministic-decisions"><a href="#deterministic-decisions">One-Shot Decisions in Deterministic Worlds</a></h1>
+
+<p>Suppose an agent chooses between going to an Italian or French restaurant. In a <em>deterministic</em> world, each action leads to a known outcome. The agent has a <em>utility function</em> over outcomes and selects the action that maximizes utility:</p>
+
+\[ a^* = \arg\max_a \; U(T(s, a)) \]
+
+<p>where \(T(s,a)\) is the <em>transition function</em> (mapping state-action pairs to outcomes) and \(U\) is the utility function.</p>
+
+<p>The most direct implementation simply iterates over actions and picks the one with highest utility:</p>
+
+<pre><code>;; Approach 1: Direct utility maximization (argmax agent)
+(def actions ["italian" "french" "thai"])
+
+(defn transition [state action]
+  (case action
+    "italian" "pizza"
+    "french"  "steak frites"
+    "thai"    "pad thai"))
+
+(defn utility [state]
+  (case state "pizza" 10, "steak frites" 8, "pad thai" 5, 0))
+
+;; argmax: pick the action maximizing f
+(defn argmax [f items]
+  (reduce (fn [best x] (if (> (f x) (f best)) x best)) items))
+
+(defn max-agent [state]
+  (argmax (fn [action] (utility (transition state action)))
+          actions))
+
+(display "Utilities:" (map (fn [a] [a (utility (transition "start" a))]) actions))
+(display "Max agent chooses:" (max-agent "start"))</code></pre>
+
+<p>An alternative approach treats decision-making as an <em>inference</em> problem. The agent samples a random action, then uses <code>factor</code> to weight each action by its utility. Actions that lead to better outcomes are more likely under the posterior:</p>
+
+<pre><code>;; Approach 2: Planning as inference
+(def actions ["italian" "french" "thai"])
+
+(defn transition [state action]
+  (case action
+    "italian" "pizza"
+    "french"  "steak frites"
+    "thai"    "pad thai"))
+
+(defn utility [state]
+  (case state "pizza" 10, "steak frites" 8, "pad thai" 5, 0))
+
+(def inference-agent-dist
+  (enumeration-query
+    (let [action (uniform-draw actions)]
+      (factor (utility (transition "start" action)))
+      action)))
+
+(barplot inference-agent-dist "Planning-as-inference agent")</code></pre>
+
+<p>The argmax agent deterministically picks Italian (the highest utility). The inference agent also favors Italian, but assigns some probability to French and Thai&mdash;weighted exponentially by their utility. In the deterministic case, both approaches agree on which action is <em>best</em>. But the inference approach generalizes more naturally to stochastic worlds, soft preferences, and bounded rationality.</p>
+
+<h1 id="stochastic-worlds"><a href="#stochastic-worlds">One-Shot Decisions in Stochastic Worlds</a></h1>
+
+<p>Now suppose the outcomes of actions are uncertain. The Italian restaurant might be bad, good, or spectacular, each with some probability. A rational agent maximizes <em>expected</em> utility:</p>
+
+\[ a^* = \arg\max_a \; \mathbb{E}[U(T(s, a))] \]
+
+<p>We compute expected utility using a nested <code>enumeration-query-fn</code> inside the agent&rsquo;s decision. The inner query averages over stochastic outcomes; the outer query selects the action:</p>
+
+<pre><code>;; Expected utility maximization in stochastic worlds
+(def actions ["italian" "french"])
+
+(defn transition [state action]
+  (let [outcomes ["bad" "good" "spectacular"]
+        probs (if (= action "italian")
+                [0.2 0.6 0.2]
+                [0.05 0.9 0.05])]
+    (categorical outcomes probs)))
+
+(defn utility [state]
+  (case state "bad" -10, "good" 6, "spectacular" 8, 0))
+
+;; Compute expected utility of an action via enumeration
+(defn expected-utility [state action]
+  (let [[values probs]
+        (enumeration-query-fn
+          (fn [] (utility (transition state action))))]
+    (reduce + 0 (map * values probs))))
+
+;; argmax over expected utilities
+(defn argmax [f items]
+  (reduce (fn [best x] (if (> (f x) (f best)) x best)) items))
+
+(defn max-eu-agent [state]
+  (argmax (fn [a] (expected-utility state a)) actions))
+
+(display "Italian EU:" (expected-utility "start" "italian"))
+(display "French EU:" (expected-utility "start" "french"))
+(display "Max EU agent chooses:" (max-eu-agent "start"))</code></pre>
+
+<p>The Italian restaurant has higher variance (you might get a spectacular meal or a bad one) while the French restaurant is reliably good. The expected utility calculation balances these trade-offs.</p>
+
+<h1 id="soft-conditioning"><a href="#soft-conditioning">Soft Conditioning with <code>factor</code></a></h1>
+
+<p>The <code>condition</code> function implements <em>hard</em> constraints: executions where the condition is <code>false</code> get probability zero. The <code>factor</code> function implements <em>soft</em> constraints: it adds a log-probability score, making some executions more likely than others without ruling any out completely.</p>
+
+<p>Compare <code>condition</code> (hard) and <code>factor</code> (soft):</p>
+
+<pre><code>;; Hard vs soft conditioning
+(display "=== Hard conditioning ===")
+(barplot
+  (enumeration-query
+    (let [a (flip) b (flip) c (flip)]
+      (condition (>= (+ (if a 1 0) (if b 1 0) (if c 1 0)) 2))
+      a))
+  "P(a | at least 2 heads) — hard condition")
+
+(display "=== Soft conditioning ===")
+(barplot
+  (enumeration-query
+    (let [a (flip) b (flip) c (flip)]
+      (factor (+ (if a 1 0) (if b 1 0) (if c 1 0)))
+      a))
+  "P(a | factor by #heads) — soft condition")</code></pre>
+
+<p>With <code>factor</code>, we can express <em>preferences</em> rather than <em>requirements</em>. The score acts as a log-probability bonus: <code>(factor 2)</code> makes an execution \(e^2 \approx 7.4\) times more likely than one with <code>(factor 0)</code>.</p>
+
+<pre><code>;; factor makes higher values more likely (exponentially)
+(barplot
+  (enumeration-query
+    (let [n (uniform-draw [0 1 2 3])]
+      (factor (* 2 n))
+      n))
+  "Soft preference for larger n: factor(2*n)")</code></pre>
+
+<h1 id="softmax-agent"><a href="#softmax-agent">The Softmax Agent</a></h1>
+
+<p>Real agents don&rsquo;t always choose the single best action. They are noisy optimizers: better actions are more likely, but not guaranteed. The <em>softmax</em> decision rule captures this with a temperature parameter \(\alpha\):</p>
+
+\[ P(a \mid s) \propto \exp\bigl(\alpha \cdot \mathbb{E}[U(T(s, a))]\bigr) \]
+
+<p>When \(\alpha = 0\), the agent chooses uniformly at random. As \(\alpha \to \infty\), the agent approaches perfect maximization. The softmax agent is naturally expressed as planning-as-inference with <code>factor</code>:</p>
+
+<pre><code>;; Softmax agent: varying the noise parameter alpha
+(def actions ["italian" "french"])
+
+(defn transition [state action]
+  (let [outcomes ["bad" "good" "spectacular"]
+        probs (if (= action "italian")
+                [0.2 0.6 0.2]
+                [0.05 0.9 0.05])]
+    (categorical outcomes probs)))
+
+(defn utility [state]
+  (case state "bad" -10, "good" 6, "spectacular" 8, 0))
+
+(defn expected-utility [state action]
+  (let [[values probs]
+        (enumeration-query-fn
+          (fn [] (utility (transition state action))))]
+    (reduce + 0 (map * values probs))))
+
+(defn softmax-agent [state alpha]
+  (enumeration-query
+    (let [action (uniform-draw actions)]
+      (factor (* alpha (expected-utility state action)))
+      action)))
+
+;; Low alpha: nearly random
+(barplot (softmax-agent "start" 0.1) "alpha = 0.1 (nearly random)")
+
+;; Medium alpha: soft preference
+(barplot (softmax-agent "start" 1) "alpha = 1 (soft preference)")
+
+;; High alpha: near-deterministic
+(barplot (softmax-agent "start" 10) "alpha = 10 (near-deterministic)")</code></pre>
+
+<p>Try adjusting the utilities or the transition probabilities to see how the softmax agent&rsquo;s choices change. Notice how as \(\alpha\) increases, the distribution concentrates on the action with higher expected utility.</p>
+
+<h1 id="exercises"><a href="#exercises">Exercises</a></h1>
+
+<h2>Exercise: The Monty Hall Problem</h2>
+
+<p>In the Monty Hall problem, a prize is behind one of three doors. Alice picks a door, then Monty (who knows where the prize is) opens a different door that does <em>not</em> have the prize. Alice can then <em>stay</em> with her original choice or <em>switch</em> to the remaining unopened door.</p>
+
+<p>Complete the code below to implement and solve this problem. The <code>monty</code> function should model which door Monty opens (he picks uniformly from doors that are neither Alice&rsquo;s door nor the prize door). The <code>utility</code> function should return 1 if Alice&rsquo;s final door matches the prize door, and 0 otherwise. The <code>transition</code> function should implement the &ldquo;switch&rdquo; logic.</p>
+
+<pre><code>;; Monty Hall problem
+(def doors [1 2 3])
+(def actions ["switch" "stay"])
+
+;; Monty opens a door that is not Alice's and not the prize
+(defn monty [alice-door prize-door]
+  (enumeration-query-fn
+    (fn []
+      (let [door (uniform-draw doors)]
+        (condition (not= door alice-door))
+        (condition (not= door prize-door))
+        door))))
+
+(defn transition [state action]
+  (if (= action "switch")
+    ;; Switch to the door that is neither Alice's nor Monty's
+    (let [remaining (first (filter (fn [d]
+                            (and (not= d (:alice-door state))
+                                 (not= d (:monty-door state))))
+                          doors))]
+      (assoc state :alice-door remaining))
+    state))
+
+(defn utility [state]
+  (if (= (:alice-door state) (:prize-door state)) 1 0))
+
+;; Expected utility of each action, averaged over initial states
+(defn expected-utility [action]
+  (let [[values probs]
+        (enumeration-query-fn
+          (fn []
+            (let [alice-door (uniform-draw doors)
+                  prize-door (uniform-draw doors)
+                  [monty-doors monty-probs] (monty alice-door prize-door)
+                  monty-door (categorical monty-doors monty-probs)
+                  state {:alice-door alice-door
+                         :prize-door prize-door
+                         :monty-door monty-door}]
+              (utility (transition state action)))))]
+    (reduce + 0 (map * values probs))))
+
+(display "Expected utility of staying:" (expected-utility "stay"))
+(display "Expected utility of switching:" (expected-utility "switch"))
+
+(barplot
+  (enumeration-query
+    (let [action (uniform-draw actions)]
+      (factor (* 10 (expected-utility action)))
+      action))
+  "Optimal Monty Hall strategy")</code></pre>
+
+<p>You should find that switching gives an expected utility of \(\frac{2}{3}\) while staying gives \(\frac{1}{3}\). The softmax agent strongly prefers switching.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="02-clojurescript.html">&larr; Chapter 2: Probabilistic Programming in ClojureScript</a>
+    <span></span>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/cps_transform.cljc',
+    '../prob/cps.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot display]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>

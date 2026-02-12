@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Modeling Agents with Probabilistic Programs</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Modeling Agents with Probabilistic Programs</a></div>
+    <ul id="nav"><li><a href="../index.html">prob-cljs home</a></li></ul>
+  </div>
+  <div id="chapter">
+<h1 id="chapter-title">Modeling Agents with Probabilistic Programs</h1>
+<p><em>An interactive textbook on planning, decision-making, and inference about agents, using <strong>prob-cljs</strong> (ClojureScript) instead of WebPPL.</em></p>
+<p>This is a port of <a href="https://agentmodels.org">agentmodels.org</a> by Owain Evans, Andreas Stuhlm&uuml;ller, John Salvatier, and Daniel Filan. All code examples are editable and runnable directly in the browser via <a href="https://github.com/babashka/scittle">Scittle</a>.</p>
+
+<h2>Chapters</h2>
+<ol>
+  <li><a href="01-introduction.html"><strong>Introduction</strong></a></li>
+  <li><a href="02-clojurescript.html"><strong>Probabilistic Programming in ClojureScript</strong></a></li>
+  <li><a href="03-agents-as-programs.html"><strong>Agents as Probabilistic Programs</strong></a></li>
+</ol>
+
+<h2 class="grayed">Coming in Future Phases</h2>
+<ol start="4" class="grayed">
+  <li>3.1 Multi-armed Bandits</li>
+  <li>3.2 MDPs and Gridworld</li>
+  <li>4. Reasoning about Agents</li>
+  <li>5. POMDPs and Information Gathering</li>
+  <li>5.1 Joint Inference of Biases and Preferences</li>
+  <li>6. Cognitive Biases and Bounded Rationality</li>
+  <li>7. Multi-agent Models</li>
+</ol>
+
+<h2>WebPPL &rarr; ClojureScript Quick Reference</h2>
+<table>
+<thead><tr><th>WebPPL</th><th>ClojureScript</th></tr></thead>
+<tbody>
+<tr><td><code>var x = val</code></td><td><code>(def x val)</code></td></tr>
+<tr><td><code>var f = function(x) { ... }</code></td><td><code>(defn f [x] ...)</code></td></tr>
+<tr><td><code>function(x) { ... }</code></td><td><code>(fn [x] ...)</code></td></tr>
+<tr><td><code>flip(0.5)</code></td><td><code>(flip 0.5)</code></td></tr>
+<tr><td><code>uniformDraw(xs)</code></td><td><code>(uniform-draw xs)</code></td></tr>
+<tr><td><code>categorical(probs, vals)</code></td><td><code>(categorical vals probs)</code></td></tr>
+<tr><td><code>gaussian(mu, sigma)</code></td><td><code>(gaussian mu sigma)</code></td></tr>
+<tr><td><code>Infer({model: fn})</code></td><td><code>(enumeration-query ...)</code></td></tr>
+<tr><td><code>condition(bool)</code></td><td><code>(condition bool)</code></td></tr>
+<tr><td><code>factor(score)</code></td><td><code>(factor score)</code></td></tr>
+<tr><td><code>viz(dist)</code></td><td><code>(barplot dist "label")</code></td></tr>
+<tr><td><code>expectation(Infer(...))</code></td><td><code>(mean (repeatedly n f))</code></td></tr>
+<tr><td><code>map(f, xs)</code></td><td><code>(map f xs)</code></td></tr>
+<tr><td><code>repeat(n, f)</code></td><td><code>(repeatedly n f)</code></td></tr>
+</tbody>
+</table>
+
+<h2>Attribution</h2>
+<p>The original <em>Modeling Agents with Probabilistic Programs</em> is by <a href="https://agentmodels.org">Owain Evans, Andreas Stuhlm&uuml;ller, John Salvatier, and Daniel Filan</a>. This ClojureScript edition adapts the text and examples for the prob-cljs library.</p>
+  </div>
+</div>
+</body>
+</html>
