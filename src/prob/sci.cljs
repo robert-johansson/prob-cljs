@@ -10,7 +10,8 @@
             [prob.builtins :as builtins]
             [prob.dist :as dist]
             [prob.math :as math]
-            [prob.core :as core]))
+            [prob.core :as core]
+            [prob.cps :as cps]))
 
 ;; ---------------------------------------------------------------------------
 ;; SCI namespace objects
@@ -23,6 +24,7 @@
 (def math-ns (sci/create-ns 'prob.math nil))
 (def core-ns (sci/create-ns 'prob.core nil))
 (def macros-ns (sci/create-ns 'prob.macros nil))
+(def cps-ns (sci/create-ns 'prob.cps nil))
 
 ;; ---------------------------------------------------------------------------
 ;; prob.erp
@@ -114,6 +116,7 @@
    'map-query-fn        (sci/copy-var inference/map-query-fn inference-ns)
    'condition-equal     (sci/copy-var inference/condition-equal inference-ns)
    'forward-query-fn   (sci/copy-var inference/forward-query-fn inference-ns)
+   'smc-query-fn       (sci/copy-var inference/smc-query-fn inference-ns)
    'infer              (sci/copy-var inference/infer inference-ns)})
 
 ;; ---------------------------------------------------------------------------
@@ -274,6 +277,12 @@
    'map-query-fn       (sci/copy-var core/map-query-fn core-ns)
    'condition-equal    (sci/copy-var core/condition-equal core-ns)
    'forward-query-fn  (sci/copy-var core/forward-query-fn core-ns)
+   'smc-query-fn      (sci/copy-var core/smc-query-fn core-ns)
+   'cps-sample        (sci/copy-var core/cps-sample core-ns)
+   'cps-observe       (sci/copy-var core/cps-observe core-ns)
+   'cps-factor        (sci/copy-var core/cps-factor core-ns)
+   'cps-condition     (sci/copy-var core/cps-condition core-ns)
+   'cps-of-expr       (sci/copy-var core/cps-of-expr core-ns)
    'infer             (sci/copy-var core/infer core-ns)
    'delta-dist         (sci/copy-var core/delta-dist core-ns)
    'cauchy-dist        (sci/copy-var core/cauchy-dist core-ns)
@@ -306,6 +315,22 @@
    'repeat-fn          (sci/copy-var core/repeat-fn core-ns)})
 
 ;; ---------------------------------------------------------------------------
+;; prob.cps
+;; ---------------------------------------------------------------------------
+
+(def cps-namespace
+  {'cps-sample      (sci/copy-var cps/cps-sample cps-ns)
+   'cps-observe     (sci/copy-var cps/cps-observe cps-ns)
+   'cps-factor      (sci/copy-var cps/cps-factor cps-ns)
+   'cps-condition   (sci/copy-var cps/cps-condition cps-ns)
+   'cps-of-expr     (sci/copy-var cps/cps-of-expr cps-ns)
+   'sample?         (sci/copy-var cps/sample? cps-ns)
+   'observe?        (sci/copy-var cps/observe? cps-ns)
+   'factor?         (sci/copy-var cps/factor? cps-ns)
+   'result?         (sci/copy-var cps/result? cps-ns)
+   'checkpoint?     (sci/copy-var cps/checkpoint? cps-ns)})
+
+;; ---------------------------------------------------------------------------
 ;; prob.macros (SCI macros — ^:macro functions with [&form &env & args])
 ;; ---------------------------------------------------------------------------
 
@@ -333,6 +358,11 @@
 (defn ^:macro query [_ _ method & body]
   `(prob.core/conditional-fn ~method (fn [] ~@body)))
 
+(defn ^:macro smc-query [_ _ n-particles & body]
+  (let [cps-body (cps/cps-of-expr (cons 'do body) 'k__final)]
+    `(prob.core/smc-query-fn ~n-particles
+       (fn [~'k__final ~'$state] ~cps-body))))
+
 (def macros-namespace
   {'rejection-query   (sci/copy-var rejection-query macros-ns)
    'mh-query          (sci/copy-var mh-query macros-ns)
@@ -341,7 +371,8 @@
    'importance-query  (sci/copy-var importance-query macros-ns)
    'enumeration-query (sci/copy-var enumeration-query macros-ns)
    'forward-query     (sci/copy-var forward-query macros-ns)
-   'query             (sci/copy-var query macros-ns)})
+   'query             (sci/copy-var query macros-ns)
+   'smc-query         (sci/copy-var smc-query macros-ns)})
 
 ;; ---------------------------------------------------------------------------
 ;; Combined config
@@ -355,4 +386,5 @@
     'prob.dist      dist-namespace
     'prob.math      math-namespace
     'prob.core      core-namespace
+    'prob.cps       cps-namespace
     'prob.macros    macros-namespace}})

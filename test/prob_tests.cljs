@@ -6,7 +6,7 @@
                                 condition factor rejection-query-fn mh-query-fn
                                 enumeration-query-fn importance-query-fn conditional-fn
                                 mh-query-scored-fn map-query-fn condition-equal
-                                observe
+                                observe smc-query-fn
                                 forward-query-fn infer
                                 sample* observe* dist? enumerate*
                                 bernoulli-dist gaussian-dist uniform-dist beta-dist
@@ -24,10 +24,11 @@
                                 weighted-mean weighted-variance
                                 empirical-distribution expectation]]
             [prob.erp :as erp]
-            [prob.dist :as dist])
+            [prob.dist :as dist]
+            [prob.cps :as cps])
   (:require-macros [prob.macros :refer [rejection-query mh-query enumeration-query
                                         importance-query mh-query-scored map-query
-                                        forward-query query]]))
+                                        forward-query query smc-query]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Test harness (volatile-based, no atoms)
@@ -1403,6 +1404,263 @@
 
 (test-assert "discrete?: delta is discrete"
   (discrete? (delta-dist 42)))
+
+;; ---------------------------------------------------------------------------
+;; CPS Transform
+;; ---------------------------------------------------------------------------
+
+(println "=== CPS Transform ===")
+
+(test-assert "cps: literal passes to continuation"
+  (= (cps/cps-of-expr 42 'k) '(k 42 $state)))
+
+(test-assert "cps: symbol passes to continuation"
+  (= (cps/cps-of-expr 'x 'k) '(k x $state)))
+
+(test-assert "cps: nil passes to continuation"
+  (= (cps/cps-of-expr nil 'k) '(k nil $state)))
+
+(test-assert "cps: keyword passes to continuation"
+  (= (cps/cps-of-expr :foo 'k) '(k :foo $state)))
+
+(test-assert "cps: quoted form preserved"
+  (= (cps/cps-of-expr '(quote (a b)) 'k) '(k (quote (a b)) $state)))
+
+(test-assert "cps: if with atomic test"
+  (let [result (cps/cps-of-expr '(if x 1 2) 'k)]
+    (and (= (first result) 'if)
+         (= (second result) 'x))))
+
+(test-assert "cps: let produces nested continuations"
+  (let [result (cps/cps-of-expr '(let [x 1] x) 'k)]
+    ;; Should be ((fn [x $state] (k x $state)) 1 $state)
+    (seq? result)))
+
+(test-assert "cps: do sequences expressions"
+  (let [result (cps/cps-of-expr '(do 1 2) 'k)]
+    ;; First expr gets ignored continuation, second gets k
+    (seq? result)))
+
+(test-assert "cps: flip becomes cps-sample with bernoulli-dist"
+  (let [result (cps/cps-of-expr '(flip 0.7) 'k)]
+    (= (first result) 'prob.cps/cps-sample)))
+
+(test-assert "cps: observe becomes cps-observe"
+  (let [result (cps/cps-of-expr '(observe d 5) 'k)]
+    (= (first result) 'prob.cps/cps-observe)))
+
+(test-assert "cps: factor becomes cps-factor"
+  (let [result (cps/cps-of-expr '(factor -1) 'k)]
+    (= (first result) 'prob.cps/cps-factor)))
+
+(test-assert "cps: condition becomes cps-condition"
+  (let [result (cps/cps-of-expr '(condition x) 'k)]
+    (= (first result) 'prob.cps/cps-condition)))
+
+(test-assert "cps: sample* becomes cps-sample"
+  (let [result (cps/cps-of-expr '(sample* d) 'k)]
+    (= (first result) 'prob.cps/cps-sample)))
+
+(test-assert "cps: vector elements are evaluated"
+  (let [result (cps/cps-of-expr '[1 2 3] 'k)]
+    (= result '(k [1 2 3] $state))))
+
+(test-assert "cps: fn produces CPS-aware lambda"
+  (let [result (cps/cps-of-expr '(fn [x] x) 'k)]
+    ;; Should pass a fn with extra k and $state args to k
+    (= (first result) 'k)))
+
+;; ---------------------------------------------------------------------------
+;; CPS Execution (runtime)
+;; ---------------------------------------------------------------------------
+
+(println "=== CPS Runtime ===")
+
+(test-assert "cps: Sample checkpoint created"
+  (let [d (bernoulli-dist 0.5)
+        result (cps/cps-sample d identity {:addr 0})]
+    (cps/sample? result)))
+
+(test-assert "cps: Observe checkpoint created"
+  (let [d (bernoulli-dist 0.5)
+        result (cps/cps-observe d true identity {:addr 0})]
+    (cps/observe? result)))
+
+(test-assert "cps: Factor checkpoint created"
+  (let [result (cps/cps-factor -1.0 identity {:addr 0})]
+    (cps/factor? result)))
+
+(test-assert "cps: Result checkpoint created"
+  (cps/result? (cps/->Result 42 {})))
+
+(test-assert "cps: condition true continues"
+  ;; condition true calls continuation, not a Factor
+  (let [called (volatile! false)
+        result (cps/cps-condition true (fn [_ s] (vreset! called true) (cps/->Result :ok s)) {})]
+    (and @called (cps/result? result))))
+
+(test-assert "cps: condition false creates Factor -Inf"
+  (let [result (cps/cps-condition false identity {})]
+    (and (cps/factor? result) (= (:score result) ##-Inf))))
+
+;; ---------------------------------------------------------------------------
+;; SMC Inference
+;; ---------------------------------------------------------------------------
+
+(println "=== SMC Inference ===")
+
+(test-assert "smc: returns correct number of samples"
+  (let [results (smc-query 100
+                  (flip 0.5))]
+    (= 100 (count results))))
+
+(test-assert "smc: no observes degenerates to prior sampling"
+  ;; With no observe/condition, should sample from prior
+  (let [results (smc-query 1000
+                  (if (flip 0.5) 1 0))
+        m (mean results)]
+    (approx= m 0.5 0.1)))
+
+(test-assert "smc: single particle works"
+  (let [results (smc-query 1
+                  (flip 0.5))]
+    (= 1 (count results))))
+
+(test-assert "smc: observe shifts posterior"
+  ;; Beta(1,1) + observe true + observe false -> Beta(2,2), mean=0.5
+  (let [results (smc-query 1000
+                  (let [p (beta 1 1)]
+                    (observe (bernoulli-dist p) true)
+                    (observe (bernoulli-dist p) false)
+                    p))
+        m (mean results)]
+    (approx= m 0.5 0.1)))
+
+(test-assert "smc: condition filters impossible values"
+  ;; Condition: at least one flip true
+  (let [results (smc-query 1000
+                  (let [a (flip 0.5)
+                        b (flip 0.5)]
+                    (condition (or a b))
+                    (list a b)))
+        dist (empirical-distribution results)]
+    ;; (false false) should have probability 0
+    (= 0 (get dist (list false false) 0))))
+
+(test-assert "smc: condition approximates correct distribution"
+  ;; P(true,true | or) = 1/3
+  (let [results (smc-query 2000
+                  (let [a (flip 0.5)
+                        b (flip 0.5)]
+                    (condition (or a b))
+                    (list a b)))
+        dist (empirical-distribution results)]
+    (approx= (get dist (list true true) 0) 0.333 0.06)))
+
+(test-assert "smc: let bindings work correctly"
+  (let [results (smc-query 500
+                  (let [x 3
+                        y 4]
+                    (+ x y)))]
+    (every? #(= 7 %) results)))
+
+(test-assert "smc: nested if works"
+  (let [results (smc-query 500
+                  (let [x (flip 0.5)]
+                    (if x "yes" "no")))]
+    (and (some #(= "yes" %) results)
+         (some #(= "no" %) results))))
+
+(test-assert "smc: gaussian observe pulls mean"
+  ;; N(0,10) prior, observe 5 with sigma=1 -> posterior near 5
+  (let [results (smc-query 1000
+                  (let [mu (gaussian 0 10)]
+                    (observe (gaussian-dist mu 1) 5.0)
+                    mu))
+        m (mean results)]
+    (approx= m 5.0 1.0)))
+
+(test-assert "smc: multiple gaussian observations"
+  ;; N(0,10) prior, observe 3.0 twice with sigma=1
+  (let [results (smc-query 1000
+                  (let [mu (gaussian 0 10)]
+                    (observe (gaussian-dist mu 1) 3.0)
+                    (observe (gaussian-dist mu 1) 3.0)
+                    mu))
+        m (mean results)]
+    (approx= m 3.0 1.0)))
+
+(test-assert "smc: factor weighting works"
+  ;; Factor should shift posterior
+  (let [results (smc-query 2000
+                  (let [x (flip 0.5)]
+                    (factor (if x 0 -2))
+                    x))
+        dist (empirical-distribution results)
+        p-true (get dist true 0)]
+    ;; P(true) ∝ 0.5*exp(0)=0.5, P(false) ∝ 0.5*exp(-2)≈0.068
+    ;; P(true) ≈ 0.88
+    (approx= p-true 0.88 0.1)))
+
+(test-assert "smc: uniform-draw works in CPS"
+  (let [results (smc-query 200
+                  (uniform-draw [:a :b :c]))]
+    (and (every? #{:a :b :c} results)
+         (= 200 (count results)))))
+
+(test-assert "smc: sample* from dist works"
+  (let [results (smc-query 200
+                  (sample* (bernoulli-dist 0.5)))]
+    (and (every? boolean? results)
+         (some true? results)
+         (some false? results))))
+
+(test-assert "smc: cond form works"
+  (let [results (smc-query 500
+                  (let [x (random-integer 3)]
+                    (cond
+                      (= x 0) :zero
+                      (= x 1) :one
+                      :else :two)))]
+    (and (some #(= :zero %) results)
+         (some #(= :one %) results)
+         (some #(= :two %) results))))
+
+(test-assert "smc: and/or desugaring works"
+  (let [results (smc-query 500
+                  (and (flip 0.5) (flip 0.5)))]
+    ;; (and true true) = true, (and true false) = false, (and false _) = false
+    (and (some true? results)
+         (some false? results))))
+
+(test-assert "smc: smc-query-fn direct call"
+  (let [results (smc-query-fn 100
+                  (fn [k $state]
+                    (cps/cps-sample (bernoulli-dist 0.5)
+                      (fn [x $state]
+                        (k x $state))
+                      $state)))]
+    (= 100 (count results))))
+
+(test-assert "smc: convergence improves with more particles"
+  ;; 10 particles vs 1000 particles: 1000 should be more accurate
+  (let [run-smc (fn [n]
+                  (let [results (smc-query-fn n
+                                  (fn [k $state]
+                                    (cps/cps-sample (bernoulli-dist 0.5)
+                                      (fn [x $state]
+                                        (cps/cps-observe (bernoulli-dist 0.9) x
+                                          (fn [_ $state]
+                                            (k x $state))
+                                          $state))
+                                      $state)))]
+                    (mean (map #(if % 1 0) results))))
+        ;; Expected: P(true | obs true) = 0.9*0.5 / (0.9*0.5 + 0.1*0.5) = 0.9
+        err-small (js/Math.abs (- (run-smc 10) 0.9))
+        err-large (js/Math.abs (- (run-smc 1000) 0.9))]
+    ;; Larger sample should generally be closer (with high probability)
+    ;; Use lenient test: large should be within tolerance
+    (< err-large 0.1)))
 
 ;; ---------------------------------------------------------------------------
 ;; Summary

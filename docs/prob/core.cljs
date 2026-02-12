@@ -3,16 +3,17 @@
    Use these functions directly in nbb scripts — no Church strings needed.
 
    ERPs: flip, gaussian, beta, uniform, etc.
-   Inference: condition, factor, rejection-query-fn, mh-query-fn, etc.
+   Inference: condition, factor, rejection-query-fn, mh-query-fn, smc-query-fn, etc.
    Utilities: mem, mean, variance, sum, prod, sample-discrete
 
-   For query macros (rejection-query, mh-query, enumeration-query),
+   For query macros (rejection-query, mh-query, enumeration-query, smc-query),
    see prob.macros."
   (:require [prob.erp :as erp]
             [prob.inference :as inference]
             [prob.builtins :as builtins]
             [prob.dist :as dist]
-            [prob.math :as math]))
+            [prob.math :as math]
+            [prob.cps :as cps]))
 
 ;; ---------------------------------------------------------------------------
 ;; Elementary Random Primitives
@@ -87,7 +88,18 @@
 (def map-query-fn inference/map-query-fn)
 (def condition-equal inference/condition-equal)
 (def forward-query-fn inference/forward-query-fn)
+(def smc-query-fn inference/smc-query-fn)
 (def infer inference/infer)
+
+;; ---------------------------------------------------------------------------
+;; CPS runtime (for SMC)
+;; ---------------------------------------------------------------------------
+
+(def cps-sample cps/cps-sample)
+(def cps-observe cps/cps-observe)
+(def cps-factor cps/cps-factor)
+(def cps-condition cps/cps-condition)
+(def cps-of-expr cps/cps-of-expr)
 
 ;; ---------------------------------------------------------------------------
 ;; New distributions
