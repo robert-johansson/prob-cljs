@@ -30,9 +30,38 @@
     <li><a href="#beta">beta</a></li>
 
     <li class="section-group"><a href="#distributions">Distributions</a></li>
+    <li class="sub-group"><a href="#discrete-distributions">Discrete</a></li>
     <li><a href="#bernoulli-dist">bernoulli-dist</a></li>
+    <li><a href="#categorical-dist">categorical-dist</a></li>
+    <li><a href="#uniform-draw-dist">uniform-draw-dist</a></li>
+    <li><a href="#uniform-discrete-dist">uniform-discrete-dist</a></li>
+    <li><a href="#random-integer-dist">random-integer-dist</a></li>
+    <li><a href="#multinomial-dist">multinomial-dist</a></li>
+    <li><a href="#sample-discrete-dist">sample-discrete-dist</a></li>
+    <li><a href="#binomial-dist">binomial-dist</a></li>
+    <li><a href="#poisson-dist">poisson-dist</a></li>
+    <li><a href="#delta-dist">delta-dist</a></li>
+    <li class="sub-group"><a href="#continuous-distributions">Continuous</a></li>
     <li><a href="#gaussian-dist">gaussian-dist</a></li>
+    <li><a href="#uniform-dist">uniform-dist</a></li>
+    <li><a href="#beta-dist">beta-dist</a></li>
+    <li><a href="#gamma-dist">gamma-dist</a></li>
+    <li><a href="#exponential-dist">exponential-dist</a></li>
+    <li><a href="#cauchy-dist">cauchy-dist</a></li>
+    <li><a href="#laplace-dist">laplace-dist</a></li>
+    <li><a href="#lognormal-dist">lognormal-dist</a></li>
+    <li><a href="#student-t-dist">student-t-dist</a></li>
+    <li><a href="#chi-squared-dist">chi-squared-dist</a></li>
+    <li><a href="#logit-normal-dist">logit-normal-dist</a></li>
+    <li class="sub-group"><a href="#compound-distributions">Compound</a></li>
     <li><a href="#mixture-dist">mixture-dist</a></li>
+    <li><a href="#kde-dist">kde-dist</a></li>
+    <li><a href="#marginal-dist">marginal-dist</a></li>
+    <li class="sub-group"><a href="#dist-utilities">Utilities</a></li>
+    <li><a href="#entropy">entropy</a></li>
+    <li><a href="#kl-divergence">kl-divergence</a></li>
+    <li><a href="#discrete-pred">discrete? / continuous?</a></li>
+    <li><a href="#dist-pred">dist?</a></li>
 
     <li class="section-group"><a href="#inference">Inference</a></li>
     <li><a href="#rejection-query">rejection-query</a></li>
@@ -89,36 +118,330 @@
 
 <!-- ============================================================ -->
 <h2 id="distributions"><a href="#distributions">Distributions</a></h2>
-<p>Distribution objects implement the <code>IDistribution</code> protocol with <code>sample*</code> and <code>observe*</code>. Discrete distributions also implement <code>IEnumerable</code> with <code>enumerate*</code>.</p>
+<p>Distribution objects are first-class values that encapsulate sampling and scoring. They implement up to three protocols:</p>
+<ul>
+<li><strong>IDistribution</strong> &mdash; <code>sample*</code> and <code>observe*</code>. Draw random samples and compute log-probabilities. All 24 distributions implement this.</li>
+<li><strong>IEnumerable</strong> &mdash; <code>enumerate*</code>. Returns the support (all possible values). Implemented by discrete distributions with finite support.</li>
+<li><strong>IProposable</strong> &mdash; <code>propose*</code> and <code>propose-lp</code>. Drift proposals for efficient Metropolis-Hastings mixing. Implemented by 8 distributions.</li>
+</ul>
+<p>Use distribution objects (vs. ERP functions) when you need to <code>observe</code> data, compose distributions with <code>mixture-dist</code>, or pass distributions as first-class values.</p>
+<pre><code>;; Three protocols in action
+(let [d (bernoulli-dist 0.7)]
+  ;; IDistribution — every distribution has these
+  (display "sample:" (sample* d))
+  (display "log P(true):" (.toFixed (observe* d true) 4))
+  ;; IEnumerable — discrete distributions only
+  (display "support:" (enumerate* d))
+  ;; Type predicates
+  (display "discrete?:" (discrete? d))
+  (display "continuous?:" (continuous? (gaussian-dist))))</code></pre>
+
+<h3 id="discrete-distributions"><a href="#discrete-distributions">Discrete Distributions</a></h3>
+<p>Discrete distributions return values from a finite or countable set. Those with finite support implement <code>IEnumerable</code> for exact enumeration-based inference.</p>
 
 <div class="fn-entry" id="bernoulli-dist">
 <h3><a href="#bernoulli-dist"><code>bernoulli-dist</code></a></h3>
 <div class="fn-signature">(bernoulli-dist) (bernoulli-dist p)</div>
-<p class="fn-description">Create a Bernoulli distribution object. Supports <code>sample*</code>, <code>observe*</code>, and <code>enumerate*</code>.</p>
+<p class="fn-description">Bernoulli distribution. Returns <code>true</code> with probability <em>p</em> (default 0.5), <code>false</code> otherwise. Supports <code>enumerate*</code> and drift proposals.</p>
 <pre><code>(let [d (bernoulli-dist 0.7)]
   (display "sample:" (sample* d))
-  (display "log P(true):" (observe* d true))
-  (display "log P(false):" (observe* d false))
+  (display "log P(true):" (.toFixed (observe* d true) 4))
+  (display "log P(false):" (.toFixed (observe* d false) 4))
   (display "support:" (enumerate* d)))</code></pre>
 </div>
+
+<div class="fn-entry" id="categorical-dist">
+<h3><a href="#categorical-dist"><code>categorical-dist</code></a></h3>
+<div class="fn-signature">(categorical-dist weight-map) (categorical-dist categories weights)</div>
+<p class="fn-description">Categorical distribution over labeled categories with given weights. Accepts a map <code>{category weight ...}</code> or two sequences. Weights are normalized. Supports <code>enumerate*</code> and drift proposals.</p>
+<pre><code>(let [d (categorical-dist {"cat" 3 "dog" 5 "fish" 2})]
+  (display "sample:" (sample* d))
+  (display "log P(dog):" (.toFixed (observe* d "dog") 4))
+  (display "support:" (enumerate* d))
+  (hist (repeatedly 1000 #(sample* d)) "categorical draws"))</code></pre>
+</div>
+
+<div class="fn-entry" id="uniform-draw-dist">
+<h3><a href="#uniform-draw-dist"><code>uniform-draw-dist</code></a></h3>
+<div class="fn-signature">(uniform-draw-dist items)</div>
+<p class="fn-description">Discrete uniform distribution over items. Equal probability for each distinct item. Supports <code>enumerate*</code> and drift proposals.</p>
+<pre><code>(let [d (uniform-draw-dist ["red" "green" "blue"])]
+  (display "sample:" (sample* d))
+  (display "log P(red):" (.toFixed (observe* d "red") 4))
+  (display "support:" (enumerate* d))
+  (hist (repeatedly 1000 #(sample* d)) "uniform draws"))</code></pre>
+</div>
+
+<div class="fn-entry" id="uniform-discrete-dist">
+<h3><a href="#uniform-discrete-dist"><code>uniform-discrete-dist</code></a></h3>
+<div class="fn-signature">(uniform-discrete-dist lo hi)</div>
+<p class="fn-description">Discrete uniform over integers [<em>lo</em>, <em>hi</em>] inclusive. Supports <code>enumerate*</code> and drift proposals.</p>
+<pre><code>(let [d (uniform-discrete-dist 1 6)]
+  (display "sample:" (sample* d))
+  (display "log P(3):" (.toFixed (observe* d 3) 4))
+  (display "support:" (enumerate* d))
+  (hist (repeatedly 1000 #(sample* d)) "dice rolls"))</code></pre>
+</div>
+
+<div class="fn-entry" id="random-integer-dist">
+<h3><a href="#random-integer-dist"><code>random-integer-dist</code></a></h3>
+<div class="fn-signature">(random-integer-dist n)</div>
+<p class="fn-description">Discrete uniform over integers [0, <em>n</em>). Supports <code>enumerate*</code> and drift proposals.</p>
+<pre><code>(let [d (random-integer-dist 4)]
+  (display "sample:" (sample* d))
+  (display "log P(0):" (.toFixed (observe* d 0) 4))
+  (display "support:" (enumerate* d))
+  (hist (repeatedly 1000 #(sample* d)) "random integers [0,4)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="multinomial-dist">
+<h3><a href="#multinomial-dist"><code>multinomial-dist</code></a></h3>
+<div class="fn-signature">(multinomial-dist items probs)</div>
+<p class="fn-description">Weighted discrete distribution over labeled items. Weights are normalized to probabilities. Supports <code>enumerate*</code> and drift proposals.</p>
+<pre><code>(let [d (multinomial-dist ["a" "b" "c"] [1 2 7])]
+  (display "sample:" (sample* d))
+  (display "log P(c):" (.toFixed (observe* d "c") 4))
+  (display "support:" (enumerate* d))
+  (hist (repeatedly 1000 #(sample* d)) "weighted draws"))</code></pre>
+</div>
+
+<div class="fn-entry" id="sample-discrete-dist">
+<h3><a href="#sample-discrete-dist"><code>sample-discrete-dist</code></a></h3>
+<div class="fn-signature">(sample-discrete-dist weights)</div>
+<p class="fn-description">Weighted discrete distribution over indices [0, <em>n</em>). Returns an integer index, weighted by the given weights. Supports <code>enumerate*</code>.</p>
+<pre><code>(let [d (sample-discrete-dist [1 2 7])]
+  (display "sample index:" (sample* d))
+  (display "log P(idx=2):" (.toFixed (observe* d 2) 4))
+  (display "support:" (enumerate* d))
+  (hist (repeatedly 1000 #(sample* d)) "weighted index selection"))</code></pre>
+</div>
+
+<div class="fn-entry" id="binomial-dist">
+<h3><a href="#binomial-dist"><code>binomial-dist</code></a></h3>
+<div class="fn-signature">(binomial-dist n p)</div>
+<p class="fn-description">Binomial distribution: number of successes in <em>n</em> Bernoulli trials with probability <em>p</em>. Supports <code>enumerate*</code> (support is 0 to <em>n</em>).</p>
+<pre><code>(let [d (binomial-dist 10 0.3)]
+  (display "sample:" (sample* d))
+  (display "log P(3):" (.toFixed (observe* d 3) 4))
+  (display "support:" (enumerate* d))
+  (hist (repeatedly 1000 #(sample* d)) "Binomial(10, 0.3)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="poisson-dist">
+<h3><a href="#poisson-dist"><code>poisson-dist</code></a></h3>
+<div class="fn-signature">(poisson-dist lambda)</div>
+<p class="fn-description">Poisson distribution with rate \(\lambda\). Counts events in a fixed interval. Discrete but with infinite support &mdash; does not support <code>enumerate*</code>.</p>
+<pre><code>(let [d (poisson-dist 4.0)]
+  (display "sample:" (sample* d))
+  (display "log P(4):" (.toFixed (observe* d 4) 4))
+  (display "log P(0):" (.toFixed (observe* d 0) 4))
+  (hist (repeatedly 1000 #(sample* d)) "Poisson(4)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="delta-dist">
+<h3><a href="#delta-dist"><code>delta-dist</code></a></h3>
+<div class="fn-signature">(delta-dist v)</div>
+<p class="fn-description">Delta (point mass) distribution. Always returns <em>v</em>. <code>observe*</code> returns 0 for <em>v</em>, \(-\infty\) for anything else. Supports <code>enumerate*</code>.</p>
+<pre><code>(let [d (delta-dist 42)]
+  (display "sample:" (sample* d))
+  (display "log P(42):" (observe* d 42))
+  (display "log P(0):" (observe* d 0))
+  (display "support:" (enumerate* d)))</code></pre>
+</div>
+
+<h3 id="continuous-distributions"><a href="#continuous-distributions">Continuous Distributions</a></h3>
+<p>Continuous distributions return real-valued samples. Use <code>observe*</code> to compute the log-density at a point.</p>
 
 <div class="fn-entry" id="gaussian-dist">
 <h3><a href="#gaussian-dist"><code>gaussian-dist</code></a></h3>
 <div class="fn-signature">(gaussian-dist) (gaussian-dist mu sigma)</div>
-<p class="fn-description">Create a Gaussian distribution object. Continuous, so no <code>enumerate*</code>. Use <code>observe*</code> to compute the log-density at a point.</p>
+<p class="fn-description">Gaussian (normal) distribution with mean \(\mu\) and standard deviation \(\sigma\). Defaults to \(\mathcal{N}(0, 1)\). Supports drift proposals for efficient MH sampling.</p>
 <pre><code>(let [d (gaussian-dist 0 1)]
-  (display "sample:" (sample* d))
+  (display "sample:" (.toFixed (sample* d) 4))
   (display "log p(0):" (.toFixed (observe* d 0) 4))
   (display "log p(1.96):" (.toFixed (observe* d 1.96) 4))
-  (density (repeatedly 500 #(sample* d)) "samples from N(0,1)"))</code></pre>
+  (density (repeatedly 1000 #(sample* d)) "N(0, 1)"))</code></pre>
 </div>
+
+<div class="fn-entry" id="uniform-dist">
+<h3><a href="#uniform-dist"><code>uniform-dist</code></a></h3>
+<div class="fn-signature">(uniform-dist a b)</div>
+<p class="fn-description">Continuous uniform distribution on [<em>a</em>, <em>b</em>]. Constant density \(1/(b-a)\) within the interval, zero outside.</p>
+<pre><code>(let [d (uniform-dist 0 10)]
+  (display "sample:" (.toFixed (sample* d) 4))
+  (display "log p(5):" (.toFixed (observe* d 5) 4))
+  (display "log p(11):" (observe* d 11))
+  (density (repeatedly 1000 #(sample* d)) "Uniform(0, 10)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="beta-dist">
+<h3><a href="#beta-dist"><code>beta-dist</code></a></h3>
+<div class="fn-signature">(beta-dist a b)</div>
+<p class="fn-description">Beta distribution with shape parameters <em>a</em> (\(\alpha\)) and <em>b</em> (\(\beta\)). Values in (0, 1). Commonly used as a prior for probabilities. Supports drift proposals.</p>
+<pre><code>(let [d (beta-dist 2 5)]
+  (display "sample:" (.toFixed (sample* d) 4))
+  (display "log p(0.3):" (.toFixed (observe* d 0.3) 4))
+  (density (repeatedly 1000 #(sample* d)) "Beta(2, 5)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="gamma-dist">
+<h3><a href="#gamma-dist"><code>gamma-dist</code></a></h3>
+<div class="fn-signature">(gamma-dist shape scale)</div>
+<p class="fn-description">Gamma distribution with given <em>shape</em> and <em>scale</em>. Values in (0, \(\infty\)). Useful as a prior for positive quantities like rates and variances.</p>
+<pre><code>(let [d (gamma-dist 2 2)]
+  (display "sample:" (.toFixed (sample* d) 4))
+  (display "log p(3):" (.toFixed (observe* d 3) 4))
+  (density (repeatedly 1000 #(sample* d)) "Gamma(shape=2, scale=2)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="exponential-dist">
+<h3><a href="#exponential-dist"><code>exponential-dist</code></a></h3>
+<div class="fn-signature">(exponential-dist rate)</div>
+<p class="fn-description">Exponential distribution with given <em>rate</em> (inverse scale). Models time between events. Mean is \(1/\text{rate}\).</p>
+<pre><code>(let [d (exponential-dist 0.5)]
+  (display "sample:" (.toFixed (sample* d) 4))
+  (display "log p(2):" (.toFixed (observe* d 2) 4))
+  (density (repeatedly 1000 #(sample* d)) "Exponential(rate=0.5)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="cauchy-dist">
+<h3><a href="#cauchy-dist"><code>cauchy-dist</code></a></h3>
+<div class="fn-signature">(cauchy-dist location scale)</div>
+<p class="fn-description">Cauchy distribution with given <em>location</em> and <em>scale</em>. Heavy-tailed: no finite mean or variance. Useful as a robust alternative to the Gaussian.</p>
+<pre><code>(let [d (cauchy-dist 0 1)]
+  (display "sample:" (.toFixed (sample* d) 4))
+  (display "log p(0):" (.toFixed (observe* d 0) 4))
+  (density (repeatedly 1000 #(sample* d)) "Cauchy(0, 1)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="laplace-dist">
+<h3><a href="#laplace-dist"><code>laplace-dist</code></a></h3>
+<div class="fn-signature">(laplace-dist location scale)</div>
+<p class="fn-description">Laplace (double exponential) distribution. Sharper peak and heavier tails than Gaussian. Useful for sparse priors (L1 regularization).</p>
+<pre><code>(let [d (laplace-dist 0 1)]
+  (display "sample:" (.toFixed (sample* d) 4))
+  (display "log p(0):" (.toFixed (observe* d 0) 4))
+  (density (repeatedly 1000 #(sample* d)) "Laplace(0, 1)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="lognormal-dist">
+<h3><a href="#lognormal-dist"><code>lognormal-dist</code></a></h3>
+<div class="fn-signature">(lognormal-dist mu sigma)</div>
+<p class="fn-description">Log-normal distribution: \(\exp(\mathcal{N}(\mu, \sigma))\). Values in (0, \(\infty\)). Useful for modeling positive quantities with multiplicative noise.</p>
+<pre><code>(let [d (lognormal-dist 0 0.5)]
+  (display "sample:" (.toFixed (sample* d) 4))
+  (display "log p(1):" (.toFixed (observe* d 1) 4))
+  (density (repeatedly 1000 #(sample* d)) "LogNormal(0, 0.5)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="student-t-dist">
+<h3><a href="#student-t-dist"><code>student-t-dist</code></a></h3>
+<div class="fn-signature">(student-t-dist df) (student-t-dist df location scale)</div>
+<p class="fn-description">Student's t-distribution with <em>df</em> degrees of freedom, optional <em>location</em> and <em>scale</em> (default 0 and 1). Heavier tails than Gaussian; approaches \(\mathcal{N}\) as \(\nu \to \infty\).</p>
+<pre><code>(let [d (student-t-dist 3)]
+  (display "sample:" (.toFixed (sample* d) 4))
+  (display "log p(0):" (.toFixed (observe* d 0) 4))
+  (density (repeatedly 1000 #(sample* d)) "Student-t(df=3)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="chi-squared-dist">
+<h3><a href="#chi-squared-dist"><code>chi-squared-dist</code></a></h3>
+<div class="fn-signature">(chi-squared-dist df)</div>
+<p class="fn-description">Chi-squared distribution with <em>df</em> degrees of freedom. Equivalent to \(\text{Gamma}(df/2, 2)\). Commonly used in goodness-of-fit tests.</p>
+<pre><code>(let [d (chi-squared-dist 4)]
+  (display "sample:" (.toFixed (sample* d) 4))
+  (display "log p(3):" (.toFixed (observe* d 3) 4))
+  (density (repeatedly 1000 #(sample* d)) "Chi-squared(df=4)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="logit-normal-dist">
+<h3><a href="#logit-normal-dist"><code>logit-normal-dist</code></a></h3>
+<div class="fn-signature">(logit-normal-dist mu sigma)</div>
+<p class="fn-description">Logit-normal distribution: \(\text{sigmoid}(\mathcal{N}(\mu, \sigma))\). Values in (0, 1). Alternative to Beta for modeling proportions.</p>
+<pre><code>(let [d (logit-normal-dist 0 1)]
+  (display "sample:" (.toFixed (sample* d) 4))
+  (display "log p(0.5):" (.toFixed (observe* d 0.5) 4))
+  (density (repeatedly 1000 #(sample* d)) "LogitNormal(0, 1)"))</code></pre>
+</div>
+
+<h3 id="compound-distributions"><a href="#compound-distributions">Compound Distributions</a></h3>
+<p>Compound distributions build new distributions from existing ones or from data.</p>
 
 <div class="fn-entry" id="mixture-dist">
 <h3><a href="#mixture-dist"><code>mixture-dist</code></a></h3>
 <div class="fn-signature">(mixture-dist components weights)</div>
-<p class="fn-description">Mixture of distributions. <em>components</em> is a sequence of distribution objects, <em>weights</em> are the mixing proportions (need not sum to 1, will be normalized).</p>
+<p class="fn-description">Mixture of distributions. <em>components</em> is a sequence of distribution objects, <em>weights</em> are mixing proportions (need not sum to 1, will be normalized). The log-probability is computed via log-sum-exp over components.</p>
 <pre><code>(let [d (mixture-dist [(gaussian-dist -2 0.5) (gaussian-dist 2 0.5)] [1 1])]
+  (display "log p(0):" (.toFixed (observe* d 0) 4))
   (density (repeatedly 1000 #(sample* d)) "bimodal mixture"))</code></pre>
+</div>
+
+<div class="fn-entry" id="kde-dist">
+<h3><a href="#kde-dist"><code>kde-dist</code></a></h3>
+<div class="fn-signature">(kde-dist data) (kde-dist data bandwidth)</div>
+<p class="fn-description">Kernel density estimation with Gaussian kernels. Turns a collection of samples into a smooth continuous distribution. Bandwidth defaults to Silverman's rule of thumb.</p>
+<pre><code>(let [data [1.2 1.5 2.0 2.3 2.8 3.1]
+      d (kde-dist data)]
+  (display "sample:" (.toFixed (sample* d) 4))
+  (display "log p(2.0):" (.toFixed (observe* d 2.0) 4))
+  (density (repeatedly 1000 #(sample* d)) "KDE from 6 points"))</code></pre>
+</div>
+
+<div class="fn-entry" id="marginal-dist">
+<h3><a href="#marginal-dist"><code>marginal-dist</code></a></h3>
+<div class="fn-signature">(marginal-dist method thunk)</div>
+<p class="fn-description">Cached marginal distribution from inner inference. <em>method</em> is an inference function (e.g. <code>enumeration-query-fn</code>), <em>thunk</em> is a zero-arg model function. The result is computed once and cached. Supports <code>enumerate*</code>.</p>
+<pre><code>;; Wrap inner inference as a reusable distribution
+(let [d (marginal-dist enumeration-query-fn
+          (fn [] (let [a (flip) b (flip)]
+                   (condition (or a b))
+                   (list a b))))]
+  (display "sample:" (sample* d))
+  (display "support:" (enumerate* d))
+  (barplot d "P(a,b | a or b)"))</code></pre>
+</div>
+
+<h3 id="dist-utilities"><a href="#dist-utilities">Distribution Utilities</a></h3>
+<p>Functions for analyzing and comparing distributions.</p>
+
+<div class="fn-entry" id="entropy">
+<h3><a href="#entropy"><code>entropy</code></a></h3>
+<div class="fn-signature">(entropy dist)</div>
+<p class="fn-description">Shannon entropy \(H(p) = -\sum p(x) \ln p(x)\) of a discrete distribution. Distribution must implement <code>IEnumerable</code>. Maximum entropy is \(\ln(n)\) for a uniform distribution over <em>n</em> outcomes.</p>
+<pre><code>;; Maximum entropy for uniform, lower for biased
+(display "fair coin:" (.toFixed (entropy (bernoulli-dist 0.5)) 4))
+(display "biased coin:" (.toFixed (entropy (bernoulli-dist 0.9)) 4))
+(display "die (ln 6):" (.toFixed (entropy (uniform-discrete-dist 1 6)) 4))</code></pre>
+</div>
+
+<div class="fn-entry" id="kl-divergence">
+<h3><a href="#kl-divergence"><code>kl-divergence</code></a></h3>
+<div class="fn-signature">(kl-divergence p q)</div>
+<p class="fn-description">KL divergence \(D_{KL}(p \| q) = \sum p(x) \ln \frac{p(x)}{q(x)}\) for discrete distributions. Both must implement <code>IEnumerable</code>. Always \(\geq 0\), with equality iff \(p = q\). Not symmetric.</p>
+<pre><code>(let [p (bernoulli-dist 0.7)
+      q (bernoulli-dist 0.5)]
+  (display "KL(p||p):" (.toFixed (kl-divergence p p) 6))
+  (display "KL(p||q):" (.toFixed (kl-divergence p q) 4))
+  (display "KL(q||p):" (.toFixed (kl-divergence q p) 4)))</code></pre>
+</div>
+
+<div class="fn-entry" id="discrete-pred">
+<h3><a href="#discrete-pred"><code>discrete?</code> / <code>continuous?</code></a></h3>
+<div class="fn-signature">(discrete? dist) (continuous? dist)</div>
+<p class="fn-description">Type predicates. <code>discrete?</code> returns true if the distribution implements <code>IEnumerable</code> (has finite support). <code>continuous?</code> returns true if it implements <code>IDistribution</code> but not <code>IEnumerable</code>.</p>
+<pre><code>(display "bernoulli discrete?:" (discrete? (bernoulli-dist)))
+(display "gaussian discrete?:" (discrete? (gaussian-dist)))
+(display "gaussian continuous?:" (continuous? (gaussian-dist)))
+(display "poisson continuous?:" (continuous? (poisson-dist 3)))</code></pre>
+</div>
+
+<div class="fn-entry" id="dist-pred">
+<h3><a href="#dist-pred"><code>dist?</code></a></h3>
+<div class="fn-signature">(dist? x)</div>
+<p class="fn-description">Returns true if <em>x</em> implements <code>IDistribution</code>. Useful for checking whether a value is a distribution object or a plain value.</p>
+<pre><code>(display "dist object:" (dist? (gaussian-dist)))
+(display "plain number:" (dist? 42))
+(display "nil:" (dist? nil))</code></pre>
 </div>
 
 <!-- ============================================================ -->
@@ -322,8 +645,9 @@ function ensureScittleImports() {
       "                              random-integer-dist multinomial-dist sample-discrete-dist" +
       "                              binomial-dist poisson-dist categorical-dist" +
       "                              delta-dist cauchy-dist laplace-dist lognormal-dist" +
-      "                              student-t-dist mixture-dist kde-dist" +
-      "                              uniform-discrete-dist chi-squared-dist logit-normal-dist]])" +
+      "                              student-t-dist mixture-dist kde-dist marginal-dist" +
+      "                              uniform-discrete-dist chi-squared-dist logit-normal-dist" +
+      "                              entropy kl-divergence discrete? continuous?]])" +
       "(require '[prob.builtins :refer [expt]])" +
       "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
       "(require '[prob.viz :refer [hist density scatter barplot display lineplot table]])"

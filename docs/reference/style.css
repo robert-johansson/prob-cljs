@@ -29,6 +29,8 @@ body { font-family: Georgia, 'Times New Roman', serif; font-size: 17px; line-hei
 #sidebar li.active a { color: var(--accent-dark); border-left-color: var(--accent); font-weight: 600; }
 #sidebar .section-group { margin-bottom: 12px; }
 #sidebar .section-group > a { font-weight: 600; color: var(--fg); font-size: 13px; }
+#sidebar .sub-group { margin-top: 8px; margin-bottom: 2px; }
+#sidebar .sub-group > a { font-weight: 500; color: #888; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
 
 /* Content area */
 #content { flex: 1; min-width: 0; padding: 20px 0 60px 30px; }
