@@ -96,13 +96,44 @@
     <li><a href="#condition-equal">condition-equal</a></li>
 
     <li class="section-group"><a href="#utilities">Utilities</a></li>
-    <li><a href="#mem">mem</a></li>
+    <li class="sub-group"><a href="#statistics">Statistics</a></li>
     <li><a href="#mean">mean</a></li>
+    <li><a href="#variance-fn">variance / sd</a></li>
+    <li><a href="#sum-prod">sum / prod</a></li>
+    <li><a href="#mode">mode</a></li>
+    <li><a href="#weighted-mean">weighted-mean</a></li>
+    <li><a href="#weighted-variance">weighted-variance</a></li>
+    <li><a href="#expectation">expectation</a></li>
+    <li><a href="#empirical-distribution">empirical-distribution</a></li>
+    <li><a href="#softmax">softmax</a></li>
+    <li class="sub-group"><a href="#memoization">Memoization</a></li>
+    <li><a href="#mem">mem</a></li>
+    <li><a href="#cache">cache</a></li>
     <li><a href="#DPmem">DPmem</a></li>
+    <li class="sub-group"><a href="#list-primitives">List Primitives</a></li>
+    <li><a href="#pair">pair</a></li>
+    <li><a href="#car-cdr">car / cdr</a></li>
+    <li><a href="#repeat-fn">repeat-fn</a></li>
 
     <li class="section-group"><a href="#math">Math</a></li>
     <li><a href="#log-gamma-fn">log-gamma-fn</a></li>
+    <li><a href="#log-beta-fn">log-beta-fn</a></li>
+    <li><a href="#log-fact">log-fact</a></li>
+    <li><a href="#log-sum-exp">log-sum-exp</a></li>
+    <li><a href="#digamma">digamma</a></li>
     <li><a href="#erf">erf</a></li>
+
+    <li class="section-group"><a href="#visualization">Visualization</a></li>
+    <li><a href="#display-viz">display</a></li>
+    <li><a href="#hist">hist</a></li>
+    <li><a href="#density-viz">density</a></li>
+    <li><a href="#barplot">barplot</a></li>
+    <li><a href="#scatter-viz">scatter</a></li>
+    <li><a href="#lineplot-viz">lineplot</a></li>
+    <li><a href="#table-viz">table</a></li>
+    <li><a href="#heatmap-viz">heatmap</a></li>
+    <li><a href="#marginals-viz">marginals</a></li>
+    <li><a href="#auto-viz">auto</a></li>
   </ul>
 </nav>
 
@@ -758,7 +789,89 @@
 
 <!-- ============================================================ -->
 <h2 id="utilities"><a href="#utilities">Utilities</a></h2>
-<p>Helper functions for memoization, statistics, and stochastic processes.</p>
+<p>Helper functions for statistics, memoization, list operations, and stochastic processes.</p>
+
+<h3 id="statistics"><a href="#statistics">Statistics</a></h3>
+
+<div class="fn-entry" id="mean">
+<h3><a href="#mean"><code>mean</code></a></h3>
+<div class="fn-signature">(mean coll)</div>
+<p class="fn-description">Arithmetic mean of a collection of numbers.</p>
+<pre><code>(let [samples (repeatedly 1000 #(gaussian 5 2))]
+  (display "mean:" (.toFixed (mean samples) 3)))</code></pre>
+</div>
+
+<div class="fn-entry" id="variance-fn">
+<h3><a href="#variance-fn"><code>variance</code> / <code>sd</code></a></h3>
+<div class="fn-signature">(variance coll) (sd coll)</div>
+<p class="fn-description"><code>variance</code> computes the population variance \(\frac{1}{n}\sum(x_i - \bar{x})^2\). <code>sd</code> returns the standard deviation (square root of variance).</p>
+<pre><code>(let [samples (repeatedly 1000 #(gaussian 0 3))]
+  (display "variance:" (.toFixed (variance samples) 3))
+  (display "sd:" (.toFixed (sd samples) 3)))</code></pre>
+</div>
+
+<div class="fn-entry" id="sum-prod">
+<h3><a href="#sum-prod"><code>sum</code> / <code>prod</code></a></h3>
+<div class="fn-signature">(sum coll) (prod coll)</div>
+<p class="fn-description"><code>sum</code> computes \(\sum x_i\). <code>prod</code> computes \(\prod x_i\).</p>
+<pre><code>(display "sum 1..5:" (sum [1 2 3 4 5]))
+(display "prod 1..5:" (prod [1 2 3 4 5]))</code></pre>
+</div>
+
+<div class="fn-entry" id="mode">
+<h3><a href="#mode"><code>mode</code></a></h3>
+<div class="fn-signature">(mode coll)</div>
+<p class="fn-description">Most frequent value in a collection. If tied, returns one of the modes.</p>
+<pre><code>(display "mode:" (mode [1 2 2 3 3 3 4]))
+(display "mode:" (mode ["cat" "dog" "cat" "cat" "dog"]))</code></pre>
+</div>
+
+<div class="fn-entry" id="weighted-mean">
+<h3><a href="#weighted-mean"><code>weighted-mean</code></a></h3>
+<div class="fn-signature">(weighted-mean values weights)</div>
+<p class="fn-description">Weighted average \(\frac{\sum w_i x_i}{\sum w_i}\). Useful for computing expectations from importance samples.</p>
+<pre><code>(display "weighted:" (.toFixed (weighted-mean [1 2 3] [1 2 7]) 3))
+(display "uniform:" (.toFixed (weighted-mean [1 2 3] [1 1 1]) 3))</code></pre>
+</div>
+
+<div class="fn-entry" id="weighted-variance">
+<h3><a href="#weighted-variance"><code>weighted-variance</code></a></h3>
+<div class="fn-signature">(weighted-variance values weights)</div>
+<p class="fn-description">Weighted population variance \(\frac{\sum w_i (x_i - \mu_w)^2}{\sum w_i}\).</p>
+<pre><code>(display "weighted var:" (.toFixed (weighted-variance [1 2 3 4 5] [1 1 1 1 1]) 3))
+(display "compare var:" (.toFixed (variance [1 2 3 4 5]) 3))</code></pre>
+</div>
+
+<div class="fn-entry" id="expectation">
+<h3><a href="#expectation"><code>expectation</code></a></h3>
+<div class="fn-signature">(expectation samples) (expectation samples f)</div>
+<p class="fn-description">Expected value. With one argument, computes \(E[X]\) (same as <code>mean</code>). With a function, computes \(E[f(X)]\).</p>
+<pre><code>(let [samples (repeatedly 1000 #(gaussian 0 1))]
+  (display "E[X]:" (.toFixed (expectation samples) 3))
+  (display "E[X^2]:" (.toFixed (expectation samples #(* % %)) 3)))</code></pre>
+</div>
+
+<div class="fn-entry" id="empirical-distribution">
+<h3><a href="#empirical-distribution"><code>empirical-distribution</code></a></h3>
+<div class="fn-signature">(empirical-distribution samples)</div>
+<p class="fn-description">Build a frequency table from samples, normalized to probabilities. Returns a map <code>{value probability ...}</code>.</p>
+<pre><code>(let [samples (repeatedly 1000 #(uniform-draw ["a" "b" "c"]))
+      ed (empirical-distribution samples)]
+  (display "P(a):" (.toFixed (get ed "a") 3))
+  (display "P(b):" (.toFixed (get ed "b") 3))
+  (display "P(c):" (.toFixed (get ed "c") 3)))</code></pre>
+</div>
+
+<div class="fn-entry" id="softmax">
+<h3><a href="#softmax"><code>softmax</code></a></h3>
+<div class="fn-signature">(softmax utilities) (softmax utilities beta)</div>
+<p class="fn-description">Softmax (Luce choice rule / Boltzmann distribution). Converts utilities to probabilities: \(P(i) = \frac{e^{\beta V_i}}{\sum_j e^{\beta V_j}}\). Default \(\beta = 1\).</p>
+<pre><code>(display "softmax [1 2 3]:" (mapv #(.toFixed % 3) (softmax [1 2 3])))
+(display "beta=0.1 (flat):" (mapv #(.toFixed % 3) (softmax [1 2 3] 0.1)))
+(display "beta=10 (peaked):" (mapv #(.toFixed % 3) (softmax [1 2 3] 10)))</code></pre>
+</div>
+
+<h3 id="memoization"><a href="#memoization">Memoization</a></h3>
 
 <div class="fn-entry" id="mem">
 <h3><a href="#mem"><code>mem</code></a></h3>
@@ -771,14 +884,14 @@
   (display "bob:" (eye-color "bob")))</code></pre>
 </div>
 
-<div class="fn-entry" id="mean">
-<h3><a href="#mean"><code>mean</code></a></h3>
-<div class="fn-signature">(mean coll)</div>
-<p class="fn-description">Arithmetic mean of a collection of numbers.</p>
-<pre><code>(let [samples (repeatedly 1000 #(gaussian 5 2))]
-  (display "mean:" (.toFixed (mean samples) 3))
-  (display "variance:" (.toFixed (variance samples) 3))
-  (display "sd:" (.toFixed (sd samples) 3)))</code></pre>
+<div class="fn-entry" id="cache">
+<h3><a href="#cache"><code>cache</code></a></h3>
+<div class="fn-signature">(cache f) (cache f max-size)</div>
+<p class="fn-description">LRU-bounded deterministic memoization. Default <em>max-size</em> is 1000. Unlike <code>mem</code>, not trace-aware &mdash; suitable for caching pure computations.</p>
+<pre><code>(let [slow-fn (cache (fn [x] (display "computing for" x) (* x x)))]
+  (display "first call:" (slow-fn 5))
+  (display "cached call:" (slow-fn 5))
+  (display "new arg:" (slow-fn 6)))</code></pre>
 </div>
 
 <div class="fn-entry" id="DPmem">
@@ -788,6 +901,37 @@
 <pre><code>;; DP-memoized color generator: creates clusters of reuse
 (let [get-color (DPmem 1.0 (fn [category] (uniform-draw ["red" "blue" "green" "yellow"])))]
   (hist (repeatedly 20 #(get-color "fruit")) "DP-memoized colors"))</code></pre>
+</div>
+
+<h3 id="list-primitives"><a href="#list-primitives">List Primitives</a></h3>
+
+<div class="fn-entry" id="pair">
+<h3><a href="#pair"><code>pair</code></a></h3>
+<div class="fn-signature">(pair a b)</div>
+<p class="fn-description">Cons cell constructor. If <em>b</em> is a list/vector/nil, returns a list with <em>a</em> prepended. Otherwise creates a Pair record (dotted pair).</p>
+<pre><code>(display "pair to list:" (pair 1 [2 3]))
+(display "dotted pair:" (pair "key" "value"))
+(display "nested:" (pair 1 (pair 2 (pair 3 '()))))</code></pre>
+</div>
+
+<div class="fn-entry" id="car-cdr">
+<h3><a href="#car-cdr"><code>car</code> / <code>cdr</code></a></h3>
+<div class="fn-signature">(car x) (cdr x)</div>
+<p class="fn-description"><code>car</code> returns the first element; <code>cdr</code> returns the rest. Work on lists, vectors, and Pair records.</p>
+<pre><code>(let [p (pair "hello" "world")]
+  (display "car:" (car p))
+  (display "cdr:" (cdr p)))
+(let [lst (list 1 2 3)]
+  (display "car:" (car lst))
+  (display "cdr:" (cdr lst)))</code></pre>
+</div>
+
+<div class="fn-entry" id="repeat-fn">
+<h3><a href="#repeat-fn"><code>repeat-fn</code></a></h3>
+<div class="fn-signature">(repeat-fn n f)</div>
+<p class="fn-description">Call <em>f</em> (a zero-argument function) <em>n</em> times. Returns a lazy sequence of results. Equivalent to <code>(repeatedly n f)</code>.</p>
+<pre><code>(display "5 coin flips:" (repeat-fn 5 flip))
+(display "3 die rolls:" (repeat-fn 3 #(random-integer 6)))</code></pre>
 </div>
 
 <!-- ============================================================ -->
@@ -805,6 +949,48 @@
 (display "log-gamma-fn(100):" (.toFixed (log-gamma-fn 100) 4))</code></pre>
 </div>
 
+<div class="fn-entry" id="log-beta-fn">
+<h3><a href="#log-beta-fn"><code>log-beta-fn</code></a></h3>
+<div class="fn-signature">(log-beta-fn a b)</div>
+<p class="fn-description">Log of the Beta function: \(\ln B(a,b) = \ln\Gamma(a) + \ln\Gamma(b) - \ln\Gamma(a+b)\).</p>
+<pre><code>;; B(1,1) = 1, so ln B(1,1) = 0
+(display "log-beta-fn(1,1):" (.toFixed (log-beta-fn 1 1) 6))
+;; B(2,3) = 1/12
+(display "log-beta-fn(2,3):" (.toFixed (log-beta-fn 2 3) 6))
+(display "ln(1/12):" (.toFixed (js/Math.log (/ 1 12)) 6))</code></pre>
+</div>
+
+<div class="fn-entry" id="log-fact">
+<h3><a href="#log-fact"><code>log-fact</code></a></h3>
+<div class="fn-signature">(log-fact n)</div>
+<p class="fn-description">Log-factorial: \(\ln(n!) = \ln\Gamma(n+1)\). Useful for computing binomial coefficients without overflow.</p>
+<pre><code>(display "ln(5!):" (.toFixed (log-fact 5) 6))
+(display "ln(120):" (.toFixed (js/Math.log 120) 6))
+;; Compute log(100 choose 50) = log(100!) - log(50!) - log(50!)
+(display "ln(C(100,50)):" (.toFixed (- (log-fact 100) (log-fact 50) (log-fact 50)) 4))</code></pre>
+</div>
+
+<div class="fn-entry" id="log-sum-exp">
+<h3><a href="#log-sum-exp"><code>log-sum-exp</code></a></h3>
+<div class="fn-signature">(log-sum-exp a b) (log-sum-exp xs)</div>
+<p class="fn-description">Numerically stable \(\ln(\sum_i e^{x_i})\). Two-argument form: \(\ln(e^a + e^b)\). One-argument form: takes a collection. Essential for working with log-probabilities.</p>
+<pre><code>;; log(exp(-1000) + exp(-1001)) — naive version would underflow
+(display "log-sum-exp:" (.toFixed (log-sum-exp -1000 -1001) 4))
+;; Collection form
+(display "collection:" (.toFixed (log-sum-exp [-100 -101 -102]) 4))</code></pre>
+</div>
+
+<div class="fn-entry" id="digamma">
+<h3><a href="#digamma"><code>digamma</code></a></h3>
+<div class="fn-signature">(digamma x)</div>
+<p class="fn-description">Digamma function \(\psi(x) = \frac{d}{dx}\ln\Gamma(x)\). Used in gradient computations for Beta, Dirichlet, and Gamma distributions.</p>
+<pre><code>;; psi(1) = -gamma (Euler-Mascheroni constant)
+(display "digamma(1):" (.toFixed (digamma 1) 6))
+(display "~= -0.5772:" (.toFixed -0.5772156649 6))
+;; psi(n) = H_{n-1} - gamma for positive integers
+(display "digamma(5):" (.toFixed (digamma 5) 6))</code></pre>
+</div>
+
 <div class="fn-entry" id="erf">
 <h3><a href="#erf"><code>erf</code></a></h3>
 <div class="fn-signature">(erf x)</div>
@@ -815,6 +1001,111 @@
 (display "erf(2):" (.toFixed (erf 2) 6))
 ;; P(|X| < 1) for standard normal = erf(1/sqrt(2))
 (display "P(|Z|<1):" (.toFixed (erf (/ 1 (js/Math.sqrt 2))) 4))</code></pre>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="visualization"><a href="#visualization">Visualization</a></h2>
+<p>In-browser visualization functions for probability distributions, data, and inference results. All charts are rendered as inline SVG.</p>
+
+<div class="fn-entry" id="display-viz">
+<h3><a href="#display-viz"><code>display</code></a></h3>
+<div class="fn-signature">(display &amp; args)</div>
+<p class="fn-description">Print text to the output area. Joins arguments with spaces. The primary way to show non-graphical results.</p>
+<pre><code>(display "hello" "world")
+(display "pi ≈" (.toFixed js/Math.PI 6))
+(display "random:" (.toFixed (gaussian 0 1) 4))</code></pre>
+</div>
+
+<div class="fn-entry" id="hist">
+<h3><a href="#hist"><code>hist</code></a></h3>
+<div class="fn-signature">(hist data label)</div>
+<p class="fn-description">Frequency histogram. Shows the count of each distinct value as a bar. Best for discrete or categorical data.</p>
+<pre><code>(hist (repeatedly 1000 #(random-integer 6)) "die rolls")
+(hist (repeatedly 500 #(if (flip) "heads" "tails")) "coin flips")</code></pre>
+</div>
+
+<div class="fn-entry" id="density-viz">
+<h3><a href="#density-viz"><code>density</code></a></h3>
+<div class="fn-signature">(density data label)</div>
+<p class="fn-description">Kernel density estimate plot. Smooths continuous samples into an estimated PDF curve. Bandwidth is chosen automatically via Silverman's rule.</p>
+<pre><code>(density (repeatedly 1000 #(gaussian 0 1)) "standard normal")
+(density (repeatedly 1000 #(beta 2 5)) "Beta(2, 5)")</code></pre>
+</div>
+
+<div class="fn-entry" id="barplot">
+<h3><a href="#barplot"><code>barplot</code></a></h3>
+<div class="fn-signature">(barplot [values probs] label)</div>
+<p class="fn-description">Probability bar chart for enumeration results. Takes <code>[values probs]</code> as returned by <code>enumeration-query</code>. Shows each value with its exact probability labeled above the bar.</p>
+<pre><code>(barplot
+  (enumeration-query
+    (let [x (uniform-draw [1 2 3 4 5])]
+      (condition (odd? x))
+      x))
+  "P(x | x is odd)")</code></pre>
+</div>
+
+<div class="fn-entry" id="scatter-viz">
+<h3><a href="#scatter-viz"><code>scatter</code></a></h3>
+<div class="fn-signature">(scatter data label)</div>
+<p class="fn-description">Scatter plot from <code>[x y]</code> pairs. Includes axis labels and grid. Points are rendered as semi-transparent circles.</p>
+<pre><code>(scatter
+  (repeatedly 200 #(let [x (gaussian 0 1)] [x (+ (* 2 x) (gaussian 0 0.5))]))
+  "y = 2x + noise")</code></pre>
+</div>
+
+<div class="fn-entry" id="lineplot-viz">
+<h3><a href="#lineplot-viz"><code>lineplot</code></a></h3>
+<div class="fn-signature">(lineplot data label)</div>
+<p class="fn-description">Line chart. Data is a sequence of <code>[x y]</code> pairs (sorted by x) or a vector of series maps <code>{:data [[x y]...] :label "name"}</code> for multi-series. Includes a legend for multiple series.</p>
+<pre><code>;; Single series: sin(x)
+(lineplot (for [x (range 0 6.3 0.1)] [x (js/Math.sin x)]) "sin(x)")
+;; Multi-series
+(lineplot [{:data (for [x (range 0 6.3 0.1)] [x (js/Math.sin x)]) :label "sin"}
+           {:data (for [x (range 0 6.3 0.1)] [x (js/Math.cos x)]) :label "cos"}]
+  "trig functions")</code></pre>
+</div>
+
+<div class="fn-entry" id="table-viz">
+<h3><a href="#table-viz"><code>table</code></a></h3>
+<div class="fn-signature">(table data label)</div>
+<p class="fn-description">Render data as an HTML table. <em>data</em> is a sequence of rows, where each row is a sequence of cell values.</p>
+<pre><code>(table [["Name" "P(heads)"]
+        ["fair" 0.5]
+        ["biased" 0.8]
+        ["trick" 1.0]]
+  "coin types")</code></pre>
+</div>
+
+<div class="fn-entry" id="heatmap-viz">
+<h3><a href="#heatmap-viz"><code>heatmap</code></a></h3>
+<div class="fn-signature">(heatmap data label)</div>
+<p class="fn-description">Color-mapped grid. <em>data</em> is either a matrix (sequence of rows) or a sequence of <code>[x y value]</code> triples. Includes axis labels and a color scale legend.</p>
+<pre><code>;; Matrix form: 2D Gaussian bump
+(heatmap
+  (for [i (range 5)]
+    (for [j (range 5)]
+      (js/Math.exp (- 0 (+ (* (- i 2) (- i 2)) (* (- j 2) (- j 2)))))))
+  "Gaussian bump")</code></pre>
+</div>
+
+<div class="fn-entry" id="marginals-viz">
+<h3><a href="#marginals-viz"><code>marginals</code></a></h3>
+<div class="fn-signature">(marginals data label)</div>
+<p class="fn-description">Plot marginal distributions for multi-dimensional samples. Accepts a sequence of maps (one plot per key) or a sequence of vectors (one plot per index). Automatically chooses <code>density</code> for numeric dimensions and <code>hist</code> for categorical.</p>
+<pre><code>;; Sequence of maps — one density per key
+(marginals
+  (repeatedly 500 #(hash-map :mu (gaussian 0 1) :sigma (js/Math.abs (gaussian 0 1))))
+  "parameters")</code></pre>
+</div>
+
+<div class="fn-entry" id="auto-viz">
+<h3><a href="#auto-viz"><code>auto</code></a></h3>
+<div class="fn-signature">(auto data label)</div>
+<p class="fn-description">Auto-detect the best visualization for the data. Dispatches to <code>barplot</code> for <code>[values probs]</code> pairs, <code>scatter</code>/<code>lineplot</code> for numeric <code>[x y]</code> data, <code>marginals</code> for maps, <code>density</code> for many distinct numbers, or <code>hist</code> for categorical data.</p>
+<pre><code>;; Auto picks density for continuous data
+(auto (repeatedly 1000 #(gaussian 0 1)) "auto: continuous")
+;; Auto picks barplot for enumeration result
+(auto (enumeration-query (let [x (flip)] (condition x) x)) "auto: enumeration")</code></pre>
 </div>
 
 </div><!-- #content -->
@@ -867,9 +1158,12 @@ function ensureScittleImports() {
       "                              condition factor observe rejection-query-fn mh-query-fn" +
       "                              enumeration-query-fn forward-query-fn importance-query-fn" +
       "                              map-query-fn mh-query-scored-fn infer condition-equal" +
-      "                              mem mean variance sd sum prod" +
+      "                              mem mean variance sd sum prod mode" +
+      "                              weighted-mean weighted-variance expectation" +
+      "                              empirical-distribution softmax repeat-fn" +
       "                              sample* observe* dist? enumerate*" +
-      "                              DPmem cache log-gamma-fn log-beta-fn erf digamma]])" +
+      "                              DPmem cache log-gamma-fn log-beta-fn log-fact" +
+      "                              log-sum-exp erf digamma]])" +
       "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
       "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
       "                              exponential-dist dirichlet-dist uniform-draw-dist" +
@@ -879,10 +1173,10 @@ function ensureScittleImports() {
       "                              student-t-dist mixture-dist kde-dist marginal-dist" +
       "                              uniform-discrete-dist chi-squared-dist logit-normal-dist" +
       "                              entropy kl-divergence discrete? continuous?]])" +
-      "(require '[prob.builtins :refer [expt]])" +
+      "(require '[prob.builtins :refer [expt pair car cdr pair?]])" +
       "(require '[prob.macros :refer [rejection-query mh-query enumeration-query" +
       "                                  forward-query importance-query map-query mh-query-scored]])" +
-      "(require '[prob.viz :refer [hist density scatter barplot display lineplot table]])"
+      "(require '[prob.viz :refer [hist density scatter barplot display lineplot table heatmap marginals auto]])"
     );
 
     _scittleReady = true;
