@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo_probcljs.png" alt="prob-cljs logo" width="400">
+</p>
+
 # prob-cljs
 
 Probabilistic programming as a ClojureScript library. Zero dependencies.
