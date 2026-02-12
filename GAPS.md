@@ -301,6 +301,7 @@ Required for: HMC, variational inference (BBVB/ELBO). Not needed for MCMC or SMC
 | `mode` | Yes | — | Yes | **Done** |
 | `kde` (function) | Yes (Epanechnikov kernel) | — | `kde-dist` (Gaussian kernel, Silverman bandwidth) | **Done** |
 | KL divergence | — | Yes | `(kl-divergence p q)` for discrete dists | **Done** |
+| `softmax` | Yes (in `adnn` tensors) | — | `(softmax utilities beta)` — Luce choice rule with inverse temperature | **Done** |
 | L2 distance | — | Yes | not implemented | Low priority |
 | Kolmogorov-Smirnov distance | — | Yes | not implemented | Low priority |
 
