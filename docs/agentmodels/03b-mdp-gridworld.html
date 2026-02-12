@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AgentModels: MDPs and Gridworld</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Modeling Agents with Probabilistic Programs</a></div>
+    <ul id="nav">
+      <li><a href="03a-mdp.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">3.2 MDPs and Gridworld</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#hiking-problem">The Hiking Problem</a></li>
+<li><a href="#stochastic-transitions">Stochastic Transitions</a></li>
+<li><a href="#noisy-agents">Noisy Agents vs Noisy Transitions</a></li>
+<li><a href="#policies">Plans and Policies</a></li>
+<li><a href="#exercises">Exercises</a></li>
+</ul>
+</div>
+
+<p>In the <a href="03a-mdp.html">previous section</a>, we introduced MDPs with a simple integer line and a restaurant gridworld. Here we explore a richer gridworld environment: the <strong>hiking problem</strong>. This illustrates how stochastic transitions, agent noise, and start position all affect the agent&rsquo;s plan.</p>
+
+<h1 id="hiking-problem"><a href="#hiking-problem">The Hiking Problem</a></h1>
+
+<p>Alice is hiking and can head for either the <strong>West</strong> peak or the <strong>East</strong> peak. Both peaks have scenic views (positive utility), but there&rsquo;s a steep <strong>Hill</strong> in the middle that she wants to avoid (negative utility). The terrain forms a grid:</p>
+
+<pre><code>;; The hiking problem: deterministic agent
+(def hiking-grid
+  [[" " " " " " " " " "]
+   [" " "#" " " "#" " "]
+   [{:name "West" :terminal true} " " {:name "Hill"} " " {:name "East" :terminal true}]
+   [" " "#" " " "#" " "]
+   [" " " " " " " " " "]])
+
+(def mdp (make-gridworld-mdp
+           {:grid hiking-grid :start [2 0] :total-time 10}))
+
+(def world (:world mdp))
+(def start (:start-state mdp))
+
+(def utility-fn
+  (make-utility-function world
+    {"West" 10 "East" 10 "Hill" -10 :time-cost -0.1}))
+
+(def agent (make-mdp-agent
+             {:utility utility-fn :alpha 100}
+             world))
+
+(def trajectory (simulate-mdp start world agent))
+
+(draw-gridworld world
+  {:trajectory trajectory
+   :label "Hiking: deterministic agent (West and East equal)"})</code></pre>
+
+<p>With equal utility for both peaks, the agent picks one (both are equidistant). Let&rsquo;s make the West peak slightly better:</p>
+
+<pre><code>;; Hiking with asymmetric utilities
+(def hiking-grid
+  [[" " " " " " " " " "]
+   [" " "#" " " "#" " "]
+   [{:name "West" :terminal true} " " {:name "Hill"} " " {:name "East" :terminal true}]
+   [" " "#" " " "#" " "]
+   [" " " " " " " " " "]])
+
+(def mdp (make-gridworld-mdp
+           {:grid hiking-grid :start [2 0] :total-time 10}))
+
+(def world (:world mdp))
+(def start (:start-state mdp))
+
+(def utility-fn
+  (make-utility-function world
+    {"West" 10 "East" 5 "Hill" -10 :time-cost -0.1}))
+
+(def agent (make-mdp-agent
+             {:utility utility-fn :alpha 100}
+             world))
+
+(def trajectory (simulate-mdp start world agent))
+
+(draw-gridworld world
+  {:trajectory trajectory
+   :label "Hiking: West peak preferred (utility 10 vs 5)"})</code></pre>
+
+<p>The agent heads left toward the West peak, carefully avoiding the Hill in the center.</p>
+
+<h1 id="stochastic-transitions"><a href="#stochastic-transitions">Stochastic Transitions</a></h1>
+
+<p>Real hiking involves uncertainty: you might slip on a rocky trail and end up one cell off from where you intended. We model this with a <strong>transition noise probability</strong>. With <code>:transition-noise-prob 0.1</code>, there&rsquo;s a 10% chance (split equally between the two orthogonal directions) that the agent slips.</p>
+
+<p>This changes the agent&rsquo;s planning: risky paths near the dangerous Hill become less attractive, even if they&rsquo;re shorter.</p>
+
+<pre><code>;; Stochastic transitions: agent avoids the risky center path
+(def hiking-grid
+  [[" " " " " " " " " "]
+   [" " "#" " " "#" " "]
+   [{:name "West" :terminal true} " " {:name "Hill"} " " {:name "East" :terminal true}]
+   [" " "#" " " "#" " "]
+   [" " " " " " " " " "]])
+
+(def mdp (make-gridworld-mdp
+           {:grid hiking-grid :start [2 0]
+            :total-time 12
+            :transition-noise-prob 0.1}))
+
+(def world (:world mdp))
+(def start (:start-state mdp))
+
+(def utility-fn
+  (make-utility-function world
+    {"West" 10 "East" 5 "Hill" -10 :time-cost -0.1}))
+
+(def agent (make-mdp-agent
+             {:utility utility-fn :alpha 100}
+             world))
+
+(def trajectory (simulate-mdp start world agent))
+
+(draw-gridworld world
+  {:trajectory trajectory
+   :label "Stochastic transitions (noise=0.1): safer route"})</code></pre>
+
+<p>With noisy transitions, the agent may take a wider path around the Hill to reduce the chance of accidentally stepping on it. Compare this with the deterministic case above&mdash;the agent was willing to pass right by the Hill when transitions were certain.</p>
+
+<h1 id="noisy-agents"><a href="#noisy-agents">Noisy Agents vs Noisy Transitions</a></h1>
+
+<p>There are two kinds of noise in our framework:</p>
+<ul>
+<li><strong>Transition noise</strong>: the world is unpredictable (you might slip). Set via <code>:transition-noise-prob</code>.</li>
+<li><strong>Agent noise</strong>: the agent is a noisy optimizer (softmax). Set via <code>:alpha</code>.</li>
+</ul>
+
+<p>A low \(\alpha\) means the agent doesn&rsquo;t strongly optimize&mdash;it explores more randomly. Let&rsquo;s compare a near-optimal agent (\(\alpha = 100\)) with a noisy one (\(\alpha = 1\)):</p>
+
+<pre><code>;; Low alpha: the agent explores more randomly
+(def hiking-grid
+  [[" " " " " " " " " "]
+   [" " "#" " " "#" " "]
+   [{:name "West" :terminal true} " " {:name "Hill"} " " {:name "East" :terminal true}]
+   [" " "#" " " "#" " "]
+   [" " " " " " " " " "]])
+
+(def mdp (make-gridworld-mdp
+           {:grid hiking-grid :start [2 0] :total-time 10}))
+
+(def world (:world mdp))
+(def start (:start-state mdp))
+
+(def utility-fn
+  (make-utility-function world
+    {"West" 10 "East" 5 "Hill" -10 :time-cost -0.1}))
+
+;; Near-optimal agent
+(def optimal-agent (make-mdp-agent
+                     {:utility utility-fn :alpha 100}
+                     world))
+
+;; Noisy agent
+(def noisy-agent (make-mdp-agent
+                   {:utility utility-fn :alpha 1}
+                   world))
+
+(display "=== Near-optimal agent (alpha=100) ===")
+(def traj1 (simulate-mdp start world optimal-agent))
+(draw-gridworld world {:trajectory traj1 :label "alpha = 100"})
+
+(display "=== Noisy agent (alpha=1) ===")
+(def traj2 (simulate-mdp start world noisy-agent))
+(draw-gridworld world {:trajectory traj2 :label "alpha = 1 (noisy)"})</code></pre>
+
+<p>The near-optimal agent takes a direct path to the West peak. The noisy agent may wander, sometimes heading toward the lower-value East peak or even drifting near the Hill. Run this multiple times to see the variety of noisy-agent trajectories.</p>
+
+<h1 id="policies"><a href="#policies">Plans and Policies</a></h1>
+
+<p>An MDP agent doesn&rsquo;t just compute a single path&mdash;it computes a <strong>policy</strong>: a mapping from every reachable state to an action distribution. This means the agent has a <em>contingency plan</em> for every situation it might encounter.</p>
+
+<p>We can see this by starting the agent from a different position. Even without re-planning, the cached policy tells it what to do:</p>
+
+<pre><code>;; Different starting positions, same grid
+(def hiking-grid
+  [[" " " " " " " " " "]
+   [" " "#" " " "#" " "]
+   [{:name "West" :terminal true} " " {:name "Hill"} " " {:name "East" :terminal true}]
+   [" " "#" " " "#" " "]
+   [" " " " " " " " " "]])
+
+;; Start from bottom-left
+(def mdp1 (make-gridworld-mdp
+            {:grid hiking-grid :start [0 0] :total-time 10}))
+(def world1 (:world mdp1))
+(def utility-fn1 (make-utility-function world1
+                   {"West" 10 "East" 5 "Hill" -10 :time-cost -0.1}))
+(def agent1 (make-mdp-agent {:utility utility-fn1 :alpha 100} world1))
+(def traj1 (simulate-mdp (:start-state mdp1) world1 agent1))
+(draw-gridworld world1 {:trajectory traj1 :label "Starting from [0,0]"})
+
+;; Start from bottom-right
+(def mdp2 (make-gridworld-mdp
+            {:grid hiking-grid :start [4 0] :total-time 10}))
+(def world2 (:world mdp2))
+(def utility-fn2 (make-utility-function world2
+                   {"West" 10 "East" 5 "Hill" -10 :time-cost -0.1}))
+(def agent2 (make-mdp-agent {:utility utility-fn2 :alpha 100} world2))
+(def traj2 (simulate-mdp (:start-state mdp2) world2 agent2))
+(draw-gridworld world2 {:trajectory traj2 :label "Starting from [4,0]"})</code></pre>
+
+<p>Starting from [0,0] (bottom-left), the agent heads directly to the nearby West peak. Starting from [4,0] (bottom-right), the agent faces a trade-off: the East peak is closer but worth less. Depending on the time cost and utilities, it might go for the closer East peak or make the longer journey to the West.</p>
+
+<h1 id="exercises"><a href="#exercises">Exercises</a></h1>
+
+<h2>Exercise 1: Risk aversion</h2>
+<p>In the stochastic transitions example, increase the transition noise to 0.2 or 0.3. How does the agent&rsquo;s path change? At what noise level does the agent switch from the West peak to the East peak (or avoid both)?</p>
+
+<h2>Exercise 2: Time pressure</h2>
+<p>With the hiking grid, reduce <code>:total-time</code> to 6. Which peak does the agent go for? How does this change if you start from [0,0] vs [4,0]?</p>
+
+<h2>Exercise 3: Custom gridworld</h2>
+<p>Design your own gridworld with at least 3 named features and some walls. Create utility functions that produce interesting agent behavior (e.g., an agent that takes a detour to collect a bonus before heading to the main goal).</p>
+
+<h2>Exercise 4: Alpha exploration</h2>
+<p>Using the hiking grid, systematically vary alpha from 0.1 to 100. At what value does the agent&rsquo;s behavior become essentially optimal? Run each alpha setting 5 times and report how often the agent reaches the West peak.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="03a-mdp.html">&larr; Chapter 3.1: Sequential Decision Problems</a>
+    <span></span>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/cps_transform.cljc',
+    '../prob/cps.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs',
+    'agents/gridworld.cljs',
+    'agents/mdp.cljs',
+    'viz-agents.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot display]])" +
+      "(require '[prob.agents.gridworld :refer [make-gridworld-mdp make-utility-function]])" +
+      "(require '[prob.agents.mdp :refer [make-mdp-agent simulate-mdp]])" +
+      "(require '[prob.agents.viz :refer [draw-gridworld]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>

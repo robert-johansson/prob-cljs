@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AgentModels: Sequential Decision Problems</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Modeling Agents with Probabilistic Programs</a></div>
+    <ul id="nav">
+      <li><a href="03-agents-as-programs.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+      <li><a href="03b-mdp-gridworld.html">Next &rarr;</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">3.1 Sequential Decision Problems: MDPs</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#introduction">Introduction</a></li>
+<li><a href="#mdp-definition">Markov Decision Processes</a></li>
+<li><a href="#integer-line">MDP on an Integer Line</a></li>
+<li><a href="#memoization">Memoized Recursive Planning</a></li>
+<li><a href="#restaurant-choice">Restaurant Choice on a Grid</a></li>
+<li><a href="#exercises">Exercises</a></li>
+</ul>
+</div>
+
+<h1 id="introduction"><a href="#introduction">Introduction</a></h1>
+
+<p>The <a href="03-agents-as-programs.html">previous chapter</a> modeled agents making a <em>single</em> choice (e.g. picking a restaurant). But most real decisions are <em>sequential</em>: you take an action, end up in a new state, and must decide again. The route Bob takes to the donut shop depends on the layout of the streets, the traffic, and how much time he has.</p>
+
+<p>This chapter introduces <strong>Markov Decision Processes (MDPs)</strong>&mdash;the simplest framework for sequential decision-making. An MDP agent plans ahead by computing the expected utility of each possible future trajectory, then chooses the action that looks best right now.</p>
+
+<h1 id="mdp-definition"><a href="#mdp-definition">Markov Decision Processes</a></h1>
+
+<p>An MDP is defined by:</p>
+<ul>
+<li><strong>States</strong> \(S\): the possible situations the agent can be in</li>
+<li><strong>Actions</strong> \(A(s)\): the available actions in each state</li>
+<li><strong>Transition function</strong> \(T(s, a) \to s'\): how actions change the state</li>
+<li><strong>Utility function</strong> \(U(s, a)\): the immediate reward for taking action \(a\) in state \(s\)</li>
+</ul>
+
+<p>The agent&rsquo;s goal is to maximize <em>total expected utility</em> over its remaining time. For a finite-horizon MDP with \(n\) time steps remaining, the <strong>expected utility</strong> of taking action \(a\) in state \(s\) is:</p>
+
+\[ EU(s, a) = U(s', a) + \mathbb{E}\bigl[EU(s', a^*)\bigr] \]
+
+<p>where \(s' = T(s, a)\) and \(a^*\) is the action chosen in the next state. This recursive definition says: the value of an action is the immediate reward plus the expected future value.</p>
+
+<p>A <strong>softmax</strong> agent chooses actions with probability proportional to their exponentiated expected utility:</p>
+
+\[ P(a \mid s) \propto \exp\bigl(\alpha \cdot EU(s, a)\bigr) \]
+
+<h1 id="integer-line"><a href="#integer-line">MDP on an Integer Line</a></h1>
+
+<p>Let&rsquo;s start with the simplest possible MDP: an agent on an integer number line. The agent starts at position 0 and can move left or right. There are rewards at several positions: a big reward at position 3 and a smaller one at position &minus;2. The agent uses a softmax decision rule with \(\alpha = 0.1\).</p>
+
+<p>First, let&rsquo;s build the MDP components directly&mdash;without any library&mdash;and have the agent make just its <em>first</em> action choice:</p>
+
+<pre><code>;; Integer line MDP — first action only
+(def actions ["left" "right"])
+
+(defn transition [state action]
+  (case action
+    "left"  (dec state)
+    "right" (inc state)))
+
+(defn utility [state]
+  (case state 3 10, -2 5, 0))
+
+(def alpha 0.1)
+
+;; Expected utility with 1 step remaining: just the immediate reward
+(defn expected-utility-1 [state action]
+  (utility (transition state action)))
+
+(display "EU of left:" (expected-utility-1 0 "left"))
+(display "EU of right:" (expected-utility-1 0 "right"))
+
+;; The agent's first choice from position 0, with 1 step
+(barplot
+  (enumeration-query
+    (let [action (uniform-draw actions)]
+      (factor (* alpha (expected-utility-1 0 action)))
+      action))
+  "First action from position 0 (1 step, alpha=0.1)")</code></pre>
+
+<p>With only 1 step, neither reward is reachable from position 0, so both actions have expected utility 0 and the agent chooses uniformly at random. The agent is <em>myopic</em>&mdash;it can&rsquo;t see far enough ahead to prefer one direction. Let&rsquo;s fix this by computing expected utility <em>recursively</em>:</p>
+
+<pre><code>;; Integer line MDP — recursive planning
+(def actions ["left" "right"])
+
+(defn transition [state action]
+  (case action
+    "left"  (dec state)
+    "right" (inc state)))
+
+(defn utility [state]
+  (case state 3 10, -2 5, 0))
+
+(def alpha 0.1)
+
+;; Mutual recursion: act and expected-utility
+(declare act expected-utility)
+
+(defn act [state time-left]
+  (enumeration-query-fn
+    (fn []
+      (let [action (uniform-draw actions)]
+        (factor (* alpha (expected-utility state action time-left)))
+        action))))
+
+(defn expected-utility [state action time-left]
+  (let [next-state (transition state action)
+        u (utility next-state)]
+    (if (<= time-left 1)
+      u
+      (let [[acts probs] (act next-state (dec time-left))]
+        (+ u (reduce + 0
+               (map (fn [a p]
+                      (* p (expected-utility next-state a (dec time-left))))
+                    acts probs)))))))
+
+;; Agent with 5 steps — enough to reach either reward
+(display "EU of left (5 steps):" (.toFixed (expected-utility 0 "left" 5) 2))
+(display "EU of right (5 steps):" (.toFixed (expected-utility 0 "right" 5) 2))
+(barplot (act 0 5) "Action from position 0 (5 steps, alpha=0.1)")
+
+;; Simulate the full trajectory
+(defn simulate [state time-left]
+  (if (<= time-left 0)
+    [state]
+    (let [[acts probs] (act state time-left)
+          action (categorical acts probs)
+          next-state (transition state action)]
+      (cons state (simulate next-state (dec time-left))))))
+
+(display "Trajectory:" (vec (simulate 0 5)))</code></pre>
+
+<p>Now the agent can plan ahead! It sees that going right for 3 steps reaches the big reward (utility 10), while going left for 2 steps reaches the smaller one (utility 5). The softmax agent (\(\alpha = 0.1\)) prefers right but still gives some probability to left. Try changing \(\alpha\) to see how it affects the choice.</p>
+
+<h1 id="memoization"><a href="#memoization">Memoized Recursive Planning</a></h1>
+
+<p>The recursive computation above is correct but slow: the same sub-problems get solved repeatedly. For example, <code>(expected-utility 1 "right" 2)</code> might be computed many times along different paths.</p>
+
+<p>We fix this with <strong>memoization</strong>&mdash;caching results by state and time. This turns exponential planning into polynomial dynamic programming. We use a plain atom-based cache (not prob-cljs&rsquo;s <code>mem</code>, which is trace-aware and resets per inference execution):</p>
+
+<pre><code>;; Memoized MDP planning with atom-based cache
+(def actions ["left" "right"])
+
+(defn transition [state action]
+  (case action "left" (dec state) "right" (inc state)))
+
+(defn utility [state]
+  (case state 3 10, -2 5, 0))
+
+(def alpha 0.1)
+
+;; Atom-based memoization
+(def eu-cache (atom {}))
+(def act-cache (atom {}))
+
+(declare act expected-utility)
+
+(defn act [state time-left]
+  (let [key [state time-left]]
+    (if-let [cached (get @act-cache key)]
+      cached
+      (let [result (enumeration-query-fn
+                     (fn []
+                       (let [action (uniform-draw actions)]
+                         (factor (* alpha (expected-utility state action time-left)))
+                         action)))]
+        (swap! act-cache assoc key result)
+        result))))
+
+(defn expected-utility [state action time-left]
+  (let [key [state action time-left]]
+    (if-let [cached (get @eu-cache key)]
+      cached
+      (let [next-state (transition state action)
+            u (utility next-state)
+            result (if (<= time-left 1)
+                     u
+                     (let [[acts probs] (act next-state (dec time-left))]
+                       (+ u (reduce + 0
+                              (map (fn [a p]
+                                     (* p (expected-utility
+                                            next-state a (dec time-left))))
+                                   acts probs)))))]
+        (swap! eu-cache assoc key result)
+        result))))
+
+(defn simulate [state time-left]
+  (if (<= time-left 0)
+    [state]
+    (let [[acts probs] (act state time-left)
+          action (categorical acts probs)
+          next-state (transition state action)]
+      (cons state (simulate next-state (dec time-left))))))
+
+;; Now we can plan farther ahead efficiently
+(display "EU of right from 0:" (.toFixed (expected-utility 0 "right" 8) 2))
+(display "EU of left from 0:" (.toFixed (expected-utility 0 "left" 8) 2))
+(barplot (act 0 8) "Action from position 0 (8 steps, alpha=0.1)")
+(display "Trajectory:" (vec (simulate 0 8)))
+(display "Cache sizes — EU:" (count @eu-cache) "Act:" (count @act-cache))</code></pre>
+
+<p>With memoization, the agent can plan many steps ahead efficiently. The cached results form a <em>policy</em>&mdash;a mapping from states to action distributions.</p>
+
+<h1 id="restaurant-choice"><a href="#restaurant-choice">Restaurant Choice on a Grid</a></h1>
+
+<p>Now let&rsquo;s put the MDP agent in a proper environment: a 2D gridworld. Bob starts at position [2,0] and wants to reach his favorite restaurant. The grid has walls, open spaces, and named locations.</p>
+
+<p>We use the gridworld library functions <code>make-gridworld-mdp</code>, <code>make-utility-function</code>, <code>make-mdp-agent</code>, and <code>simulate-mdp</code> to set up and solve the problem:</p>
+
+<pre><code>;; Bob's restaurant choice on a gridworld
+(def grid
+  [[{:name "Donut" :terminal true} " " " " " " {:name "Noodle" :terminal true}]
+   [" " "#" " " "#" " "]
+   [" " "#" " " "#" " "]
+   [" " " " " " " " " "]
+   [" " " " " " " " " "]])
+
+(def mdp (make-gridworld-mdp
+           {:grid grid :start [2 0] :total-time 10}))
+
+(def world (:world mdp))
+(def start (:start-state mdp))
+
+(def utility-fn
+  (make-utility-function world
+    {"Donut" 1 "Noodle" 1 :time-cost -0.1}))
+
+(def agent (make-mdp-agent
+             {:utility utility-fn :alpha 100}
+             world))
+
+(def trajectory (simulate-mdp start world agent))
+
+(draw-gridworld world
+  {:trajectory trajectory
+   :label "Bob goes to the nearest restaurant"})</code></pre>
+
+<p>With equal utilities and a symmetric grid, the agent picks whichever restaurant it can reach. Try changing the utilities to make the agent strongly prefer noodles:</p>
+
+<pre><code>;; Bob prefers noodles — will he take the longer route?
+(def grid
+  [[{:name "Donut" :terminal true} " " " " " " {:name "Noodle" :terminal true}]
+   [" " "#" " " "#" " "]
+   [" " "#" " " "#" " "]
+   [" " " " " " " " " "]
+   [" " " " " " " " " "]])
+
+(def mdp (make-gridworld-mdp
+           {:grid grid :start [2 0] :total-time 10}))
+
+(def world (:world mdp))
+(def start (:start-state mdp))
+
+(def utility-fn
+  (make-utility-function world
+    {"Donut" 1 "Noodle" 5 :time-cost -0.1}))
+
+(def agent (make-mdp-agent
+             {:utility utility-fn :alpha 100}
+             world))
+
+(def trajectory (simulate-mdp start world agent))
+
+(draw-gridworld world
+  {:trajectory trajectory
+   :label "Bob prefers noodles (utility 5 vs 1)"})</code></pre>
+
+<p>With higher noodle utility, Bob is willing to take the longer path around the walls. The time cost penalizes each step, so the agent balances the reward of reaching a better restaurant against the cost of traveling farther.</p>
+
+<h1 id="exercises"><a href="#exercises">Exercises</a></h1>
+
+<h2>Exercise 1: Utility trade-offs</h2>
+<p>In the code above, what happens if you increase the time cost to <code>-0.5</code>? At what point does the cost of traveling to the noodle shop outweigh its higher utility? Try different values of <code>:time-cost</code> and noodle utility to find the threshold.</p>
+
+<h2>Exercise 2: Longer time horizon</h2>
+<p>Change <code>:total-time</code> in the restaurant example. What happens with very short time horizons (e.g. 5 steps)? What about very long ones (e.g. 15)?</p>
+
+<h2>Exercise 3: Multiple goals</h2>
+<p>Add a third restaurant to the grid and modify the utility table. Does the agent always go to the highest-utility one, or does distance matter?</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="03-agents-as-programs.html">&larr; Chapter 3: Agents as Probabilistic Programs</a>
+    <a href="03b-mdp-gridworld.html">Chapter 3.2: MDPs and Gridworld &rarr;</a>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/cps_transform.cljc',
+    '../prob/cps.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs',
+    'agents/gridworld.cljs',
+    'agents/mdp.cljs',
+    'viz-agents.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot display]])" +
+      "(require '[prob.agents.gridworld :refer [make-gridworld-mdp make-utility-function]])" +
+      "(require '[prob.agents.mdp :refer [make-mdp-agent simulate-mdp]])" +
+      "(require '[prob.agents.viz :refer [draw-gridworld]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>
