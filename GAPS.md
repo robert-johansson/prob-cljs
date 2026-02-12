@@ -129,7 +129,8 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 | Forward sampling | — | `method: 'forward'` (ignores factors) | — | `forward-query-fn`: condition/factor/observe become no-ops | **Done** |
 | MCMC burn-in / thinning | — | `burn`, `lag` options on MCMC | — | `(mh-query-fn n lag burn thunk)` 4-arity | **Done** |
 | MCMC callbacks / hooks | — | `callbacks` array on MCMC | — | Optional callback fn: `{:iter :value :score}` per kept sample | **Done** |
-| SMC / Particle filtering | — | `method: 'SMC'` with particles, rejuvSteps | SMC, conditional SMC | `smc-query` macro with CPS transform, multinomial resampling | **Done** |
+| SMC / Particle filtering | — | `method: 'SMC'` with particles, rejuvSteps | SMC, conditional SMC | `smc-query` macro with CPS transform, multinomial resampling, optional MH rejuvenation | **Done** |
+| Particle Gibbs (PMCMC) | — | `method: 'PMCMC'` | Conditional SMC | `particle-gibbs-query` macro with retained particle, burn-in/lag/rejuvenation | **Done** |
 | Unified inference entry | — | `Infer(options, model)` dispatches to all methods | — | `(infer {:method :mh :samples 1000 :burn 100} thunk)` | **Done** |
 | Incremental rejection | — | Reject at factor statements with `maxScore` bound | — | not implemented | Medium |
 
@@ -163,8 +164,8 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 | ~~**Enumeration strategies**~~ | WebPPL | Exact | ~~`likelyFirst` (priority queue), execution limits~~ | **Done**: `:likely-first` + `:max-executions` |
 | ~~**SMC**~~ | WebPPL, Anglican | Particle | ~~Sequential Monte Carlo with systematic resampling~~ | **Done** via `smc-query` with CPS + multinomial resampling |
 | **IncrementalMH** | WebPPL | MCMC | C3 algorithm with adaptive caching, incremental re-execution | Hard (requires CPS + caching transforms) |
-| **PMCMC / Particle Gibbs** | WebPPL, Anglican | PMCMC | Conditional SMC with retained particle | Medium (requires SMC — now available) |
-| **PGAS** | Anglican | PMCMC | Particle Gibbs with ancestor sampling | Medium (requires SMC — now available) |
+| ~~**PMCMC / Particle Gibbs**~~ | WebPPL, Anglican | PMCMC | ~~Conditional SMC with retained particle~~ | **Done** via `particle-gibbs-query` with burn-in, lag, rejuvenation |
+| **PGAS** | Anglican | PMCMC | Particle Gibbs with ancestor sampling | Medium (requires Particle Gibbs — now available) |
 | **HMC** | WebPPL | MCMC | Hamiltonian Monte Carlo for continuous variables | Hard (requires automatic differentiation) |
 | **Variational (ELBO)** | WebPPL, Anglican | Optimization | Guide programs with gradient-based ELBO optimization | Hard (requires AD + tensor ops) |
 | **LARJ** | webchurch | MCMC | Locally Annealed Reversible Jump MCMC for trans-dimensional models | Hard |
@@ -215,7 +216,7 @@ prob-cljs has both per-method macros (`rejection-query`, `mh-query`, `enumeratio
 (infer {:method :mh :samples 1000 :lag 1 :burn 100 :callback my-fn} model-thunk)
 ```
 
-Supports `:rejection`, `:mh`, `:enumeration`, `:importance`, `:forward`, `:mh-scored`, `:map`, and `:smc` methods with method-specific options.
+Supports `:rejection`, `:mh`, `:enumeration`, `:importance`, `:forward`, `:mh-scored`, `:map`, `:smc`, and `:particle-gibbs` methods with method-specific options.
 
 ### `predict` -- Labeled output collection
 
@@ -398,9 +399,9 @@ The effective gap for builtins is small because ClojureScript's standard library
 
 15. ~~**Interruptible execution**~~ -- **Done.** CPS macro transformation (Anglican/WebPPL approach) implemented in `cps_transform.cljc`. Shared between Clojure macros (nbb) and SCI macros (Scittle). Checkpoint records (`Sample`, `Observe`, `Factor`, `Result`) with continuations, processed by trampoline.
 
-16. ~~**SMC / Particle Filtering**~~ -- **Done.** `smc-query` macro CPS-transforms model body. SMC driver runs N particles, multinomial resampling at observe points (adaptive via ESS). Supports `let`, `if`, `do`, `fn`, `when`, `cond`, `case`, `and`, `or`, `loop`/`recur`, all ERPs, and primitive function calls.
+16. ~~**SMC / Particle Filtering**~~ -- **Done.** `smc-query` macro CPS-transforms model body. SMC driver runs N particles, multinomial resampling at observe points (adaptive via ESS). Optional MH rejuvenation via `{:rejuv-steps n}`. Supports `let`, `if`, `do`, `fn`, `when`, `cond`, `case`, `and`, `or`, `loop`/`recur`, all ERPs, and primitive function calls.
 
-17. **PMCMC / Particle Gibbs / PGAS** -- Iterated conditional SMC. Now feasible with SMC infrastructure in place.
+17. ~~**PMCMC / Particle Gibbs**~~ -- **Done.** `particle-gibbs-query` macro with conditional SMC (retained reference particle). Supports burn-in, lag, MH rejuvenation, and callbacks. PGAS (ancestor sampling) not yet implemented.
 
 ### Phase 4: Expressive Modeling
 
