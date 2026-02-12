@@ -84,19 +84,17 @@ All existing distributions implement `IDistribution`. Discrete distributions imp
 
 ## Architecture: CPS / Checkpoint Interrupts
 
-Present in both **WebPPL** and **Anglican**. Not present in webchurch or prob-cljs.
+Present in **WebPPL**, **Anglican**, and now **prob-cljs**.
 
 WebPPL compiles `.wppl` programs through a pipeline of AST transforms: **CPS** (continuation-passing style), **naming** (address assignment per call site), **store** (threading global state), and **trampoline** (stack overflow prevention). When execution hits `sample` or `factor`, it yields control to the inference coroutine, which decides how to proceed.
 
 Anglican uses the same approach at macro-expansion time: CPS transformation that returns interrupt records at `sample`/`observe` points, with the inference algorithm inspecting and resuming continuations.
 
-This is fundamentally more powerful than:
-- webchurch's trace-replay approach (re-run entire program with changed values)
-- prob-cljs's trace-replay approach (same as webchurch, with persistent data structures)
+**prob-cljs** now implements CPS transformation via `cps_transform.cljc` (shared between Clojure macros and SCI). The `smc-query` macro CPS-transforms model code at macro expansion time. At each `sample`/`observe`/`factor`/`condition`, execution yields a checkpoint record (`Sample`, `Observe`, `Factor`, `Result`) containing the continuation. The SMC driver processes these checkpoints across all particles via a trampoline loop.
 
-**Why it matters:** CPS interrupts enable SMC (particles pause at observe points for resampling), variational inference (proposals learned per-checkpoint), IncrementalMH (re-execute from a specific checkpoint, not from scratch), and HMC (need AD through the program).
+Supported CPS forms: `let`, `if`, `do`, `fn`, `when`, `when-not`, `cond`, `case`, `and`, `or`, `loop`/`recur`, all ERPs (auto-converted to `sample*` + dist constructor), vectors, maps, sets, quoted forms, and primitive function application. All emitted symbols are fully qualified for SCI compatibility.
 
-**Options for prob-cljs:** Full CPS transformation is not the only path. JavaScript generators (`function*`/`yield`) or async/await could provide the same interrupt semantics more naturally in a JS-hosted environment. The key requirement is: execution must be **interruptible at sample/observe points** and **resumable with a chosen value**.
+Trace-replay MH and enumeration continue to use the simpler re-execution approach (no CPS needed).
 
 ---
 
@@ -131,6 +129,7 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 | Forward sampling | — | `method: 'forward'` (ignores factors) | — | `forward-query-fn`: condition/factor/observe become no-ops | **Done** |
 | MCMC burn-in / thinning | — | `burn`, `lag` options on MCMC | — | `(mh-query-fn n lag burn thunk)` 4-arity | **Done** |
 | MCMC callbacks / hooks | — | `callbacks` array on MCMC | — | Optional callback fn: `{:iter :value :score}` per kept sample | **Done** |
+| SMC / Particle filtering | — | `method: 'SMC'` with particles, rejuvSteps | SMC, conditional SMC | `smc-query` macro with CPS transform, multinomial resampling | **Done** |
 | Unified inference entry | — | `Infer(options, model)` dispatches to all methods | — | `(infer {:method :mh :samples 1000 :burn 100} thunk)` | **Done** |
 | Incremental rejection | — | Reject at factor statements with `maxScore` bound | — | not implemented | Medium |
 
@@ -162,10 +161,10 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 | **ALMH** | Anglican | MCMC | Adaptive LMH with UCB bandit scheduling for faster mixing | Medium |
 | **Kernel composition** | WebPPL | MCMC | `sequence`, `repeat` combinators for MCMC kernels | Medium |
 | ~~**Enumeration strategies**~~ | WebPPL | Exact | ~~`likelyFirst` (priority queue), execution limits~~ | **Done**: `:likely-first` + `:max-executions` |
-| **SMC** | WebPPL, Anglican | Particle | Sequential Monte Carlo with systematic resampling | Hard (requires interruptible execution) |
+| ~~**SMC**~~ | WebPPL, Anglican | Particle | ~~Sequential Monte Carlo with systematic resampling~~ | **Done** via `smc-query` with CPS + multinomial resampling |
 | **IncrementalMH** | WebPPL | MCMC | C3 algorithm with adaptive caching, incremental re-execution | Hard (requires CPS + caching transforms) |
-| **PMCMC / Particle Gibbs** | WebPPL, Anglican | PMCMC | Conditional SMC with retained particle | Hard (requires SMC) |
-| **PGAS** | Anglican | PMCMC | Particle Gibbs with ancestor sampling | Hard (requires SMC) |
+| **PMCMC / Particle Gibbs** | WebPPL, Anglican | PMCMC | Conditional SMC with retained particle | Medium (requires SMC — now available) |
+| **PGAS** | Anglican | PMCMC | Particle Gibbs with ancestor sampling | Medium (requires SMC — now available) |
 | **HMC** | WebPPL | MCMC | Hamiltonian Monte Carlo for continuous variables | Hard (requires automatic differentiation) |
 | **Variational (ELBO)** | WebPPL, Anglican | Optimization | Guide programs with gradient-based ELBO optimization | Hard (requires AD + tensor ops) |
 | **LARJ** | webchurch | MCMC | Locally Annealed Reversible Jump MCMC for trans-dimensional models | Hard |
@@ -216,7 +215,7 @@ prob-cljs has both per-method macros (`rejection-query`, `mh-query`, `enumeratio
 (infer {:method :mh :samples 1000 :lag 1 :burn 100 :callback my-fn} model-thunk)
 ```
 
-Supports `:rejection`, `:mh`, `:enumeration`, `:importance`, `:forward`, `:mh-scored`, and `:map` methods with method-specific options.
+Supports `:rejection`, `:mh`, `:enumeration`, `:importance`, `:forward`, `:mh-scored`, `:map`, and `:smc` methods with method-specific options.
 
 ### `predict` -- Labeled output collection
 
@@ -396,15 +395,11 @@ The effective gap for builtins is small because ClojureScript's standard library
 
 ### Phase 3: Interruptible Execution
 
-15. **Interruptible execution** -- Options:
-    - **(a) CPS macros** (Anglican/WebPPL approach) -- most powerful, most complex
-    - **(b) Generator-based** -- use JS `function*`/`yield` if ClojureScript can interop
+15. ~~**Interruptible execution**~~ -- **Done.** CPS macro transformation (Anglican/WebPPL approach) implemented in `cps_transform.cljc`. Shared between Clojure macros (nbb) and SCI macros (Scittle). Checkpoint records (`Sample`, `Observe`, `Factor`, `Result`) with continuations, processed by trampoline.
 
-    Needed for SMC and particle methods. Both WebPPL and Anglican use CPS.
+16. ~~**SMC / Particle Filtering**~~ -- **Done.** `smc-query` macro CPS-transforms model body. SMC driver runs N particles, multinomial resampling at observe points (adaptive via ESS). Supports `let`, `if`, `do`, `fn`, `when`, `cond`, `case`, `and`, `or`, `loop`/`recur`, all ERPs, and primitive function calls.
 
-16. **SMC / Particle Filtering** -- Multiple particles, resample at observe points. Requires interruptible execution. Present in both WebPPL and Anglican.
-
-17. **PMCMC / Particle Gibbs / PGAS** -- Iterated conditional SMC.
+17. **PMCMC / Particle Gibbs / PGAS** -- Iterated conditional SMC. Now feasible with SMC infrastructure in place.
 
 ### Phase 4: Expressive Modeling
 
@@ -425,7 +420,7 @@ The effective gap for builtins is small because ClojureScript's standard library
     - DiagCovGaussian, MultivariateGaussian, LogisticNormal, Wishart, multivariate-t
     - Needs: Cholesky decomposition, matrix inverse/determinant in pure ClojureScript
 
-### Phase 6: Advanced Algorithms (hard, requires Phase 3)
+### Phase 6: Advanced Algorithms (hard)
 
 24. **IncrementalMH** -- WebPPL's C3 algorithm with adaptive caching. Requires CPS + caching transforms.
 
@@ -460,4 +455,4 @@ Anglican is powerful but heavy (Apache Commons Math, core.matrix, vectorz, clayp
 - **Browser-ready via Scittle** -- same code runs in `<script type="application/x-scittle">` with no build step (vs WebPPL's browserify)
 - **JS-interop-first** -- easy to use with React, D3, Planck.js, Web APIs
 - **Simple mental model** -- you're writing ClojureScript that happens to be probabilistic
-- **Idiomatic Clojure** -- protocols, records, persistent data structures, standard library. No DSL strings, no AST transforms, no special syntax
+- **Idiomatic Clojure** -- protocols, records, persistent data structures, standard library. No DSL strings, no special syntax. CPS transform is transparent (only inside `smc-query`; all other inference uses normal ClojureScript)
