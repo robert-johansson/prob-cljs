@@ -1759,6 +1759,39 @@
     (every? #(= 3 %) results)))
 
 ;; ---------------------------------------------------------------------------
+;; SMC doseq
+;; ---------------------------------------------------------------------------
+
+(println "=== SMC doseq ===")
+
+(test-assert "smc doseq: basic observation loop"
+  (let [data [true true false true true]
+        results (smc-query 1000
+                  (let [p (beta 1 1)]
+                    (doseq [d data] (observe (bernoulli-dist p) d))
+                    p))
+        m (mean results)]
+    ;; Beta(1,1) + 4T + 1F = Beta(5,2), mean = 5/7 ≈ 0.714
+    (approx= m (/ 5 7) 0.1)))
+
+(test-assert "smc doseq: no-op on empty collection"
+  (let [results (smc-query 100
+                  (let [x (flip 0.5)]
+                    (doseq [d []] (observe (bernoulli-dist 0.5) d))
+                    x))]
+    (every? boolean? results)))
+
+(test-assert "smc doseq: accumulates multiple observations"
+  (let [results (smc-query 500
+                  (let [mu (gaussian 0 5)]
+                    (doseq [x [2.0 2.1 1.9 2.0 2.0]]
+                      (observe (gaussian-dist mu 0.1) x))
+                    mu))
+        m (mean results)]
+    ;; Tight observations around 2.0
+    (approx= m 2.0 0.3)))
+
+;; ---------------------------------------------------------------------------
 ;; SMC case
 ;; ---------------------------------------------------------------------------
 
