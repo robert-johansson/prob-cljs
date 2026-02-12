@@ -20,7 +20,7 @@ Runs on:
 # Run the demo
 nbb -cp src examples/prob-demo.cljs
 
-# Run tests (268 tests)
+# Run tests (295 tests)
 nbb -cp src:test test/prob_tests.cljs
 ```
 
@@ -181,13 +181,15 @@ Query macros from `prob.macros`:
 | `(forward-query n & body)` | Prior samples (condition/factor/observe are no-ops) |
 | `(mh-query-scored n lag & body)` | MH returning `{:value :score}` maps |
 | `(map-query n lag & body)` | MAP: highest-scoring MH sample |
+| `(ais-query n-particles & body)` | Annealed Importance Sampling; returns `[values probs]` |
 | `(smc-query n-particles & body)` | Sequential Monte Carlo (particle filtering) |
+| `(particle-gibbs-query n-particles n-samples & body)` | Particle Gibbs (PMCMC) |
 | `(query method & body)` | Reusable conditional sampler |
 
 Unified entry point from `prob.core`:
 
 ```clojure
-(infer {:method :mh         ;; :rejection :mh :enumeration :importance :forward :mh-scored :map :smc
+(infer {:method :mh         ;; :rejection :mh :enumeration :importance :forward :mh-scored :map :ais :smc :particle-gibbs
         :samples 1000
         :lag 1
         :burn 100
@@ -280,7 +282,7 @@ src/prob/
   core.cljs           - Public API (re-exports everything)
   erp.cljs            - Elementary Random Primitives (trace-aware sampling)
   dist.cljs           - Distribution protocol + 24 distribution types
-  inference.cljs      - Inference: rejection, MH, enumeration, importance, forward, MAP, SMC
+  inference.cljs      - Inference: rejection, MH, enumeration, importance, forward, MAP, AIS, SMC, particle Gibbs
   cps.cljs            - CPS checkpoint records + runtime helpers for SMC
   cps_transform.cljc  - CPS form transformer (shared between Clojure macros and SCI)
   math.cljs           - Special functions: log-gamma, digamma, erf, log-sum-exp
@@ -296,7 +298,7 @@ examples/
   prob-demo.cljs  - Comprehensive demo
   ink-task-list/  - React/Ink terminal UI example
 test/
-  prob_tests.cljs - Test suite (268 tests)
+  prob_tests.cljs - Test suite (295 tests)
 ```
 
 ## How It Works
