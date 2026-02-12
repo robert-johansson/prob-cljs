@@ -16,7 +16,7 @@ Runs on:
 # Run the demo
 nbb -cp src examples/prob-demo.cljs
 
-# Run tests (215 tests)
+# Run tests (261 tests)
 nbb -cp src:test test/prob_tests.cljs
 ```
 
@@ -29,7 +29,7 @@ nbb -cp src:test test/prob_tests.cljs
                                 bernoulli-dist gaussian-dist sample* observe*
                                 infer]])
   (:require-macros [prob.macros :refer [rejection-query mh-query enumeration-query
-                                         forward-query]]))
+                                         forward-query smc-query]]))
 
 ;; Coin flip with conditioning
 (rejection-query
@@ -85,6 +85,15 @@ nbb -cp src:test test/prob_tests.cljs
 ;; Dirichlet Process memoization
 (let [get-category (DPmem 1.0 (fn [x] (gaussian 0 1)))]
   [(get-category "a") (get-category "a")])  ;=> same value twice (CRP)
+
+;; Sequential Monte Carlo (particle filtering)
+(smc-query 1000
+  (let [p (beta 1 1)]
+    (observe (bernoulli-dist p) true)
+    (observe (bernoulli-dist p) true)
+    (observe (bernoulli-dist p) false)
+    p))
+;=> list of ~1000 samples, mean ≈ 0.6
 ```
 
 ## API
@@ -168,17 +177,21 @@ Query macros from `prob.macros`:
 | `(forward-query n & body)` | Prior samples (condition/factor/observe are no-ops) |
 | `(mh-query-scored n lag & body)` | MH returning `{:value :score}` maps |
 | `(map-query n lag & body)` | MAP: highest-scoring MH sample |
+| `(smc-query n-particles & body)` | Sequential Monte Carlo (particle filtering) |
 | `(query method & body)` | Reusable conditional sampler |
 
 Unified entry point from `prob.core`:
 
 ```clojure
-(infer {:method :mh         ;; :rejection :mh :enumeration :importance :forward :mh-scored :map
+(infer {:method :mh         ;; :rejection :mh :enumeration :importance :forward :mh-scored :map :smc
         :samples 1000
         :lag 1
         :burn 100
         :callback (fn [{:keys [iter value score]}] ...)}
   model-thunk)
+
+;; SMC via infer (model-thunk must be pre-CPS'd; prefer smc-query macro)
+(infer {:method :smc :particles 1000} cps-model-fn)
 ```
 
 Enumeration supports strategies:
@@ -259,14 +272,16 @@ The `docs/` directory contains a full deployment with interactive ProbMods tutor
 
 ```
 src/prob/
-  core.cljs       - Public API (re-exports everything)
-  erp.cljs        - Elementary Random Primitives (trace-aware sampling)
-  dist.cljs       - Distribution protocol + 24 distribution types
-  inference.cljs  - Inference: rejection, MH, enumeration, importance, forward, MAP
-  math.cljs       - Special functions: log-gamma, digamma, erf, log-sum-exp
-  builtins.cljs   - Utilities: list ops, math, strings, mem, cache, DPmem, stats
-  macros.clj      - Query macros (rejection-query, mh-query, etc.)
-  sci.cljs        - SCI configuration for Scittle browser deployment
+  core.cljs           - Public API (re-exports everything)
+  erp.cljs            - Elementary Random Primitives (trace-aware sampling)
+  dist.cljs           - Distribution protocol + 24 distribution types
+  inference.cljs      - Inference: rejection, MH, enumeration, importance, forward, MAP, SMC
+  cps.cljs            - CPS checkpoint records + runtime helpers for SMC
+  cps_transform.cljc  - CPS form transformer (shared between Clojure macros and SCI)
+  math.cljs           - Special functions: log-gamma, digamma, erf, log-sum-exp
+  builtins.cljs       - Utilities: list ops, math, strings, mem, cache, DPmem, stats
+  macros.clj          - Query macros (rejection-query, mh-query, smc-query, etc.)
+  sci.cljs            - SCI configuration for Scittle browser deployment
 src/scittle/
   prob.cljs       - Scittle plugin entry point
 docs/
@@ -276,7 +291,7 @@ examples/
   prob-demo.cljs  - Comprehensive demo
   ink-task-list/  - React/Ink terminal UI example
 test/
-  prob_tests.cljs - Test suite (215 tests)
+  prob_tests.cljs - Test suite (261 tests)
 ```
 
 ## How It Works
@@ -286,6 +301,8 @@ test/
 **Single-site trace-based MH**: Initializes trace via rejection, then proposes changes to one random choice per step. Drift proposals for Gaussian and Beta; smart discrete proposals for Bernoulli, Categorical, etc. Persistent hash-map traces for structural sharing.
 
 **Enumeration**: Discovery pass finds all choice points and their domains. Full odometer or likelyFirst (priority queue) exploration. Normalization via log-sum-exp.
+
+**CPS + SMC (particle filtering)**: The `smc-query` macro CPS-transforms the model body at macro expansion time via `cps_transform.cljc` (shared between Clojure macros and SCI). At each `sample`/`observe`/`factor`/`condition`, execution yields a checkpoint record containing the continuation. The SMC driver runs N particles through the model, resampling by weight at observe points (adaptive via effective sample size). Supports `let`, `if`, `do`, `fn`, `when`, `cond`, `case`, `and`, `or`, `loop`/`recur`, all ERPs, and primitive function calls.
 
 **Scoped volatiles**: Inference state uses `volatile!` holding persistent hash-maps. Volatiles never escape inference boundaries — outside inference, ERPs are pure sampling functions.
 
