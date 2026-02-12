@@ -92,7 +92,7 @@ Anglican uses the same approach at macro-expansion time: CPS transformation that
 
 **prob-cljs** now implements CPS transformation via `cps_transform.cljc` (shared between Clojure macros and SCI). The `smc-query` macro CPS-transforms model code at macro expansion time. At each `sample`/`observe`/`factor`/`condition`, execution yields a checkpoint record (`Sample`, `Observe`, `Factor`, `Result`) containing the continuation. The SMC driver processes these checkpoints across all particles via a trampoline loop.
 
-Supported CPS forms: `let`, `if`, `do`, `fn`, `when`, `when-not`, `cond`, `case`, `and`, `or`, `loop`/`recur`, all ERPs (auto-converted to `sample*` + dist constructor), vectors, maps, sets, quoted forms, and primitive function application. All emitted symbols are fully qualified for SCI compatibility.
+Supported CPS forms: `let`, `if`, `do`, `fn`, `when`, `when-not`, `cond`, `case`, `and`, `or`, `loop`/`recur`, `doseq` (single binding), all ERPs (auto-converted to `sample*` + dist constructor), vectors, maps, sets, quoted forms, and primitive function application. `doseq` is desugared to `loop`/`recur` at CPS transform time, enabling the natural `(doseq [d data] (observe ...))` pattern. All emitted symbols are fully qualified for SCI compatibility.
 
 Trace-replay MH and enumeration continue to use the simpler re-execution approach (no CPS needed).
 
