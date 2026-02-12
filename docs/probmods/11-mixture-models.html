@@ -165,9 +165,8 @@
          observe-document (fn [doc-id words]
                             (let [doc-topics (document->topics doc-id)
                                   topic-mixtures (map topic->mixture-params doc-topics)]
-                              (doall (map (fn [topic-mixture word]
-                                            (condition (= (multinomial vocabulary topic-mixture) word)))
-                                          topic-mixtures words))))]
+                              (doseq [[topic-mixture word] (map vector topic-mixtures words)]
+                                (observe (categorical-dist vocabulary topic-mixture) word))))]
      (observe-document 'a1 ['DNA 'evolution 'DNA 'evolution 'DNA 'evolution 'DNA 'evolution 'DNA 'evolution])
      (observe-document 'a2 ['DNA 'evolution 'DNA 'evolution 'DNA 'evolution 'DNA 'evolution 'DNA 'evolution])
      (observe-document 'a3 ['DNA 'evolution 'DNA 'evolution 'DNA 'evolution 'DNA 'evolution 'DNA 'evolution])
