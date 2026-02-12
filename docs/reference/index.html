@@ -25,9 +25,25 @@
   <div class="sidebar-title">API Reference</div>
   <ul>
     <li class="section-group"><a href="#erp">Elementary Random Primitives</a></li>
+    <li class="sub-group"><a href="#discrete-erps">Discrete</a></li>
     <li><a href="#flip">flip</a></li>
+    <li><a href="#uniform-draw">uniform-draw</a></li>
+    <li><a href="#random-integer">random-integer</a></li>
+    <li><a href="#multinomial">multinomial</a></li>
+    <li><a href="#sample-discrete">sample-discrete</a></li>
+    <li><a href="#categorical">categorical</a></li>
+    <li><a href="#binomial">binomial</a></li>
+    <li><a href="#poisson">poisson</a></li>
+    <li class="sub-group"><a href="#continuous-erps">Continuous</a></li>
     <li><a href="#gaussian">gaussian</a></li>
+    <li><a href="#uniform">uniform</a></li>
     <li><a href="#beta">beta</a></li>
+    <li><a href="#gamma-erp">gamma</a></li>
+    <li><a href="#exponential-erp">exponential</a></li>
+    <li><a href="#dirichlet-erp">dirichlet</a></li>
+    <li class="sub-group"><a href="#prng">PRNG</a></li>
+    <li><a href="#rand">rand</a></li>
+    <li><a href="#set-seed">set-seed!</a></li>
 
     <li class="section-group"><a href="#distributions">Distributions</a></li>
     <li class="sub-group"><a href="#discrete-distributions">Discrete</a></li>
@@ -90,7 +106,9 @@
 
 <!-- ============================================================ -->
 <h2 id="erp"><a href="#erp">Elementary Random Primitives</a></h2>
-<p>ERPs are trace-aware sampling functions. Inside inference they participate in the MH trace; outside they are pure samplers.</p>
+<p>ERPs are trace-aware sampling functions that return samples directly. Inside inference (e.g. <code>mh-query</code>), random choices are traced and can be replayed or proposed to. Outside inference, ERPs are pure samplers with no side effects. For scoring observed data, use <a href="#distributions">distribution objects</a> with <code>observe</code> instead.</p>
+
+<h3 id="discrete-erps"><a href="#discrete-erps">Discrete ERPs</a></h3>
 
 <div class="fn-entry" id="flip">
 <h3><a href="#flip"><code>flip</code></a></h3>
@@ -100,6 +118,58 @@
 (hist (repeatedly 1000 #(flip 0.8)) "biased coin p=0.8")</code></pre>
 </div>
 
+<div class="fn-entry" id="uniform-draw">
+<h3><a href="#uniform-draw"><code>uniform-draw</code></a></h3>
+<div class="fn-signature">(uniform-draw lst)</div>
+<p class="fn-description">Pick an element uniformly at random from a list. Each item has equal probability \(1/n\).</p>
+<pre><code>(hist (repeatedly 1000 #(uniform-draw ["red" "green" "blue"])) "uniform draw")</code></pre>
+</div>
+
+<div class="fn-entry" id="random-integer">
+<h3><a href="#random-integer"><code>random-integer</code></a></h3>
+<div class="fn-signature">(random-integer n)</div>
+<p class="fn-description">Sample a uniform random integer in [0, <em>n</em>). Each integer has probability \(1/n\).</p>
+<pre><code>(hist (repeatedly 1000 #(random-integer 6)) "integers [0, 6)")</code></pre>
+</div>
+
+<div class="fn-entry" id="multinomial">
+<h3><a href="#multinomial"><code>multinomial</code></a></h3>
+<div class="fn-signature">(multinomial items probs)</div>
+<p class="fn-description">Weighted draw from labeled items. Weights are normalized to probabilities.</p>
+<pre><code>(hist (repeatedly 1000 #(multinomial ["a" "b" "c"] [1 2 7])) "weighted draw")</code></pre>
+</div>
+
+<div class="fn-entry" id="sample-discrete">
+<h3><a href="#sample-discrete"><code>sample-discrete</code></a></h3>
+<div class="fn-signature">(sample-discrete weights)</div>
+<p class="fn-description">Weighted index selection. Returns an integer index in [0, <em>n</em>), where each index is chosen with probability proportional to its weight.</p>
+<pre><code>(hist (repeatedly 1000 #(sample-discrete [1 2 7])) "weighted index")</code></pre>
+</div>
+
+<div class="fn-entry" id="categorical">
+<h3><a href="#categorical"><code>categorical</code></a></h3>
+<div class="fn-signature">(categorical weight-map) (categorical categories weights)</div>
+<p class="fn-description">Weighted discrete choice. Accepts either a map <code>{category weight ...}</code> or two sequences of categories and weights.</p>
+<pre><code>(hist (repeatedly 1000 #(categorical {"cat" 3 "dog" 5 "fish" 2})) "from map")
+(hist (repeatedly 1000 #(categorical ["a" "b" "c"] [1 1 8])) "from seqs")</code></pre>
+</div>
+
+<div class="fn-entry" id="binomial">
+<h3><a href="#binomial"><code>binomial</code></a></h3>
+<div class="fn-signature">(binomial n p)</div>
+<p class="fn-description">Number of successes in <em>n</em> Bernoulli trials with probability <em>p</em>. Returns an integer in [0, <em>n</em>].</p>
+<pre><code>(hist (repeatedly 1000 #(binomial 10 0.3)) "Binomial(10, 0.3)")</code></pre>
+</div>
+
+<div class="fn-entry" id="poisson">
+<h3><a href="#poisson"><code>poisson</code></a></h3>
+<div class="fn-signature">(poisson lambda)</div>
+<p class="fn-description">Poisson count with rate \(\lambda\). Models the number of events in a fixed interval.</p>
+<pre><code>(hist (repeatedly 1000 #(poisson 4)) "Poisson(4)")</code></pre>
+</div>
+
+<h3 id="continuous-erps"><a href="#continuous-erps">Continuous ERPs</a></h3>
+
 <div class="fn-entry" id="gaussian">
 <h3><a href="#gaussian"><code>gaussian</code></a></h3>
 <div class="fn-signature">(gaussian) (gaussian mu sigma)</div>
@@ -108,12 +178,68 @@
 (density (repeatedly 1000 #(gaussian 5 2)) "N(5, 2)")</code></pre>
 </div>
 
+<div class="fn-entry" id="uniform">
+<h3><a href="#uniform"><code>uniform</code></a></h3>
+<div class="fn-signature">(uniform a b)</div>
+<p class="fn-description">Sample from a continuous uniform distribution on [<em>a</em>, <em>b</em>].</p>
+<pre><code>(density (repeatedly 1000 #(uniform 0 10)) "Uniform(0, 10)")</code></pre>
+</div>
+
 <div class="fn-entry" id="beta">
 <h3><a href="#beta"><code>beta</code></a></h3>
 <div class="fn-signature">(beta a b)</div>
 <p class="fn-description">Sample from a Beta distribution with shape parameters <em>a</em> and <em>b</em>. Returns a value in (0, 1). Commonly used as a prior for probabilities.</p>
 <pre><code>(density (repeatedly 1000 #(beta 2 5)) "Beta(2, 5)")
 (density (repeatedly 1000 #(beta 0.5 0.5)) "Beta(0.5, 0.5)")</code></pre>
+</div>
+
+<div class="fn-entry" id="gamma-erp">
+<h3><a href="#gamma-erp"><code>gamma</code></a></h3>
+<div class="fn-signature">(gamma shape scale)</div>
+<p class="fn-description">Sample from a Gamma distribution with given <em>shape</em> and <em>scale</em>. Returns a positive value. Useful as a prior for rates and variances.</p>
+<pre><code>(density (repeatedly 1000 #(gamma 2 2)) "Gamma(shape=2, scale=2)")</code></pre>
+</div>
+
+<div class="fn-entry" id="exponential-erp">
+<h3><a href="#exponential-erp"><code>exponential</code></a></h3>
+<div class="fn-signature">(exponential rate)</div>
+<p class="fn-description">Sample from an Exponential distribution with given <em>rate</em>. Models time between events. Mean is \(1/\text{rate}\).</p>
+<pre><code>(density (repeatedly 1000 #(exponential 0.5)) "Exponential(rate=0.5)")</code></pre>
+</div>
+
+<div class="fn-entry" id="dirichlet-erp">
+<h3><a href="#dirichlet-erp"><code>dirichlet</code></a></h3>
+<div class="fn-signature">(dirichlet alpha-vec)</div>
+<p class="fn-description">Sample from a Dirichlet distribution. Returns a vector of probabilities that sum to 1. The length matches <em>alpha-vec</em>.</p>
+<pre><code>;; Symmetric Dirichlet — roughly uniform simplex
+(display (mapv #(.toFixed % 3) (dirichlet [1 1 1])))
+;; Concentrated Dirichlet — peaked toward equal proportions
+(display (mapv #(.toFixed % 3) (dirichlet [10 10 10])))</code></pre>
+</div>
+
+<h3 id="prng"><a href="#prng">PRNG</a></h3>
+
+<div class="fn-entry" id="rand">
+<h3><a href="#rand"><code>rand</code></a></h3>
+<div class="fn-signature">(rand)</div>
+<p class="fn-description">Raw uniform random double in [0, 1) from the seedable xoshiro128** PRNG. All ERPs use this internally.</p>
+<pre><code>(display "random:" (.toFixed (rand) 6))
+(display "random:" (.toFixed (rand) 6))
+(display "random:" (.toFixed (rand) 6))</code></pre>
+</div>
+
+<div class="fn-entry" id="set-seed">
+<h3><a href="#set-seed"><code>set-seed!</code></a></h3>
+<div class="fn-signature">(set-seed!) (set-seed! n)</div>
+<p class="fn-description">Seed the PRNG for reproducible results. With an integer argument, produces a deterministic sequence. With no arguments, re-initializes from system entropy.</p>
+<pre><code>;; Same seed → same sequence
+(set-seed! 42)
+(display "first:" (.toFixed (rand) 6))
+(display "second:" (.toFixed (rand) 6))
+;; Reset to same seed → same results
+(set-seed! 42)
+(display "first again:" (.toFixed (rand) 6))
+(display "second again:" (.toFixed (rand) 6))</code></pre>
 </div>
 
 <!-- ============================================================ -->
@@ -634,7 +760,7 @@ function ensureScittleImports() {
     scittle.core.eval_string(
       "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
       "                              sample-discrete beta gamma dirichlet exponential" +
-      "                              binomial poisson categorical" +
+      "                              binomial poisson categorical rand set-seed!" +
       "                              condition factor observe rejection-query-fn mh-query-fn" +
       "                              enumeration-query-fn mem mean variance sd sum prod" +
       "                              sample* observe* dist? enumerate*" +
