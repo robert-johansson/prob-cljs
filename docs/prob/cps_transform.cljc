@@ -289,8 +289,8 @@
    The transformed code calls (k result $state) when done.
 
    Handles: let, if, do, fn, when, when-not, cond, case, and, or,
-   loop/recur, sample*/sample, observe, factor, condition, ERP calls,
-   and primitive function application."
+   loop/recur, doseq (single binding), sample*/sample, observe, factor,
+   condition, ERP calls, and primitive function application."
   [form k]
   (cond
     ;; nil, booleans, numbers, strings, keywords
@@ -425,6 +425,20 @@
         (let [test-expr (nth form 1)
               clauses (drop 2 form)]
           (cps-of-case test-expr (vec clauses) k))
+
+        ;; doseq (single binding only) -> loop/recur
+        (= op 'doseq)
+        (let [bindings (second form)
+              sym (first bindings)
+              coll-expr (second bindings)
+              body (drop 2 form)
+              remaining (fresh-sym "rem")]
+          (cps-of-expr
+            (list 'loop [remaining coll-expr]
+              (list 'when (list 'clojure.core/seq remaining)
+                (list 'let [sym (list 'clojure.core/first remaining)]
+                  (cons 'do (concat body (list (list 'recur (list 'clojure.core/rest remaining))))))))
+            k))
 
         ;; sample* / sample
         (or (= op 'sample*) (= op 'prob.core/sample*)
