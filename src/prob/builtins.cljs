@@ -223,6 +223,20 @@
   [lst]
   (key (apply max-key val (frequencies lst))))
 
+(defn softmax
+  "Softmax (Luce choice rule / Boltzmann distribution).
+   Converts utilities to probabilities: P(i) = exp(β·V_i) / Σ_j exp(β·V_j).
+   Returns a vector of probabilities.
+   With 1 arg: (softmax utilities) uses β=1.
+   With 2 args: (softmax utilities beta) uses the given inverse temperature."
+  ([utilities] (softmax utilities 1.0))
+  ([utilities beta]
+   (let [scaled (mapv #(* beta %) utilities)
+         max-v  (apply max scaled)
+         ws     (mapv #(js/Math.exp (- % max-v)) scaled)
+         total  (reduce + 0.0 ws)]
+     (mapv #(/ % total) ws))))
+
 (defn empirical-distribution [samples]
   (let [n (count samples)]
     (into {} (map (fn [[k v]] [k (/ (double v) n)]) (frequencies samples)))))

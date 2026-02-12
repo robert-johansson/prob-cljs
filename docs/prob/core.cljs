@@ -144,3 +144,4 @@
 (def sum builtins/sum)
 (def prod builtins/prod)
 (def repeat-fn builtins/repeat-fn)
+(def softmax builtins/softmax)

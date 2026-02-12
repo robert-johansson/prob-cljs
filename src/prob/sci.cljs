@@ -212,6 +212,7 @@
    'cache          (sci/copy-var builtins/cache builtins-ns)
    'sd             (sci/copy-var builtins/sd builtins-ns)
    'mode           (sci/copy-var builtins/mode builtins-ns)
+   'softmax        (sci/copy-var builtins/softmax builtins-ns)
    'DPmem          (sci/copy-var builtins/DPmem builtins-ns)
    'make-gensym    (sci/copy-var builtins/make-gensym builtins-ns)
    'gensym'        (sci/copy-var builtins/gensym' builtins-ns)
@@ -312,7 +313,8 @@
    'expectation        (sci/copy-var core/expectation core-ns)
    'sum                (sci/copy-var core/sum core-ns)
    'prod               (sci/copy-var core/prod core-ns)
-   'repeat-fn          (sci/copy-var core/repeat-fn core-ns)})
+   'repeat-fn          (sci/copy-var core/repeat-fn core-ns)
+   'softmax            (sci/copy-var core/softmax core-ns)})
 
 ;; ---------------------------------------------------------------------------
 ;; prob.cps

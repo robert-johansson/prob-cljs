@@ -21,7 +21,7 @@
                                 marginal-dist
                                 set-seed! rand
                                 mem cache DPmem sd mode mean variance sum prod repeat-fn
-                                weighted-mean weighted-variance
+                                weighted-mean weighted-variance softmax
                                 empirical-distribution expectation]]
             [prob.erp :as erp]
             [prob.dist :as dist]
@@ -1404,6 +1404,45 @@
 
 (test-assert "discrete?: delta is discrete"
   (discrete? (delta-dist 42)))
+
+;; ---------------------------------------------------------------------------
+;; Softmax
+;; ---------------------------------------------------------------------------
+
+(println "=== Softmax ===")
+
+(test-assert "softmax: uniform utilities → equal probabilities"
+  (let [probs (softmax [1 1 1])]
+    (every? #(< (js/Math.abs (- % (/ 1.0 3))) 1e-10) probs)))
+
+(test-assert "softmax: higher utility → higher probability"
+  (let [probs (softmax [0 1 2])]
+    (and (< (nth probs 0) (nth probs 1))
+         (< (nth probs 1) (nth probs 2)))))
+
+(test-assert "softmax: probabilities sum to 1"
+  (let [probs (softmax [3.2 -1.5 0.7 2.1])]
+    (< (js/Math.abs (- (reduce + probs) 1.0)) 1e-10)))
+
+(test-assert "softmax: β=0 → uniform"
+  (let [probs (softmax [10 -5 3] 0)]
+    (every? #(< (js/Math.abs (- % (/ 1.0 3))) 1e-10) probs)))
+
+(test-assert "softmax: high β → argmax"
+  (let [probs (softmax [1 5 2] 100)]
+    (and (< (nth probs 0) 0.01)
+         (> (nth probs 1) 0.99)
+         (< (nth probs 2) 0.01))))
+
+(test-assert "softmax: single element → probability 1"
+  (let [probs (softmax [42])]
+    (< (js/Math.abs (- (first probs) 1.0)) 1e-10)))
+
+(test-assert "softmax: negative utilities work"
+  (let [probs (softmax [-10 -20 -5])]
+    (and (< (js/Math.abs (- (reduce + probs) 1.0)) 1e-10)
+         (> (nth probs 2) (nth probs 0))
+         (> (nth probs 0) (nth probs 1)))))
 
 ;; ---------------------------------------------------------------------------
 ;; CPS Transform
