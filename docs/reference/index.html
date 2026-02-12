@@ -63,6 +63,7 @@
     <li><a href="#beta-dist">beta-dist</a></li>
     <li><a href="#gamma-dist">gamma-dist</a></li>
     <li><a href="#exponential-dist">exponential-dist</a></li>
+    <li><a href="#dirichlet-dist">dirichlet-dist</a></li>
     <li><a href="#cauchy-dist">cauchy-dist</a></li>
     <li><a href="#laplace-dist">laplace-dist</a></li>
     <li><a href="#lognormal-dist">lognormal-dist</a></li>
@@ -87,7 +88,10 @@
     <li><a href="#importance-query">importance-query</a></li>
     <li><a href="#map-query">map-query</a></li>
     <li><a href="#mh-query-scored">mh-query-scored</a></li>
+    <li><a href="#smc-query">smc-query</a></li>
+    <li><a href="#particle-gibbs-query">particle-gibbs-query</a></li>
     <li><a href="#infer">infer</a></li>
+    <li><a href="#conditional-fn">conditional-fn</a></li>
 
     <li class="section-group"><a href="#conditioning">Conditioning</a></li>
     <li><a href="#condition">condition</a></li>
@@ -467,6 +471,18 @@
   (density (repeatedly 1000 #(sample* d)) "Exponential(rate=0.5)"))</code></pre>
 </div>
 
+<div class="fn-entry" id="dirichlet-dist">
+<h3><a href="#dirichlet-dist"><code>dirichlet-dist</code></a></h3>
+<div class="fn-signature">(dirichlet-dist alpha)</div>
+<p class="fn-description">Dirichlet distribution with concentration parameter vector <em>alpha</em>. Returns probability vectors that sum to 1. The length matches <em>alpha</em>. Commonly used as a prior over categorical distributions.</p>
+<pre><code>(let [d (dirichlet-dist [2 2 2])]
+  (display "sample:" (mapv #(.toFixed % 3) (sample* d)))
+  (display "log p:" (.toFixed (observe* d [0.3 0.3 0.4]) 4))
+  ;; Concentrated vs diffuse
+  (display "concentrated:" (mapv #(.toFixed % 3) (sample* (dirichlet-dist [10 10 10]))))
+  (display "diffuse:" (mapv #(.toFixed % 3) (sample* (dirichlet-dist [0.1 0.1 0.1])))))</code></pre>
+</div>
+
 <div class="fn-entry" id="cauchy-dist">
 <h3><a href="#cauchy-dist"><code>cauchy-dist</code></a></h3>
 <div class="fn-signature">(cauchy-dist location scale)</div>
@@ -723,6 +739,46 @@
   ;; Importance sampling
   (barplot (infer {:method :importance :samples 2000} model)
     "importance (2000 samples)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="smc-query">
+<h3><a href="#smc-query"><code>smc-query</code></a></h3>
+<div class="fn-signature">(smc-query n-particles &amp; body) (smc-query n-particles opts &amp; body)</div>
+<p class="fn-description">Sequential Monte Carlo (particle filtering). Runs <em>n-particles</em> in parallel, resampling at each <code>observe</code> point. CPS-transforms the model body at macro expansion time. Options: <code>:rejuv-steps</code> (MH rejuvenation after resampling), <code>:resample-threshold</code> (ESS ratio). Returns a vector of posterior samples.</p>
+<pre><code>;; Estimate a coin's bias with SMC
+(let [data [true true false true true]
+      samples (smc-query 100
+                (let [p (beta 1 1)]
+                  (doseq [d data] (observe (bernoulli-dist p) d))
+                  p))]
+  (display "estimated bias:" (.toFixed (mean samples) 3))
+  (density samples "SMC posterior over p"))</code></pre>
+</div>
+
+<div class="fn-entry" id="particle-gibbs-query">
+<h3><a href="#particle-gibbs-query"><code>particle-gibbs-query</code></a></h3>
+<div class="fn-signature">(particle-gibbs-query n-particles n-samples &amp; body)</div>
+<p class="fn-description">Particle Gibbs (PMCMC). Runs conditional SMC sweeps with a retained reference particle to produce MCMC samples. Combines the flexibility of SMC with the guarantees of MCMC. Options: <code>:burn</code>, <code>:lag</code>, <code>:rejuv-steps</code>, <code>:callback</code>.</p>
+<pre><code>;; Particle Gibbs for coin bias
+(let [data [true true false true true]
+      samples (particle-gibbs-query 20 200
+                (let [p (beta 1 1)]
+                  (doseq [d data] (observe (bernoulli-dist p) d))
+                  p))]
+  (display "estimated bias:" (.toFixed (mean samples) 3))
+  (density samples "Particle Gibbs posterior"))</code></pre>
+</div>
+
+<div class="fn-entry" id="conditional-fn">
+<h3><a href="#conditional-fn"><code>conditional-fn</code></a></h3>
+<div class="fn-signature">(conditional-fn params thunk)</div>
+<p class="fn-description">Create a reusable conditional sampler. <em>params</em> selects the inference method: <code>'(enumeration)</code>, <code>'(rejection)</code>, or <code>'(mh lag)</code>. Returns a zero-argument function that draws a sample from the posterior each time it is called.</p>
+<pre><code>;; Create a reusable sampler via enumeration
+(let [sampler (conditional-fn '(enumeration)
+               (fn [] (let [x (uniform-draw [1 2 3 4 5])]
+                        (condition (odd? x))
+                        x)))]
+  (hist (repeatedly 1000 sampler) "samples from conditional"))</code></pre>
 </div>
 
 <!-- ============================================================ -->
@@ -1148,7 +1204,15 @@ function ensureScittleImports() {
       "(defmacro forward-query [n & body] `(prob.core/forward-query-fn ~n (fn [] ~@body)))" +
       "(defmacro importance-query [n & body] `(prob.core/importance-query-fn ~n (fn [] ~@body)))" +
       "(defmacro map-query [n lag & body] `(prob.core/map-query-fn ~n ~lag (fn [] ~@body)))" +
-      "(defmacro mh-query-scored [n lag & body] `(prob.core/mh-query-scored-fn ~n ~lag (fn [] ~@body)))"
+      "(defmacro mh-query-scored [n lag & body] `(prob.core/mh-query-scored-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro smc-query [n-particles & body]" +
+      "  (let [[opts body] (if (map? (first body)) [(first body) (rest body)] [{} body])" +
+      "        cps-body (prob.cps-transform/cps-of-expr (cons 'do body) 'k__final)]" +
+      "    `(prob.core/smc-query-fn ~n-particles ~opts (fn [~'k__final ~'$state] ~cps-body))))" +
+      "(defmacro particle-gibbs-query [n-particles n-samples & body]" +
+      "  (let [[opts body] (if (map? (first body)) [(first body) (rest body)] [{} body])" +
+      "        cps-body (prob.cps-transform/cps-of-expr (cons 'do body) 'k__final)]" +
+      "    `(prob.core/particle-gibbs-fn ~n-particles ~n-samples ~opts (fn [~'k__final ~'$state] ~cps-body))))"
     );
 
     scittle.core.eval_string(
@@ -1158,6 +1222,7 @@ function ensureScittleImports() {
       "                              condition factor observe rejection-query-fn mh-query-fn" +
       "                              enumeration-query-fn forward-query-fn importance-query-fn" +
       "                              map-query-fn mh-query-scored-fn infer condition-equal" +
+      "                              smc-query-fn particle-gibbs-fn conditional-fn" +
       "                              mem mean variance sd sum prod mode" +
       "                              weighted-mean weighted-variance expectation" +
       "                              empirical-distribution softmax repeat-fn" +
@@ -1175,7 +1240,8 @@ function ensureScittleImports() {
       "                              entropy kl-divergence discrete? continuous?]])" +
       "(require '[prob.builtins :refer [expt pair car cdr pair?]])" +
       "(require '[prob.macros :refer [rejection-query mh-query enumeration-query" +
-      "                                  forward-query importance-query map-query mh-query-scored]])" +
+      "                                  forward-query importance-query map-query mh-query-scored" +
+      "                                  smc-query particle-gibbs-query]])" +
       "(require '[prob.viz :refer [hist density scatter barplot display lineplot table heatmap marginals auto]])"
     );
 
