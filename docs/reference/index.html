@@ -746,10 +746,13 @@
 <div class="fn-signature">(smc-query n-particles &amp; body) (smc-query n-particles opts &amp; body)</div>
 <p class="fn-description">Sequential Monte Carlo (particle filtering). Runs <em>n-particles</em> in parallel, resampling at each <code>observe</code> point. CPS-transforms the model body at macro expansion time. Options: <code>:rejuv-steps</code> (MH rejuvenation after resampling), <code>:resample-threshold</code> (ESS ratio). Returns a vector of posterior samples.</p>
 <pre><code>;; Estimate a coin's bias with SMC
-(let [data [true true false true true]
-      samples (smc-query 100
+(let [samples (smc-query 100
                 (let [p (beta 1 1)]
-                  (doseq [d data] (observe (bernoulli-dist p) d))
+                  (observe (bernoulli-dist p) true)
+                  (observe (bernoulli-dist p) true)
+                  (observe (bernoulli-dist p) false)
+                  (observe (bernoulli-dist p) true)
+                  (observe (bernoulli-dist p) true)
                   p))]
   (display "estimated bias:" (.toFixed (mean samples) 3))
   (density samples "SMC posterior over p"))</code></pre>
@@ -760,10 +763,13 @@
 <div class="fn-signature">(particle-gibbs-query n-particles n-samples &amp; body)</div>
 <p class="fn-description">Particle Gibbs (PMCMC). Runs conditional SMC sweeps with a retained reference particle to produce MCMC samples. Combines the flexibility of SMC with the guarantees of MCMC. Options: <code>:burn</code>, <code>:lag</code>, <code>:rejuv-steps</code>, <code>:callback</code>.</p>
 <pre><code>;; Particle Gibbs for coin bias
-(let [data [true true false true true]
-      samples (particle-gibbs-query 20 200
+(let [samples (particle-gibbs-query 20 200
                 (let [p (beta 1 1)]
-                  (doseq [d data] (observe (bernoulli-dist p) d))
+                  (observe (bernoulli-dist p) true)
+                  (observe (bernoulli-dist p) true)
+                  (observe (bernoulli-dist p) false)
+                  (observe (bernoulli-dist p) true)
+                  (observe (bernoulli-dist p) true)
                   p))]
   (display "estimated bias:" (.toFixed (mean samples) 3))
   (density samples "Particle Gibbs posterior"))</code></pre>
