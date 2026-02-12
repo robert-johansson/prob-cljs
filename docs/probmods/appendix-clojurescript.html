@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ProbMods: Appendix — ClojureScript Basics</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Probabilistic Models of Cognition</a></div>
+    <ul id="nav">
+      <li><a href="12-non-parametric-models.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">Appendix: ClojureScript Basics</h1>
+
+<p>This appendix introduces the ClojureScript programming language. You don&rsquo;t need to be a programmer to follow this book, but you do need to be comfortable reading and writing the notation. ClojureScript is a modern Lisp &mdash; a member of the family of languages descended from Alonzo Church&rsquo;s \(\lambda\)-calculus. If you&rsquo;ve used Scheme, Racket, Common Lisp, or Clojure, much of this will be familiar. If not, don&rsquo;t worry &mdash; the core ideas are simple.</p>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#expressions-and-evaluation">Expressions and Evaluation</a></li>
+<li><a href="#naming-things">Naming Things</a></li>
+<li><a href="#functions">Functions</a></li>
+<li><a href="#conditionals">Conditionals</a></li>
+<li><a href="#data-structures">Data Structures</a></li>
+<li><a href="#destructuring">Destructuring</a></li>
+<li><a href="#higher-order-functions">Higher-Order Functions</a></li>
+<li><a href="#local-bindings">Local Bindings</a></li>
+<li><a href="#recursion">Recursion</a></li>
+<li><a href="#truthiness-and-equality">Truthiness and Equality</a></li>
+<li><a href="#exercises">Exercises</a></li>
+</ul>
+</div>
+
+<h2 id="expressions-and-evaluation"><a href="#expressions-and-evaluation">Expressions and Evaluation</a></h2>
+
+<p>ClojureScript uses prefix notation: the operator comes first, then its arguments, all wrapped in parentheses.</p>
+
+<pre><code>(+ 1 1)</code></pre>
+
+<p>This calls the function <code>+</code> with arguments <code>1</code> and <code>1</code>, returning <code>2</code>. Arithmetic operators are ordinary functions and can take any number of arguments:</p>
+
+<pre><code>(+ 3.1 2.7 4 5 6)</code></pre>
+
+<p>Expressions nest naturally. The inner expressions are evaluated first, and their results become arguments to the outer expression:</p>
+
+<pre><code>(+ (* 3
+      (+ (* 2 4)
+         (+ 3 5)))
+   (+ (- 10 7)
+      6))</code></pre>
+
+<p>This is equivalent to the mathematical expression \(3 \times (2 \times 4 + 3 + 5) + (10 - 7 + 6)\). Notice how indentation reveals the structure &mdash; the parentheses are never ambiguous about what belongs where, which is one of the great strengths of Lisp syntax.</p>
+
+<p>Comments start with a semicolon and extend to the end of the line:</p>
+
+<pre><code>;; This is a comment.
+;; Everything after ; is ignored by the evaluator.
+(* 6 7)  ; the answer</code></pre>
+
+<h2 id="naming-things"><a href="#naming-things">Naming Things</a></h2>
+
+<p>We give names to values with <code>def</code>:</p>
+
+<pre><code>(def x 10)
+(def y 3)
+(+ x y)</code></pre>
+
+<p>ClojureScript names can include hyphens, question marks, and exclamation marks &mdash; which makes for wonderfully readable code:</p>
+
+<pre><code>(def favorite-number 42)
+(def almost-pi 3.14159)
+(+ favorite-number almost-pi)</code></pre>
+
+<p>Names defined with <code>def</code> are available for the rest of the program. For names that should only exist briefly, we use <code>let</code> (covered <a href="#local-bindings">below</a>).</p>
+
+<h2 id="functions"><a href="#functions">Functions</a></h2>
+
+<p>Functions are created with <code>fn</code>. The arguments go in square brackets, followed by the body:</p>
+
+<pre><code>(def double (fn [x] (+ x x)))
+(double 5)</code></pre>
+
+<p>Since defining named functions is so common, ClojureScript provides <code>defn</code> as a shorthand:</p>
+
+<pre><code>(defn double [x] (+ x x))
+(double 5)</code></pre>
+
+<p>These two forms are exactly equivalent. <code>defn</code> is just <code>def</code> + <code>fn</code>.</p>
+
+<p>Functions can take multiple arguments:</p>
+
+<pre><code>(defn hypotenuse [a b]
+  (Math/sqrt (+ (* a a) (* b b))))
+(hypotenuse 3 4)</code></pre>
+
+<p>A function with no arguments is called a <em>thunk</em>. Thunks are important in probabilistic programming because they represent entire distributions &mdash; each call draws a new sample:</p>
+
+<pre><code>(def fair-coin (fn [] (if (flip 0.5) :heads :tails)))
+(fair-coin)</code></pre>
+
+<p>Functions are values, just like numbers or strings. They can be passed as arguments, returned from other functions, and stored in data structures. This is the heart of functional programming:</p>
+
+<pre><code>(defn twice [f]
+  (fn [x] (f (f x))))
+
+(def double (fn [x] (+ x x)))
+((twice double) 3)</code></pre>
+
+<p>Here <code>twice</code> takes a function and returns a new function that applies it twice. <code>((twice double) 3)</code> first doubles 3 to get 6, then doubles 6 to get 12.</p>
+
+<h2 id="conditionals"><a href="#conditionals">Conditionals</a></h2>
+
+<p><code>if</code> takes a test, a then-branch, and an else-branch:</p>
+
+<pre><code>(if (> 3 2)
+  "yes"
+  "no")</code></pre>
+
+<p>For multiple conditions, <code>cond</code> is cleaner than nested <code>if</code>s:</p>
+
+<pre><code>(defn classify [n]
+  (cond
+    (< n 0)  "negative"
+    (zero? n) "zero"
+    :else     "positive"))
+
+(mapv classify [-3 0 7])</code></pre>
+
+<p>The <code>:else</code> keyword at the end is a catch-all &mdash; it always matches. Each clause is a test followed by a result. <code>cond</code> tries them in order and returns the result of the first matching test.</p>
+
+<p>Boolean logic uses <code>and</code>, <code>or</code>, and <code>not</code>:</p>
+
+<pre><code>(and true (or true false))</code></pre>
+
+<h2 id="data-structures"><a href="#data-structures">Data Structures</a></h2>
+
+<p>ClojureScript has several built-in collection types. The most common are <strong>vectors</strong>, <strong>lists</strong>, and <strong>maps</strong>.</p>
+
+<h3>Vectors</h3>
+
+<p>Vectors use square brackets. They are the everyday workhorse collection:</p>
+
+<pre><code>[1 2 3 4 5]</code></pre>
+
+<p>You can build them with functions too:</p>
+
+<pre><code>(def xs [10 20 30 40 50])
+[(first xs) (last xs) (count xs) (nth xs 2)]</code></pre>
+
+<p><code>conj</code> adds an element to the end of a vector:</p>
+
+<pre><code>(conj [1 2 3] 4)</code></pre>
+
+<h3>Lists</h3>
+
+<p>Lists use the <code>list</code> function or a quote <code>'</code>. In ClojureScript, lists and vectors are both sequential &mdash; most sequence functions work on either one:</p>
+
+<pre><code>(list 1 2 3)</code></pre>
+
+<pre><code>(first (rest '("this" "is" "a" "list")))</code></pre>
+
+<p>One key difference: <code>conj</code> adds to the <em>front</em> of a list (not the end):</p>
+
+<pre><code>(conj '(2 3 4) 1)</code></pre>
+
+<h3>Keywords and Symbols</h3>
+
+<p>Keywords start with a colon. They are like self-evaluating names &mdash; useful as labels, keys, and lightweight enumerations:</p>
+
+<pre><code>[:heads :tails :edge]</code></pre>
+
+<p>Symbols are bare names like <code>x</code> or <code>foo</code>. Normally they are evaluated (looked up). To get the symbol itself, quote it:</p>
+
+<pre><code>(= 'foo 'foo)</code></pre>
+
+<h3>Maps</h3>
+
+<p>Maps are key-value pairs in curly braces. They are ClojureScript&rsquo;s dictionaries:</p>
+
+<pre><code>(def person {:name "Alice" :age 30})
+[(:name person) (:age person)]</code></pre>
+
+<p>Keywords double as accessor functions &mdash; <code>(:name person)</code> looks up the key <code>:name</code> in the map. You can also use <code>get</code>:</p>
+
+<pre><code>(get {:a 1 :b 2 :c 3} :b)</code></pre>
+
+<p><code>assoc</code> returns a new map with a key added or updated (the original is unchanged &mdash; ClojureScript data is immutable):</p>
+
+<pre><code>(assoc {:a 1 :b 2} :c 3 :a 99)</code></pre>
+
+<h2 id="destructuring"><a href="#destructuring">Destructuring</a></h2>
+
+<p>ClojureScript can pull apart data structures directly in bindings. This is called <em>destructuring</em> and it makes code much more readable:</p>
+
+<pre><code>(let [[a b c] [10 20 30]]
+  (+ a c))</code></pre>
+
+<p>Maps can be destructured too:</p>
+
+<pre><code>(let [{:keys [x y]} {:x 3 :y 4}]
+  (Math/sqrt (+ (* x x) (* y y))))</code></pre>
+
+<p>Destructuring works in function arguments as well:</p>
+
+<pre><code>(defn magnitude [[x y]]
+  (Math/sqrt (+ (* x x) (* y y))))
+(magnitude [3 4])</code></pre>
+
+<h2 id="higher-order-functions"><a href="#higher-order-functions">Higher-Order Functions</a></h2>
+
+<p>Functions that take or return other functions are called <em>higher-order functions</em>. They are the bread and butter of ClojureScript.</p>
+
+<p><code>map</code> applies a function to every element of a collection:</p>
+
+<pre><code>(map (fn [x] (* x x)) [1 2 3 4 5])</code></pre>
+
+<p>For short functions, the anonymous function shorthand <code>#(...)</code> is convenient. <code>%</code> stands for the argument:</p>
+
+<pre><code>(map #(* % %) [1 2 3 4 5])</code></pre>
+
+<p><code>filter</code> keeps elements that satisfy a predicate:</p>
+
+<pre><code>(filter odd? (range 1 11))</code></pre>
+
+<p><code>reduce</code> combines elements one at a time using a binary function:</p>
+
+<pre><code>(reduce + 0 [1 2 3 4 5])</code></pre>
+
+<p>This computes \((((((0 + 1) + 2) + 3) + 4) + 5) = 15\). The second argument (<code>0</code>) is the initial accumulator.</p>
+
+<p>These three &mdash; <code>map</code>, <code>filter</code>, <code>reduce</code> &mdash; can express a remarkable range of computations:</p>
+
+<pre><code>;; Sum of squares of even numbers from 1 to 10
+(->> (range 1 11)
+     (filter even?)
+     (map #(* % %))
+     (reduce +))</code></pre>
+
+<p>The <code>-&gt;&gt;</code> macro threads a value through a series of function calls, passing it as the last argument to each. It reads top-to-bottom, like a pipeline. Here: start with <code>(range 1 11)</code>, filter the evens, square each, then sum.</p>
+
+<p><code>apply</code> calls a function with the elements of a collection as its arguments:</p>
+
+<pre><code>(apply + [1 2 3 4 5])</code></pre>
+
+<p>This is equivalent to <code>(+ 1 2 3 4 5)</code>. It&rsquo;s useful when you have a collection but need to pass its elements as individual arguments.</p>
+
+<h2 id="local-bindings"><a href="#local-bindings">Local Bindings</a></h2>
+
+<p><code>let</code> introduces local names that exist only within its body. The bindings are pairs of name and value in a vector:</p>
+
+<pre><code>(let [a (+ 1 1)
+      b (* a 3)]
+  (+ a b))</code></pre>
+
+<p>Here <code>a</code> is 2 and <code>b</code> is 6, so the result is 8. Later bindings can refer to earlier ones. This is how you build up intermediate results without polluting the global namespace.</p>
+
+<p><code>let</code> is especially important inside functions for naming intermediate computations:</p>
+
+<pre><code>(defn quadratic-formula [a b c]
+  (let [discriminant (- (* b b) (* 4 a c))
+        sqrt-disc    (Math/sqrt discriminant)
+        two-a        (* 2 a)]
+    [(/ (+ (- b) sqrt-disc) two-a)
+     (/ (- (- b) sqrt-disc) two-a)]))
+
+(quadratic-formula 1 -3 2)</code></pre>
+
+<h2 id="recursion"><a href="#recursion">Recursion</a></h2>
+
+<p>A function can call itself. This is <em>recursion</em> &mdash; the fundamental mechanism for repetition in functional programming.</p>
+
+<pre><code>(defn my-length [lst]
+  (if (empty? lst)
+    0
+    (+ 1 (my-length (rest lst)))))
+
+(my-length [1 2 3 4 5])</code></pre>
+
+<p>Every recursive function needs a <em>base case</em> (here, <code>(empty? lst)</code> returning <code>0</code>) and a <em>recursive case</em> that makes progress toward the base case (here, <code>(rest lst)</code> shrinks the list by one).</p>
+
+<p>Here is a more interesting example &mdash; finding the maximum of a list:</p>
+
+<pre><code>(defn my-max [lst]
+  (if (= (count lst) 1)
+    (first lst)
+    (let [head (first lst)
+          tail-max (my-max (rest lst))]
+      (if (> head tail-max) head tail-max))))
+
+(my-max [1 9 3 7 2 8 5])</code></pre>
+
+<p>In practice, <code>reduce</code> often replaces explicit recursion. The same function, written with <code>reduce</code>:</p>
+
+<pre><code>(reduce (fn [a b] (if (> a b) a b)) [1 9 3 7 2 8 5])</code></pre>
+
+<h2 id="truthiness-and-equality"><a href="#truthiness-and-equality">Truthiness and Equality</a></h2>
+
+<p>In ClojureScript, only two values are falsy: <code>false</code> and <code>nil</code>. Everything else &mdash; including <code>0</code>, the empty string <code>""</code>, and the empty vector <code>[]</code> &mdash; is truthy. This is different from many other languages:</p>
+
+<pre><code>(mapv #(if % "truthy" "falsy")
+      [true false nil 0 "" [] :ok])</code></pre>
+
+<p><code>=</code> is structural equality &mdash; it compares values, not identity:</p>
+
+<pre><code>[(= [1 2 3] [1 2 3])
+ (= {:a 1} {:a 1})
+ (= "hello" "hello")]</code></pre>
+
+<p>For numbers, <code>==</code> does numeric equality across types:</p>
+
+<pre><code>(== 1 1.0)</code></pre>
+
+<h2 id="exercises"><a href="#exercises">Exercises</a></h2>
+
+<ol>
+<li>
+<p><strong>Arithmetic.</strong></p>
+<ol type="a">
+<li>Write the ClojureScript expression for \(3 \times 4\).</li>
+<li>Write the ClojureScript expression for \(3 \times (4 + 6)\).</li>
+<li>Write the ClojureScript expression for \(3 \times (4 + \frac{6}{7})\).</li>
+<li>Write the ClojureScript expression for \(3 \times (4 + (\frac{6}{7})^2)\).</li>
+</ol>
+<pre><code>;; Exercise 1 — try your answers here
+</code></pre>
+</li>
+
+<li>
+<p><strong>Functions.</strong></p>
+<ol type="a">
+<li>Define a function <code>f</code> that computes \(f(x, y) = (x + y)^{(x - y)}\) and evaluate <code>(f 5 3)</code>. (Hint: use <code>Math/pow</code> for exponentiation.)</li>
+<li>Define <code>(defn g [x y z] (- x (* y z)))</code>. What is <code>(g 1 4 (f 6 3))</code>?</li>
+<li>Write a higher-order function <code>make-adder</code> that takes a number <code>n</code> and returns a function that adds <code>n</code> to its argument. Test it: <code>((make-adder 5) 3)</code> should return 8.</li>
+</ol>
+<pre><code>;; Exercise 2 — try your answers here
+</code></pre>
+</li>
+
+<li>
+<p><strong>Data structures.</strong></p>
+<ol type="a">
+<li>Create a vector of the even numbers from 0 to 10.</li>
+<li>Create a map representing a playing card (e.g., <code>{:suit :hearts :rank 10}</code>) and write a function <code>describe-card</code> that returns a string like "10 of hearts".</li>
+<li>What does <code>(conj [1 2 3] 4)</code> return? What about <code>(conj '(1 2 3) 4)</code>? Why are they different?</li>
+</ol>
+<pre><code>;; Exercise 3 — try your answers here
+</code></pre>
+</li>
+
+<li>
+<p><strong>Higher-order functions.</strong></p>
+<ol type="a">
+<li>Use <code>reduce</code> to compute the product of <code>[1 2 3 4 5]</code>.</li>
+<li>Use <code>map</code> and <code>reduce</code> to compute the sum of squares: \(\sum_{i=1}^{5} i^2\).</li>
+<li>Rewrite the sum-of-squares computation using the <code>-&gt;&gt;</code> threading macro.</li>
+</ol>
+<pre><code>;; Exercise 4 — try your answers here
+</code></pre>
+</li>
+
+<li>
+<p><strong>Recursion.</strong></p>
+<ol type="a">
+<li>Write a recursive function <code>my-sum</code> that sums a list of numbers. (Base case: empty list returns 0.)</li>
+<li>Write a recursive function <code>my-reverse</code> that reverses a vector. (Hint: use <code>conj</code> and <code>subvec</code>, or <code>first</code>/<code>rest</code> with a helper.)</li>
+<li>Rewrite <code>my-sum</code> and <code>my-reverse</code> using <code>reduce</code>. Which version is clearer?</li>
+</ol>
+<pre><code>;; Exercise 5 — try your answers here
+</code></pre>
+</li>
+</ol>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="12-non-parametric-models.html">&larr; Chapter 12: Non-parametric Models</a>
+    <span></span>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/cps_transform.cljc',
+    '../prob/cps.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot display run-physics animate-physics]])" +
+      "(defn abs' [x] (js/Math.abs x))"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>
