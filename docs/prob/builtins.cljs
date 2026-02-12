@@ -435,15 +435,24 @@
             crp-probs (conj (vec (map double counts)) (double alpha))
             choice (erp/multinomial crp-items crp-probs)
             [result new-state]
-            (if (= choice :new)
+            (cond
+              (= choice :new)
               ;; Seat at new table: call f to get result
               (let [r (apply f args)]
                 [r {:tables (conj tables r)
                     :counts (conj counts 1)}])
+
+              (and (integer? choice) (>= choice 0) (< choice (count tables)))
               ;; Seat at existing table
               [(nth tables choice)
                {:tables tables
-                :counts (update counts choice inc)}])]
+                :counts (update counts choice inc)}]
+
+              ;; Stale MH trace value — treat as new table
+              :else
+              (let [r (apply f args)]
+                [r {:tables (conj tables r)
+                    :counts (conj counts 1)}]))]
         (if erp/*trace-state*
           (vswap! erp/*trace-state* assoc-in [:mem-cache key] new-state)
           (vswap! local-state assoc args new-state))

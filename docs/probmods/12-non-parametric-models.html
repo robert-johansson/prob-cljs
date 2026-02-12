@@ -200,16 +200,10 @@
          prototype (mapv (fn [w] (* alpha w)) phi)
          bag->prototype (mem (fn [bag] (dirichlet prototype)))
          get-bag (DPmem 1.0 gensym)
-         obs->bag (mem (fn [obs-name] (get-bag)))
-         draw-marble (mem (fn [obs-name]
-                            (multinomial colors (bag->prototype (obs->bag obs-name)))))]
-     (condition (and
-                  (= 'red (draw-marble 'obs1))
-                  (= 'red (draw-marble 'obs2))
-                  (= 'blue (draw-marble 'obs3))
-                  (= 'blue (draw-marble 'obs4))
-                  (= 'red (draw-marble 'obs5))
-                  (= 'blue (draw-marble 'obs6))))
+         obs->bag (mem (fn [obs-name] (get-bag)))]
+     (doseq [[obs color] [['obs1 'red] ['obs2 'red] ['obs3 'blue]
+                           ['obs4 'blue] ['obs5 'red] ['obs6 'blue]]]
+       (observe (categorical-dist colors (bag->prototype (obs->bag obs))) color))
      [(= (obs->bag 'obs1) (obs->bag 'obs2))
       (= (obs->bag 'obs1) (obs->bag 'obs3))])))
 
@@ -337,20 +331,16 @@
    (let [class-distribution (DPmem 1.0 gensym)
          object->class (mem (fn [object] (class-distribution)))
          classes->parameters (mem (fn [class1 class2] (beta 0.5 0.5)))
-         talks (fn [object1 object2]
-                 (flip (classes->parameters (object->class object1) (object->class object2))))]
-     (condition (and (talks 'tom 'fred)
-                     (talks 'tom 'jim)
-                     (talks 'jim 'fred)
-                     (not (talks 'mary 'fred))
-                     (not (talks 'mary 'jim))
-                     (not (talks 'sue 'fred))
-                     (not (talks 'sue 'tom))
-                     (not (talks 'ann 'jim))
-                     (not (talks 'ann 'tom))
-                     (talks 'mary 'sue)
-                     (talks 'mary 'ann)
-                     (talks 'ann 'sue)))
+         talk-prob (fn [o1 o2]
+                     (classes->parameters (object->class o1) (object->class o2)))]
+     ;; Positive observations (these people talk)
+     (doseq [[a b] [['tom 'fred] ['tom 'jim] ['jim 'fred]
+                     ['mary 'sue] ['mary 'ann] ['ann 'sue]]]
+       (observe (bernoulli-dist (talk-prob a b)) true))
+     ;; Negative observations (these people don't talk)
+     (doseq [[a b] [['mary 'fred] ['mary 'jim] ['sue 'fred]
+                     ['sue 'tom] ['ann 'jim] ['ann 'tom]]]
+       (observe (bernoulli-dist (talk-prob a b)) false))
      [(= (object->class 'tom) (object->class 'fred))
       (= (object->class 'tom) (object->class 'mary))])))
 
