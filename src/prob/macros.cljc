@@ -40,6 +40,12 @@
 (defn query* [method body]
   `(prob.core/conditional-fn ~method (fn [] ~@body)))
 
+(defn ais-query* [n-particles body]
+  (let [[opts body] (if (map? (first body))
+                      [(first body) (rest body)]
+                      [{} body])]
+    `(prob.core/ais-query-fn ~n-particles ~opts (fn [] ~@body))))
+
 (defn smc-query* [n-particles body]
   (let [[opts body] (if (map? (first body))
                       [(first body) (rest body)]
@@ -102,6 +108,12 @@
        "Create a reusable conditional sampler."
        [method & body]
        (query* method body))
+
+     (defmacro ais-query
+       "Annealed Importance Sampling with n-particles.
+        Optionally accepts an opts map as the first body argument."
+       [n-particles & body]
+       (ais-query* n-particles body))
 
      (defmacro smc-query
        "Sequential Monte Carlo inference with n-particles.

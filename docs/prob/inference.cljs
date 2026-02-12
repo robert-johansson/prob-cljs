@@ -278,6 +278,102 @@
     (list (apply list values) (apply list probs))))
 
 ;; ---------------------------------------------------------------------------
+;; Annealed Importance Sampling (AIS)
+;; ---------------------------------------------------------------------------
+
+(defn- linear-schedule
+  "Linear annealing schedule: [1/K, 2/K, ..., 1.0]."
+  [steps]
+  (mapv #(/ (inc %) steps) (range steps)))
+
+(defn- geometric-schedule
+  "Geometric annealing schedule: more time near beta=0.
+   power controls curvature (higher = more time at low temps)."
+  [steps power]
+  (mapv #(js/Math.pow (/ (inc %) steps) power) (range steps)))
+
+(defn- ais-mh-step
+  "One MH step targeting the tempered distribution pi_beta.
+   Like mh-step but the score difference is scaled by beta."
+  [thunk old-state beta]
+  (let [{old-trace :trace, old-score :score, old-size :size,
+         old-mem-cache :mem-cache} old-state
+        addr (js/Math.floor (* (erp/rand) old-size))
+        ts (make-replay-state old-trace addr old-mem-cache drift-propose-fn)
+        new-result (execute-traced thunk ts)]
+    (if (nil? new-result)
+      old-state
+      (let [{new-score :score, new-size :size} new-result
+            old-entry (get old-trace addr)
+            new-entry (get (:trace new-result) addr)
+            fwd-lp (:fwd-lp new-entry)
+            rev-lp (:rev-lp new-entry)
+            proposal-correction (if fwd-lp
+                                  (+ (- (:log-prob new-entry) (:log-prob old-entry))
+                                     (- rev-lp fwd-lp))
+                                  0.0)
+            log-accept (+ (* beta (- new-score old-score))
+                          (- (js/Math.log old-size)
+                             (js/Math.log new-size))
+                          proposal-correction)]
+        (if (< (js/Math.log (erp/rand)) log-accept)
+          new-result
+          old-state)))))
+
+(defn ais-query-fn
+  "Annealed Importance Sampling (Neal 2001).
+   Bridges importance sampling and MCMC via intermediate tempered distributions.
+   n-particles: number of independent AIS chains.
+   opts: {:steps 32, :mh-steps 5, :schedule :geometric}
+   Returns (values probs) like importance-query-fn."
+  ([n-particles thunk] (ais-query-fn n-particles {} thunk))
+  ([n-particles opts thunk]
+   (let [{:keys [steps mh-steps schedule]
+          :or {steps 32 mh-steps 5 schedule :geometric}} opts
+         betas (case schedule
+                 :linear (linear-schedule steps)
+                 :geometric (geometric-schedule steps 4)
+                 (if (vector? schedule) schedule
+                   (geometric-schedule steps 4)))
+         ;; Run each particle
+         raw (loop [i 0, acc (transient [])]
+               (if (>= i n-particles)
+                 (persistent! acc)
+                 (let [;; Initialize via traced rejection
+                       initial (loop [attempts 0]
+                                 (if (>= attempts max-rejection-attempts)
+                                   (throw (ex-info "ais-query: no initial sample found"
+                                                   {:attempts max-rejection-attempts}))
+                                   (let [result (execute-traced thunk (make-fresh-state))]
+                                     (if result
+                                       result
+                                       (recur (inc attempts))))))
+                       ;; Anneal through temperature schedule
+                       result (loop [j 0, state initial, log-w 0.0, prev-beta 0.0]
+                                (if (>= j (count betas))
+                                  {:value (:value state) :log-weight log-w}
+                                  (let [beta (nth betas j)
+                                        ;; Weight update: (beta - prev-beta) * score
+                                        log-w (+ log-w (* (- beta prev-beta) (:score state)))
+                                        ;; MH transitions at this temperature
+                                        state (loop [s state, k 0]
+                                                (if (>= k mh-steps)
+                                                  s
+                                                  (recur (ais-mh-step thunk s beta) (inc k))))]
+                                    (recur (inc j) state log-w beta))))]
+                   (recur (inc i) (conj! acc result)))))
+         _ (when (empty? raw)
+             (throw (ex-info "ais-query: all particles failed" {:n n-particles})))
+         log-z (math/log-sum-exp (mapv :log-weight raw))
+         grouped (reduce (fn [m {:keys [value log-weight]}]
+                           (update m value
+                                   (fnil #(math/log-sum-exp [% log-weight]) ##-Inf)))
+                         {} raw)
+         values (keys grouped)
+         probs (map #(js/Math.exp (- (get grouped %) log-z)) values)]
+     (list (apply list values) (apply list probs)))))
+
+;; ---------------------------------------------------------------------------
 ;; Enumeration Query (exact, for finite-domain ERPs)
 ;; ---------------------------------------------------------------------------
 
@@ -1211,6 +1307,9 @@
                      opts: :samples (required), :lag (default 1), :burn (default 0), :callback fn
      :map          - MAP inference via MH, returns single highest-scoring value
                      opts: :samples (default 1000), :lag (default 1), :burn (default 0)
+     :ais          - Annealed Importance Sampling, returns (values probs)
+                     opts: :particles (default 1000), :steps (default 32), :mh-steps (default 5),
+                           :schedule (:geometric or :linear)
      :smc          - Sequential Monte Carlo, returns vector of samples
                      opts: :particles (required), :rejuv-steps, thunk must be CPS-transformed
      :particle-gibbs - Particle Gibbs (PMCMC), returns vector of samples
@@ -1227,6 +1326,12 @@
                        max-executions (assoc :max-executions max-executions))
                      thunk)
       :importance  (importance-query-fn (or samples 1000) thunk)
+      :ais         (ais-query-fn (or (:particles opts) samples 1000)
+                                 (cond-> {}
+                                   (:steps opts)    (assoc :steps (:steps opts))
+                                   (:mh-steps opts) (assoc :mh-steps (:mh-steps opts))
+                                   (:schedule opts) (assoc :schedule (:schedule opts)))
+                                 thunk)
       :forward     (forward-query-fn samples thunk)
       :mh-scored   (mh-query-scored-fn samples lag burn callback thunk)
       :map         (map-query-fn (or samples 1000) lag burn thunk)

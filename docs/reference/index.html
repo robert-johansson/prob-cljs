@@ -88,6 +88,7 @@
     <li><a href="#importance-query">importance-query</a></li>
     <li><a href="#map-query">map-query</a></li>
     <li><a href="#mh-query-scored">mh-query-scored</a></li>
+    <li><a href="#ais-query">ais-query</a></li>
     <li><a href="#smc-query">smc-query</a></li>
     <li><a href="#particle-gibbs-query">particle-gibbs-query</a></li>
     <li><a href="#infer">infer</a></li>
@@ -724,7 +725,7 @@
 <div class="fn-entry" id="infer">
 <h3><a href="#infer"><code>infer</code></a></h3>
 <div class="fn-signature">(infer opts thunk)</div>
-<p class="fn-description">Unified entry point for all inference methods. Dispatches based on <code>:method</code> key in <em>opts</em>. Available methods: <code>:rejection</code>, <code>:mh</code>, <code>:enumeration</code>, <code>:importance</code>, <code>:forward</code>, <code>:mh-scored</code>, <code>:map</code>. Each method accepts its own options (e.g. <code>:samples</code>, <code>:lag</code>, <code>:burn</code>). SMC and particle Gibbs also exist but require CPS-transformed models.</p>
+<p class="fn-description">Unified entry point for all inference methods. Dispatches based on <code>:method</code> key in <em>opts</em>. Available methods: <code>:rejection</code>, <code>:mh</code>, <code>:enumeration</code>, <code>:importance</code>, <code>:forward</code>, <code>:mh-scored</code>, <code>:map</code>, <code>:ais</code>. Each method accepts its own options (e.g. <code>:samples</code>, <code>:lag</code>, <code>:burn</code>). AIS accepts <code>:particles</code>, <code>:steps</code>, <code>:mh-steps</code>, <code>:schedule</code>. SMC and particle Gibbs also exist but require CPS-transformed models.</p>
 <pre><code>;; Same model, different inference methods
 (let [model (fn []
               (let [x (uniform-draw [1 2 3 4 5])]
@@ -739,6 +740,27 @@
   ;; Importance sampling
   (barplot (infer {:method :importance :samples 2000} model)
     "importance (2000 samples)"))</code></pre>
+</div>
+
+<div class="fn-entry" id="ais-query">
+<h3><a href="#ais-query"><code>ais-query</code></a></h3>
+<div class="fn-signature">(ais-query n-particles &amp; body) (ais-query n-particles opts &amp; body)</div>
+<p class="fn-description">Annealed Importance Sampling (Neal 2001). Bridges importance sampling and MCMC via intermediate tempered distributions between the prior and posterior. Gives lower-variance estimates than plain importance sampling and handles multimodal posteriors better. Returns <code>(values probs)</code> like <code>importance-query</code>. Options: <code>:steps</code> (temperature steps, default 32), <code>:mh-steps</code> (MH transitions per temperature, default 5), <code>:schedule</code> (<code>:geometric</code> or <code>:linear</code>, default <code>:geometric</code>).</p>
+<pre><code>;; Estimate coin bias with AIS
+(let [[values probs] (ais-query 1000
+                       (let [x (flip 0.5)]
+                         (observe (bernoulli-dist 0.9) x)
+                         x))
+      prob-map (zipmap values probs)]
+  (display "P(true):" (.toFixed (get prob-map true) 3))
+  (barplot (list values probs) "AIS posterior"))
+
+;; With options: linear schedule, fewer steps
+(let [[vs ps] (ais-query 500 {:steps 16 :schedule :linear}
+                (let [x (uniform-draw [:a :b :c])]
+                  (factor (if (= x :a) 0 -2))
+                  x))]
+  (barplot (list vs ps) "AIS with linear schedule"))</code></pre>
 </div>
 
 <div class="fn-entry" id="smc-query">
@@ -1205,6 +1227,9 @@ function ensureScittleImports() {
       "(defmacro importance-query [n & body] `(prob.core/importance-query-fn ~n (fn [] ~@body)))" +
       "(defmacro map-query [n lag & body] `(prob.core/map-query-fn ~n ~lag (fn [] ~@body)))" +
       "(defmacro mh-query-scored [n lag & body] `(prob.core/mh-query-scored-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro ais-query [n-particles & body]" +
+      "  (let [[opts body] (if (map? (first body)) [(first body) (rest body)] [{} body])]" +
+      "    `(prob.core/ais-query-fn ~n-particles ~opts (fn [] ~@body))))" +
       "(defmacro smc-query [n-particles & body]" +
       "  (let [[opts body] (if (map? (first body)) [(first body) (rest body)] [{} body])" +
       "        cps-body (prob.cps-transform/cps-of-expr (cons 'do body) 'k__final)]" +
@@ -1222,7 +1247,7 @@ function ensureScittleImports() {
       "                              condition factor observe rejection-query-fn mh-query-fn" +
       "                              enumeration-query-fn forward-query-fn importance-query-fn" +
       "                              map-query-fn mh-query-scored-fn infer condition-equal" +
-      "                              smc-query-fn particle-gibbs-fn conditional-fn" +
+      "                              ais-query-fn smc-query-fn particle-gibbs-fn conditional-fn" +
       "                              mem mean variance sd sum prod mode" +
       "                              weighted-mean weighted-variance expectation" +
       "                              empirical-distribution softmax repeat-fn" +
@@ -1241,7 +1266,7 @@ function ensureScittleImports() {
       "(require '[prob.builtins :refer [expt pair car cdr pair?]])" +
       "(require '[prob.macros :refer [rejection-query mh-query enumeration-query" +
       "                                  forward-query importance-query map-query mh-query-scored" +
-      "                                  smc-query particle-gibbs-query]])" +
+      "                                  ais-query smc-query particle-gibbs-query]])" +
       "(require '[prob.viz :refer [hist density scatter barplot display lineplot table heatmap marginals auto]])"
     );
 

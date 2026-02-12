@@ -6,7 +6,7 @@
                                 condition factor rejection-query-fn mh-query-fn
                                 enumeration-query-fn importance-query-fn conditional-fn
                                 mh-query-scored-fn map-query-fn condition-equal
-                                observe smc-query-fn particle-gibbs-fn
+                                observe ais-query-fn smc-query-fn particle-gibbs-fn
                                 forward-query-fn infer
                                 sample* observe* dist? enumerate*
                                 bernoulli-dist gaussian-dist uniform-dist beta-dist
@@ -28,7 +28,7 @@
             [prob.cps :as cps])
   (:require-macros [prob.macros :refer [rejection-query mh-query enumeration-query
                                         importance-query mh-query-scored map-query
-                                        forward-query query smc-query
+                                        forward-query query ais-query smc-query
                                         particle-gibbs-query]]))
 
 ;; ---------------------------------------------------------------------------
@@ -1444,6 +1444,78 @@
     (and (< (js/Math.abs (- (reduce + probs) 1.0)) 1e-10)
          (> (nth probs 2) (nth probs 0))
          (> (nth probs 0) (nth probs 1)))))
+
+;; ---------------------------------------------------------------------------
+;; Annealed Importance Sampling (AIS)
+;; ---------------------------------------------------------------------------
+
+(println "=== AIS ===")
+
+(test-assert "ais: returns (values probs) pair"
+  (let [result (ais-query 200
+                 (let [x (flip)]
+                   x))]
+    (and (seq? result)
+         (= 2 (count result))
+         (seq? (first result))
+         (seq? (second result)))))
+
+(test-assert "ais: probs sum to 1"
+  (let [[_values probs] (ais-query 200
+                           (let [x (flip)]
+                             x))]
+    (approx= (reduce + (seq probs)) 1.0 0.01)))
+
+(test-assert "ais: factor shifts posterior"
+  ;; P(true) ∝ 0.5 * exp(0) = 0.5, P(false) ∝ 0.5 * exp(-2) ≈ 0.0677
+  ;; P(true) ≈ 0.5/(0.5+0.0677) ≈ 0.881
+  (let [[values probs] (ais-query 500
+                          (let [x (flip)]
+                            (factor (if x 0 -2))
+                            x))
+        prob-map (zipmap (seq values) (seq probs))]
+    (approx= (get prob-map true) 0.88 0.1)))
+
+(test-assert "ais: observe shifts posterior (Beta-Bernoulli)"
+  ;; Beta(1,1) prior, observe 3 heads out of 4 -> P(true) biased
+  (let [[values probs] (ais-query 500
+                          (let [x (flip 0.5)]
+                            (observe (bernoulli-dist 0.9) x)
+                            x))
+        prob-map (zipmap (seq values) (seq probs))]
+    ;; P(true) ∝ 0.5 * 0.9 = 0.45, P(false) ∝ 0.5 * 0.1 = 0.05
+    ;; P(true) = 0.9
+    (approx= (get prob-map true) 0.9 0.1)))
+
+(test-assert "ais: continuous posterior (Gaussian mean estimation)"
+  ;; Use AIS for continuous models — check that the weighted mean is reasonable
+  (let [[values probs] (ais-query-fn 500 {:steps 16 :mh-steps 3}
+                          (fn [] (let [mu (gaussian 0 5)]
+                                   (observe (gaussian-dist mu 1) 3.0)
+                                   mu)))
+        vs (vec values)
+        ps (vec probs)
+        weighted-mu (reduce + (map * vs ps))]
+    (approx= weighted-mu 3.0 1.5)))
+
+(test-assert "ais: works via infer {:method :ais}"
+  (let [[values probs] (infer {:method :ais :particles 200}
+                               (fn [] (let [x (flip)] x)))]
+    (approx= (reduce + (seq probs)) 1.0 0.01)))
+
+(test-assert "ais: opts map accepted"
+  (let [[values probs] (ais-query 200 {:steps 16 :mh-steps 3 :schedule :linear}
+                          (let [x (flip)]
+                            (factor (if x 0 -1))
+                            x))]
+    (approx= (reduce + (seq probs)) 1.0 0.01)))
+
+(test-assert "ais: geometric schedule (default)"
+  (let [[values probs] (ais-query 200
+                          (let [x (uniform-draw [:a :b :c])]
+                            x))]
+    (and (= (count (seq values)) 3)
+         (approx= (reduce + (seq probs)) 1.0 0.01))))
 
 ;; ---------------------------------------------------------------------------
 ;; CPS Transform

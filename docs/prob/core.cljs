@@ -88,6 +88,7 @@
 (def map-query-fn inference/map-query-fn)
 (def condition-equal inference/condition-equal)
 (def forward-query-fn inference/forward-query-fn)
+(def ais-query-fn inference/ais-query-fn)
 (def smc-query-fn inference/smc-query-fn)
 (def particle-gibbs-fn inference/particle-gibbs-fn)
 (def infer inference/infer)

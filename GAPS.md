@@ -131,6 +131,7 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 | MCMC callbacks / hooks | — | `callbacks` array on MCMC | — | Optional callback fn: `{:iter :value :score}` per kept sample | **Done** |
 | SMC / Particle filtering | — | `method: 'SMC'` with particles, rejuvSteps | SMC, conditional SMC | `smc-query` macro with CPS transform, multinomial resampling, optional MH rejuvenation | **Done** |
 | Particle Gibbs (PMCMC) | — | `method: 'PMCMC'` | Conditional SMC | `particle-gibbs-query` macro with retained particle, burn-in/lag/rejuvenation | **Done** |
+| AIS (Annealed Importance Sampling) | — | `method: 'AIS'` | `annealed` | `ais-query` macro / `ais-query-fn` with geometric/linear schedules | **Done** |
 | Unified inference entry | — | `Infer(options, model)` dispatches to all methods | — | `(infer {:method :mh :samples 1000 :burn 100} thunk)` | **Done** |
 | Incremental rejection | — | Reject at factor statements with `maxScore` bound | — | not implemented | Medium |
 
@@ -158,7 +159,7 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 | Algorithm | Source | Type | Description | Feasibility |
 |---|---|---|---|---|
 | ~~**Forward sampling**~~ | WebPPL | Sampling | ~~Run model ignoring factors, collect prior samples~~ | **Done** via `forward-query-fn` |
-| **AIS** | WebPPL, Anglican | Annealing | Annealed Importance Sampling with temperature schedule | Medium (uses existing MH kernel) |
+| ~~**AIS**~~ | WebPPL, Anglican | Annealing | ~~Annealed Importance Sampling with temperature schedule~~ | **Done** via `ais-query` with geometric/linear schedules |
 | **ALMH** | Anglican | MCMC | Adaptive LMH with UCB bandit scheduling for faster mixing | Medium |
 | **Kernel composition** | WebPPL | MCMC | `sequence`, `repeat` combinators for MCMC kernels | Medium |
 | ~~**Enumeration strategies**~~ | WebPPL | Exact | ~~`likelyFirst` (priority queue), execution limits~~ | **Done**: `:likely-first` + `:max-executions` |
@@ -216,7 +217,7 @@ prob-cljs has both per-method macros (`rejection-query`, `mh-query`, `enumeratio
 (infer {:method :mh :samples 1000 :lag 1 :burn 100 :callback my-fn} model-thunk)
 ```
 
-Supports `:rejection`, `:mh`, `:enumeration`, `:importance`, `:forward`, `:mh-scored`, `:map`, `:smc`, and `:particle-gibbs` methods with method-specific options.
+Supports `:rejection`, `:mh`, `:enumeration`, `:importance`, `:forward`, `:mh-scored`, `:map`, `:ais`, `:smc`, and `:particle-gibbs` methods with method-specific options.
 
 ### `predict` -- Labeled output collection
 
@@ -383,7 +384,7 @@ The effective gap for builtins is small because ClojureScript's standard library
 
 8. ~~**Enumeration strategies**~~ -- **Done.** `:likely-first` strategy with priority-queue exploration of high-probability combinations first. `:max-executions` limits for both strategies.
 
-9. **AIS (Annealed Importance Sampling)** -- Temperature schedule from prior to posterior using existing MH kernel. Present in both WebPPL and Anglican.
+9. ~~**AIS (Annealed Importance Sampling)**~~ -- **Done.** `ais-query-fn` / `ais-query` macro with geometric/linear temperature schedules, configurable MH steps per temperature.
 
 10. **Incremental rejection** -- Reject at factor statements (not just condition). Requires `maxScore` bound for efficiency.
 
