@@ -309,7 +309,7 @@ test/
 
 **Enumeration**: Discovery pass finds all choice points and their domains. Full odometer or likelyFirst (priority queue) exploration. Normalization via log-sum-exp.
 
-**CPS + SMC (particle filtering)**: The `smc-query` macro CPS-transforms the model body at macro expansion time via `cps_transform.cljc` (shared between Clojure macros and SCI). At each `sample`/`observe`/`factor`/`condition`, execution yields a checkpoint record containing the continuation. The SMC driver runs N particles through the model, resampling by weight at observe points (adaptive via effective sample size). Supports `let`, `if`, `do`, `fn`, `when`, `cond`, `case`, `and`, `or`, `loop`/`recur`, all ERPs, and primitive function calls.
+**CPS + SMC (particle filtering)**: The `smc-query` macro CPS-transforms the model body at macro expansion time via `cps_transform.cljc` (shared between Clojure macros and SCI). At each `sample`/`observe`/`factor`/`condition`, execution yields a checkpoint record containing the continuation. The SMC driver runs N particles through the model, resampling by weight at observe points (adaptive via effective sample size). Supports `let`, `if`, `do`, `fn`, `when`, `cond`, `case`, `and`, `or`, `loop`/`recur`, `doseq`, all ERPs, and primitive function calls.
 
 **Scoped volatiles**: Inference state uses `volatile!` holding persistent hash-maps. Volatiles never escape inference boundaries — outside inference, ERPs are pure sampling functions.
 
