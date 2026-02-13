@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>MTS Agent — Bayesian Relational Frame Learning</title>
+  <script src="https://unpkg.com/jspsych@8.0.2"></script>
+  <script src="https://unpkg.com/@jspsych/plugin-html-button-response@2.0.0"></script>
+  <script src="https://unpkg.com/@jspsych/plugin-html-keyboard-response@2.0.0"></script>
+  <link rel="stylesheet" href="https://unpkg.com/jspsych@8.0.2/css/jspsych.css">
+
+  <!-- Scittle + prob-cljs source files -->
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+  <script type="application/x-scittle" src="../prob/math.cljs"></script>
+  <script type="application/x-scittle" src="../prob/erp.cljs"></script>
+  <script type="application/x-scittle" src="../prob/dist.cljs"></script>
+  <script type="application/x-scittle" src="../prob/inference.cljs"></script>
+  <script type="application/x-scittle" src="../prob/builtins.cljs"></script>
+  <script type="application/x-scittle" src="../prob/core.cljs"></script>
+  <script type="application/x-scittle" src="../prob/agents/rft.cljs"></script>
+
+  <!-- Define macros for Scittle -->
+  <script type="application/x-scittle">
+(ns prob.macros)
+(defmacro enumeration-query [& body]
+  `(prob.core/enumeration-query-fn (fn [] ~@body)))
+  </script>
+
+  <!-- RFT Agent bridge: expose ClojureScript functions to JS -->
+  <script type="application/x-scittle">
+(ns mts-experiment
+  (:require [prob.agents.rft :as rft]
+            [prob.dist :as dist]
+            [prob.core :as core]))
+
+;; ----- Agent state -----
+(def agent-state (atom nil))
+(def trial-log (atom []))
+
+(defn init-agent! []
+  (let [stimuli [:A :B :C]
+        relation-types [:same :different]
+        hyp-space (rft/make-rft-hypothesis-space stimuli relation-types)
+        agent (rft/make-rft-agent {:hypothesis-space hyp-space
+                                   :alpha 5.0})]
+    (reset! agent-state agent)
+    (reset! trial-log [])
+    (js/console.log (str "Agent initialized with " (count hyp-space) " hypotheses"))
+    (count hyp-space)))
+
+(defn agent-respond [sample-str comparisons-arr cue-str]
+  (let [sample (keyword sample-str)
+        comparisons (mapv keyword (js->clj comparisons-arr))
+        cue (keyword cue-str)
+        agent @agent-state
+        [comps probs] ((:act agent) sample comparisons cue)
+        ;; Sample from softmax distribution
+        r (core/rand)
+        response-idx (loop [i 0 cum 0.0]
+                       (if (>= i (count probs))
+                         (dec (count probs))
+                         (let [cum (+ cum (nth probs i))]
+                           (if (< r cum) i (recur (inc i) cum)))))]
+    (clj->js {:response response-idx
+              :probs (mapv #(.toFixed % 3) probs)})))
+
+(defn agent-update! [sample-str chosen-str cue-str correct]
+  (let [sample (keyword sample-str)
+        chosen (keyword chosen-str)
+        cue (keyword cue-str)
+        agent @agent-state
+        update-fn (:update-belief agent)]
+    (update-fn sample chosen cue correct)
+    ;; Log the trial
+    (let [beliefs (rft/get-relation-beliefs agent [:A :B :C])
+          entry {:sample sample-str
+                 :chosen chosen-str
+                 :cue cue-str
+                 :correct correct
+                 :beliefs (into {}
+                            (map (fn [[[a b] rels]]
+                                   [(str (name a) "-" (name b))
+                                    (into {} (map (fn [[k v]] [(name k) (.toFixed v 3)]) rels))])
+                                 beliefs))}]
+      (swap! trial-log conj entry)
+      (clj->js entry))))
+
+(defn get-belief-summary []
+  (let [agent @agent-state
+        beliefs (rft/get-relation-beliefs agent [:A :B :C])]
+    (clj->js
+      (into {}
+        (map (fn [[[a b] rels]]
+               [(str (name a) "-" (name b))
+                (into {} (map (fn [[k v]] [(name k) (.toFixed v 3)]) rels))])
+             beliefs)))))
+
+(defn get-trial-log []
+  (clj->js @trial-log))
+
+(defn get-derived-relation-prob [a-str b-str rel-str]
+  (let [agent @agent-state
+        belief @(:belief agent)
+        support (dist/enumerate* belief)
+        target-rel (keyword rel-str)
+        prob (reduce + 0.0
+               (map (fn [hyp]
+                      (let [hyp-prob (js/Math.exp (dist/observe* belief hyp))
+                            rel (rft/derive-relation hyp (keyword a-str) (keyword b-str))]
+                        (if (= rel target-rel) hyp-prob 0.0)))
+                    support))]
+    prob))
+
+;; Expose to JS
+(set! js/initAgent init-agent!)
+(set! js/agentRespond agent-respond)
+(set! js/agentUpdate agent-update!)
+(set! js/getBeliefSummary get-belief-summary)
+(set! js/getTrialLog get-trial-log)
+(set! js/getDerivedRelationProb get-derived-relation-prob)
+  </script>
+
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; }
+    .setup-screen { max-width: 700px; margin: 40px auto; padding: 20px; }
+    .setup-screen h1 { font-size: 1.5em; margin-bottom: 8px; }
+    .setup-screen p { color: #555; line-height: 1.6; }
+    .btn { background: #3b82f6; color: white; border: none; padding: 10px 24px;
+           border-radius: 6px; cursor: pointer; font-size: 15px; margin: 8px 4px; }
+    .btn:hover { background: #2563eb; }
+    .btn-secondary { background: #6b7280; }
+    .btn-secondary:hover { background: #4b5563; }
+
+    /* Trial display */
+    .mts-display { text-align: center; }
+    .sample-stim { font-size: 48px; font-weight: bold; color: #1e40af;
+                   background: #dbeafe; border-radius: 12px; padding: 20px 40px;
+                   display: inline-block; margin: 20px 0; }
+    .cue-label { font-size: 20px; color: #666; margin: 10px 0; }
+    .phase-label { font-size: 14px; color: #9ca3af; margin-bottom: 10px; }
+
+    /* Results display */
+    #results { max-width: 800px; margin: 20px auto; padding: 20px; }
+    .result-section { margin: 20px 0; }
+    .result-section h3 { font-size: 1.1em; margin-bottom: 8px; border-bottom: 1px solid #e5e5e5; padding-bottom: 4px; }
+    .belief-bar { display: flex; align-items: center; margin: 4px 0; font-size: 13px; }
+    .belief-bar .label { width: 80px; text-align: right; margin-right: 8px; font-family: monospace; }
+    .belief-bar .bar { height: 20px; background: #3b82f6; border-radius: 3px; transition: width 0.3s; }
+    .belief-bar .value { margin-left: 8px; color: #666; font-family: monospace; }
+    .trial-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .trial-table th, .trial-table td { padding: 6px 10px; border: 1px solid #e5e5e5; text-align: left; }
+    .trial-table th { background: #f8f8f8; font-weight: 600; }
+    .trial-table .correct { color: #16a34a; }
+    .trial-table .incorrect { color: #dc2626; }
+    .derived-highlight { background: #fef3c7; padding: 12px; border-radius: 8px;
+                         border: 1px solid #fbbf24; margin: 12px 0; font-size: 15px; }
+    .derived-highlight strong { color: #92400e; }
+  </style>
+</head>
+<body>
+
+<div id="setup-screen" class="setup-screen">
+  <h1>MTS Agent: Bayesian Relational Frame Learning</h1>
+  <p>
+    This demo runs a <strong>Bayesian cognitive agent</strong> through a Matching-to-Sample (MTS)
+    experiment using <a href="https://www.jspsych.org/">jsPsych</a> for trial management and
+    <a href="https://github.com/robert-johansson/prob-cljs">prob-cljs</a> for the agent model.
+  </p>
+  <p>
+    The agent learns relational frames between three stimuli (A, B, C) through training trials,
+    then is tested on <strong>derived relations</strong> it was never directly taught.
+  </p>
+  <p><strong>Training:</strong></p>
+  <ul>
+    <li>Phase 1: Learn that A and B are SAME (8 trials with feedback)</li>
+    <li>Phase 2: Learn that B and C are SAME (8 trials with feedback)</li>
+  </ul>
+  <p><strong>Test:</strong></p>
+  <ul>
+    <li>Phase 3: Probe A→C relation (4 trials, no feedback) — the agent should <em>derive</em> that A and C are SAME via combinatorial entailment (A=B, B=C → A=C)</li>
+  </ul>
+
+  <p style="margin-top: 20px;">
+    <button class="btn" onclick="runSimulation()">Run Agent Simulation</button>
+    <button class="btn btn-secondary" onclick="runVisual()">Watch Trial-by-Trial</button>
+  </p>
+  <p style="font-size: 12px; color: #999;">
+    "Run Agent Simulation" runs all trials instantly and shows results.<br>
+    "Watch Trial-by-Trial" uses jsPsych to display each trial visually (auto-advances).
+  </p>
+</div>
+
+<div id="jspsych-target" style="display:none;"></div>
+<div id="results" style="display:none;"></div>
+
+<script>
+// =========================================================================
+// Trial definitions
+// =========================================================================
+
+var TRAINING_AB = [];
+for (var i = 0; i < 8; i++) {
+  TRAINING_AB.push({
+    sample: 'A', comparisons: ['B', 'C'], cue: 'same',
+    correct_idx: 0, phase: 'Train A→B'
+  });
+}
+
+var TRAINING_BC = [];
+for (var i = 0; i < 8; i++) {
+  TRAINING_BC.push({
+    sample: 'B', comparisons: ['A', 'C'], cue: 'same',
+    correct_idx: 1, phase: 'Train B→C'
+  });
+}
+
+var TEST_AC = [];
+for (var i = 0; i < 4; i++) {
+  TEST_AC.push({
+    sample: 'A', comparisons: ['B', 'C'], cue: 'same',
+    correct_idx: 1, // C is the derived-correct answer
+    phase: 'Test A→C (derived)',
+    is_test: true
+  });
+}
+
+var ALL_TRIALS = TRAINING_AB.concat(TRAINING_BC).concat(TEST_AC);
+
+// =========================================================================
+// Fast simulation mode (no jsPsych UI)
+// =========================================================================
+
+function runSimulation() {
+  document.getElementById('setup-screen').style.display = 'none';
+  document.getElementById('results').style.display = 'block';
+
+  var numHypotheses = window.initAgent();
+  var results = [];
+  var beliefHistory = [];
+
+  ALL_TRIALS.forEach(function(trial, idx) {
+    var resp = window.agentRespond(trial.sample, trial.comparisons, trial.cue);
+    var responseIdx = resp.response;
+    var chosen = trial.comparisons[responseIdx];
+    var correct = responseIdx === trial.correct_idx;
+
+    // Update agent (skip feedback for test trials)
+    var updateResult;
+    if (!trial.is_test) {
+      updateResult = window.agentUpdate(trial.sample, chosen, trial.cue, correct);
+    } else {
+      // Still log beliefs without updating
+      updateResult = { beliefs: window.getBeliefSummary() };
+    }
+
+    results.push({
+      trial: idx + 1,
+      phase: trial.phase,
+      sample: trial.sample,
+      chosen: chosen,
+      correct_answer: trial.comparisons[trial.correct_idx],
+      correct: correct,
+      probs: resp.probs
+    });
+
+    beliefHistory.push(window.getBeliefSummary());
+  });
+
+  renderResults(results, beliefHistory, numHypotheses);
+}
+
+// =========================================================================
+// Visual mode (jsPsych trial-by-trial)
+// =========================================================================
+
+function runVisual() {
+  document.getElementById('setup-screen').style.display = 'none';
+  document.getElementById('jspsych-target').style.display = 'block';
+
+  window.initAgent();
+  var trialResults = [];
+  var beliefHistory = [];
+
+  var jsPsych = initJsPsych({
+    display_element: 'jspsych-target',
+    on_finish: function() {
+      document.getElementById('jspsych-target').style.display = 'none';
+      document.getElementById('results').style.display = 'block';
+      renderResults(trialResults, beliefHistory, 0);
+    }
+  });
+
+  var timeline = [];
+
+  ALL_TRIALS.forEach(function(trial, idx) {
+    // The MTS trial
+    timeline.push({
+      type: jsPsychHtmlButtonResponse,
+      stimulus: function() {
+        return '<div class="mts-display">' +
+          '<div class="phase-label">' + trial.phase + ' (Trial ' + (idx+1) + '/' + ALL_TRIALS.length + ')</div>' +
+          '<div class="sample-stim">' + trial.sample + '</div>' +
+          '<div class="cue-label">Select the ' + trial.cue.toUpperCase() + ' stimulus</div>' +
+          '</div>';
+      },
+      choices: trial.comparisons,
+      trial_duration: 2000,
+      response_ends_trial: true,
+      simulation_options: {
+        data: {
+          response: function() {
+            var resp = window.agentRespond(trial.sample, trial.comparisons, trial.cue);
+            return resp.response;
+          },
+          rt: function() { return 300 + Math.random() * 700; }
+        }
+      },
+      on_finish: function(data) {
+        var responseIdx = data.response;
+        if (responseIdx === null || responseIdx === undefined) {
+          // Timeout — agent picks
+          var resp = window.agentRespond(trial.sample, trial.comparisons, trial.cue);
+          responseIdx = resp.response;
+        }
+        var chosen = trial.comparisons[responseIdx];
+        var correct = responseIdx === trial.correct_idx;
+
+        if (!trial.is_test) {
+          window.agentUpdate(trial.sample, chosen, trial.cue, correct);
+        }
+
+        trialResults.push({
+          trial: idx + 1,
+          phase: trial.phase,
+          sample: trial.sample,
+          chosen: chosen,
+          correct_answer: trial.comparisons[trial.correct_idx],
+          correct: correct,
+          probs: []
+        });
+        beliefHistory.push(window.getBeliefSummary());
+      }
+    });
+
+    // Brief feedback screen for training trials
+    if (!trial.is_test) {
+      timeline.push({
+        type: jsPsychHtmlKeyboardResponse,
+        stimulus: function() {
+          var last = trialResults[trialResults.length - 1];
+          if (!last) return '';
+          var color = last.correct ? '#16a34a' : '#dc2626';
+          var text = last.correct ? 'Correct!' : 'Incorrect';
+          return '<div style="text-align:center; font-size:28px; color:' + color + ';">' + text + '</div>';
+        },
+        choices: 'NO_KEYS',
+        trial_duration: 600
+      });
+    }
+  });
+
+  jsPsych.run(timeline);
+}
+
+// =========================================================================
+// Results rendering
+// =========================================================================
+
+function renderResults(results, beliefHistory, numHypotheses) {
+  var el = document.getElementById('results');
+
+  // Derived relation probability
+  var pAC_same = window.getDerivedRelationProb('A', 'C', 'same');
+  var pCA_same = window.getDerivedRelationProb('C', 'A', 'same');
+
+  var html = '<h2>Experiment Results</h2>';
+
+  // Key finding
+  html += '<div class="derived-highlight">';
+  html += '<strong>Derived relation A→C:</strong> P(SAME) = ' + pAC_same.toFixed(3);
+  html += ' &nbsp;|&nbsp; <strong>C→A:</strong> P(SAME) = ' + pCA_same.toFixed(3);
+  if (pAC_same > 0.7) {
+    html += '<br><em>The agent successfully derived that A and C are SAME via combinatorial entailment (A=B, B=C → A=C).</em>';
+  } else {
+    html += '<br><em>The agent has not yet strongly derived the A-C relation.</em>';
+  }
+  html += '</div>';
+
+  // Final belief state
+  html += '<div class="result-section">';
+  html += '<h3>Final Relational Beliefs</h3>';
+  var beliefs = window.getBeliefSummary();
+  var pairs = ['A-B', 'B-A', 'A-C', 'C-A', 'B-C', 'C-B'];
+  pairs.forEach(function(pair) {
+    if (beliefs[pair]) {
+      var rels = beliefs[pair];
+      html += '<div style="margin: 8px 0;"><strong>' + pair + ':</strong></div>';
+      Object.keys(rels).forEach(function(rel) {
+        var prob = parseFloat(rels[rel]);
+        var width = Math.round(prob * 300);
+        var color = rel === 'same' ? '#3b82f6' : '#f59e0b';
+        html += '<div class="belief-bar">';
+        html += '<span class="label">' + rel + '</span>';
+        html += '<div class="bar" style="width:' + width + 'px; background:' + color + ';"></div>';
+        html += '<span class="value">' + rels[rel] + '</span>';
+        html += '</div>';
+      });
+    }
+  });
+  html += '</div>';
+
+  // Trial-by-trial table
+  html += '<div class="result-section">';
+  html += '<h3>Trial Log</h3>';
+  html += '<table class="trial-table"><thead><tr>';
+  html += '<th>#</th><th>Phase</th><th>Sample</th><th>Chosen</th><th>Correct</th><th>Result</th>';
+  html += '</tr></thead><tbody>';
+  results.forEach(function(r) {
+    var cls = r.correct ? 'correct' : 'incorrect';
+    var sym = r.correct ? '✓' : '✗';
+    html += '<tr>';
+    html += '<td>' + r.trial + '</td>';
+    html += '<td>' + r.phase + '</td>';
+    html += '<td>' + r.sample + '</td>';
+    html += '<td>' + r.chosen + '</td>';
+    html += '<td>' + r.correct_answer + '</td>';
+    html += '<td class="' + cls + '">' + sym + '</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  html += '</div>';
+
+  // Belief trajectory (A-C same probability over trials)
+  html += '<div class="result-section">';
+  html += '<h3>Belief Trajectory: P(A-C = SAME) Over Trials</h3>';
+  html += '<div style="display:flex; align-items:flex-end; height:150px; gap:2px; border-bottom:1px solid #ccc; padding-bottom:4px;">';
+  beliefHistory.forEach(function(b, i) {
+    var pSame = 0;
+    if (b['A-C'] && b['A-C']['same']) {
+      pSame = parseFloat(b['A-C']['same']);
+    }
+    var height = Math.round(pSame * 140);
+    var phase = i < 8 ? '#93c5fd' : (i < 16 ? '#60a5fa' : '#f59e0b');
+    html += '<div style="width:' + Math.max(8, Math.floor(600/(beliefHistory.length))) + 'px; height:' + height + 'px; background:' + phase + '; border-radius:2px 2px 0 0;" title="Trial ' + (i+1) + ': ' + pSame.toFixed(3) + '"></div>';
+  });
+  html += '</div>';
+  html += '<div style="font-size:11px; color:#999; margin-top:4px;">';
+  html += '<span style="display:inline-block; width:12px; height:12px; background:#93c5fd; border-radius:2px;"></span> Train A→B &nbsp;';
+  html += '<span style="display:inline-block; width:12px; height:12px; background:#60a5fa; border-radius:2px;"></span> Train B→C &nbsp;';
+  html += '<span style="display:inline-block; width:12px; height:12px; background:#f59e0b; border-radius:2px;"></span> Test A→C';
+  html += '</div>';
+  html += '</div>';
+
+  // Back button
+  html += '<p><button class="btn btn-secondary" onclick="location.reload()">Reset & Run Again</button></p>';
+  html += '<p style="font-size:12px; color:#999; margin-top:20px;">Powered by <a href="https://github.com/robert-johansson/prob-cljs">prob-cljs</a> + <a href="https://www.jspsych.org/">jsPsych</a></p>';
+
+  el.innerHTML = html;
+}
+</script>
+
+</body>
+</html>

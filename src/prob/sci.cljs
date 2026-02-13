@@ -17,7 +17,8 @@
             [prob.agents.mdp :as mdp]
             [prob.agents.pomdp :as pomdp]
             [prob.agents.bandit :as bandit]
-            [prob.agents.rl :as rl]))
+            [prob.agents.rl :as rl]
+            [prob.agents.rft :as rft]))
 
 ;; ---------------------------------------------------------------------------
 ;; SCI namespace objects
@@ -36,6 +37,7 @@
 (def pomdp-ns (sci/create-ns 'prob.agents.pomdp nil))
 (def bandit-ns (sci/create-ns 'prob.agents.bandit nil))
 (def rl-ns (sci/create-ns 'prob.agents.rl nil))
+(def rft-ns (sci/create-ns 'prob.agents.rft nil))
 
 ;; ---------------------------------------------------------------------------
 ;; prob.erp
@@ -424,6 +426,22 @@
    'cumulative-regret             (sci/copy-var rl/cumulative-regret rl-ns)})
 
 ;; ---------------------------------------------------------------------------
+;; prob.agents.rft
+;; ---------------------------------------------------------------------------
+
+(def rft-namespace
+  {'make-rft-hypothesis-space (sci/copy-var rft/make-rft-hypothesis-space rft-ns)
+   'make-rft-agent            (sci/copy-var rft/make-rft-agent rft-ns)
+   'derive-relation           (sci/copy-var rft/derive-relation rft-ns)
+   'predict-response          (sci/copy-var rft/predict-response rft-ns)
+   'simulate-mts-trial        (sci/copy-var rft/simulate-mts-trial rft-ns)
+   'simulate-mts-block        (sci/copy-var rft/simulate-mts-block rft-ns)
+   'get-belief-summary        (sci/copy-var rft/get-belief-summary rft-ns)
+   'get-relation-beliefs      (sci/copy-var rft/get-relation-beliefs rft-ns)
+   'response-entropy           (sci/copy-var rft/response-entropy rft-ns)
+   'predict-rt                 (sci/copy-var rft/predict-rt rft-ns)})
+
+;; ---------------------------------------------------------------------------
 ;; Combined config
 ;; ---------------------------------------------------------------------------
 
@@ -441,4 +459,5 @@
     'prob.agents.mdp       mdp-namespace
     'prob.agents.pomdp     pomdp-namespace
     'prob.agents.bandit    bandit-namespace
-    'prob.agents.rl        rl-namespace}})
+    'prob.agents.rl        rl-namespace
+    'prob.agents.rft       rft-namespace}})
