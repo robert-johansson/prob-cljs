@@ -12,7 +12,12 @@
             [prob.math :as math]
             [prob.core :as core]
             [prob.cps :as cps]
-            [prob.macros :as macros]))
+            [prob.macros :as macros]
+            [prob.agents.gridworld :as gridworld]
+            [prob.agents.mdp :as mdp]
+            [prob.agents.pomdp :as pomdp]
+            [prob.agents.bandit :as bandit]
+            [prob.agents.rl :as rl]))
 
 ;; ---------------------------------------------------------------------------
 ;; SCI namespace objects
@@ -26,6 +31,11 @@
 (def core-ns (sci/create-ns 'prob.core nil))
 (def macros-ns (sci/create-ns 'prob.macros nil))
 (def cps-ns (sci/create-ns 'prob.cps nil))
+(def gridworld-ns (sci/create-ns 'prob.agents.gridworld nil))
+(def mdp-ns (sci/create-ns 'prob.agents.mdp nil))
+(def pomdp-ns (sci/create-ns 'prob.agents.pomdp nil))
+(def bandit-ns (sci/create-ns 'prob.agents.bandit nil))
+(def rl-ns (sci/create-ns 'prob.agents.rl nil))
 
 ;; ---------------------------------------------------------------------------
 ;; prob.erp
@@ -368,6 +378,52 @@
    'particle-gibbs-query (sci/copy-var particle-gibbs-query macros-ns)})
 
 ;; ---------------------------------------------------------------------------
+;; prob.agents.gridworld
+;; ---------------------------------------------------------------------------
+
+(def gridworld-namespace
+  {'make-gridworld-mdp  (sci/copy-var gridworld/make-gridworld-mdp gridworld-ns)
+   'make-utility-function (sci/copy-var gridworld/make-utility-function gridworld-ns)})
+
+;; ---------------------------------------------------------------------------
+;; prob.agents.mdp
+;; ---------------------------------------------------------------------------
+
+(def mdp-namespace
+  {'make-mdp-agent (sci/copy-var mdp/make-mdp-agent mdp-ns)
+   'simulate-mdp   (sci/copy-var mdp/simulate-mdp mdp-ns)})
+
+;; ---------------------------------------------------------------------------
+;; prob.agents.pomdp
+;; ---------------------------------------------------------------------------
+
+(def pomdp-namespace
+  {'make-pomdp-agent (sci/copy-var pomdp/make-pomdp-agent pomdp-ns)
+   'simulate-pomdp   (sci/copy-var pomdp/simulate-pomdp pomdp-ns)
+   'belief-to-key    (sci/copy-var pomdp/belief-to-key pomdp-ns)})
+
+;; ---------------------------------------------------------------------------
+;; prob.agents.bandit
+;; ---------------------------------------------------------------------------
+
+(def bandit-namespace
+  {'make-bandit-pomdp          (sci/copy-var bandit/make-bandit-pomdp bandit-ns)
+   'make-bandit-prior-belief   (sci/copy-var bandit/make-bandit-prior-belief bandit-ns)
+   'make-prize-bandit-pomdp    (sci/copy-var bandit/make-prize-bandit-pomdp bandit-ns)
+   'make-prize-bandit-start-state (sci/copy-var bandit/make-prize-bandit-start-state bandit-ns)})
+
+;; ---------------------------------------------------------------------------
+;; prob.agents.rl
+;; ---------------------------------------------------------------------------
+
+(def rl-namespace
+  {'make-greedy-bandit-agent      (sci/copy-var rl/make-greedy-bandit-agent rl-ns)
+   'simulate-greedy-bandit        (sci/copy-var rl/simulate-greedy-bandit rl-ns)
+   'make-posterior-sampling-agent (sci/copy-var rl/make-posterior-sampling-agent rl-ns)
+   'simulate-posterior-sampling   (sci/copy-var rl/simulate-posterior-sampling rl-ns)
+   'cumulative-regret             (sci/copy-var rl/cumulative-regret rl-ns)})
+
+;; ---------------------------------------------------------------------------
 ;; Combined config
 ;; ---------------------------------------------------------------------------
 
@@ -380,4 +436,9 @@
     'prob.math      math-namespace
     'prob.core      core-namespace
     'prob.cps       cps-namespace
-    'prob.macros    macros-namespace}})
+    'prob.macros    macros-namespace
+    'prob.agents.gridworld gridworld-namespace
+    'prob.agents.mdp       mdp-namespace
+    'prob.agents.pomdp     pomdp-namespace
+    'prob.agents.bandit    bandit-namespace
+    'prob.agents.rl        rl-namespace}})
