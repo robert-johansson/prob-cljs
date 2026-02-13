@@ -77,7 +77,7 @@
 
 <p>Bob goes to Donut South&mdash;the closest donut shop (3 steps). But <em>just from watching this trajectory</em>, can we tell if Bob likes donuts, or if he&rsquo;s simply going to the closest restaurant?</p>
 
-<p>Let&rsquo;s use Bayesian inference to answer this. We&rsquo;ll consider three hypotheses about Bob&rsquo;s favourite food and condition on his observed trajectory:</p>
+<p>Let&rsquo;s use Bayesian inference to answer this. We&rsquo;ll consider three hypotheses about Bob&rsquo;s favourite food. For each hypothesis, we build an agent with those preferences, simulate its trajectory, and check if it matches what Bob actually did. With \(\alpha = 100\) the agent is essentially deterministic, so each hypothesis predicts one trajectory:</p>
 
 <pre><code>;; Simulate-and-compare IRL: what does Bob like?
 (def restaurant-grid
@@ -92,29 +92,38 @@
 (def mdp (make-gridworld-mdp {:grid restaurant-grid :start [2 1] :total-time 9}))
 (def world (:world mdp))
 
-;; Generate Bob's observed trajectory (he likes donuts)
+;; Bob's observed destination: Donut South
 (def donut-utility
   (make-utility-function world
     {"Donut N" 5 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}))
 (def bob (make-mdp-agent {:utility donut-utility :alpha 100} world))
-(def observed (simulate-mdp (:start-state mdp) world bob :state-action))
-(def observed-actions (mapv :action observed))
+(def observed-traj (simulate-mdp (:start-state mdp) world bob))
+(def observed-dest (:loc (last observed-traj)))
 
-;; Infer Bob's favourite food
-(def posterior
-  (enumeration-query
-    (let [favourite (uniform-draw ["donut" "veg" "noodle"])
-          table (case favourite
-                  "donut"  {"Donut N" 5 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}
-                  "veg"    {"Donut N" 1 "Donut S" 1 "Veg" 5 "Noodle" 1 :time-cost -0.01}
-                  "noodle" {"Donut N" 1 "Donut S" 1 "Veg" 1 "Noodle" 5 :time-cost -0.01})
-          agent (make-mdp-agent {:utility (make-utility-function world table) :alpha 100} world)
-          predicted (simulate-mdp (:start-state mdp) world agent :state-action)
-          predicted-actions (mapv :action predicted)]
-      (condition (= predicted-actions observed-actions))
-      favourite)))
+;; For each hypothesis, simulate an agent and check where it ends up
+;; (comparing destinations rather than exact paths, since multiple
+;; equally-optimal routes may exist in the gridworld)
+(def hypotheses
+  [["donut"  {"Donut N" 5 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}]
+   ["veg"    {"Donut N" 1 "Donut S" 1 "Veg" 5 "Noodle" 1 :time-cost -0.01}]
+   ["noodle" {"Donut N" 1 "Donut S" 1 "Veg" 1 "Noodle" 5 :time-cost -0.01}]])
 
-(barplot posterior "P(favourite | trajectory to Donut South)")</code></pre>
+(def scores
+  (mapv (fn [[name table]]
+          (let [agent (make-mdp-agent {:utility (make-utility-function world table) :alpha 100} world)
+                traj (simulate-mdp (:start-state mdp) world agent)
+                dest (:loc (last traj))
+                feat ((:feature world) (last traj))
+                dest-name (when (map? feat) (:name feat))]
+            (display (str "  " name " agent goes to: " dest-name))
+            [name (if (= dest observed-dest) 1.0 0.0)]))
+        hypotheses))
+
+;; Normalize to posterior (uniform prior over hypotheses)
+(let [total (reduce + 0.0 (map second scores))
+      names (mapv first scores)
+      probs (mapv (fn [[_ s]] (if (pos? total) (/ s total) 0.0)) scores)]
+  (barplot [names probs] "P(favourite | trajectory to Donut South)"))</code></pre>
 
 <p>Since Donut South is the closest restaurant to the start, going there is consistent with <em>any</em> preference hypothesis combined with laziness. The posterior may not strongly favour donuts. To get stronger evidence, we need to see Bob make a more &ldquo;costly&rdquo; choice&mdash;like walking 5 steps to Donut North when Donut South was only 3 steps away.</p>
 
