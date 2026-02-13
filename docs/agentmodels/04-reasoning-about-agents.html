@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AgentModels: Reasoning about Agents</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Modeling Agents with Probabilistic Programs</a></div>
+    <ul id="nav">
+      <li><a href="03d-reinforcement-learning.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">4. Reasoning about Agents</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#introduction">Introduction</a></li>
+<li><a href="#motivating-example">Motivating Example: Bob&rsquo;s Restaurant Choice</a></li>
+<li><a href="#formalization">Formalization: Bayesian Inverse Planning</a></li>
+<li><a href="#factored-likelihood">Factored Likelihood Approach</a></li>
+<li><a href="#multi-parameter">Multi-Parameter Inference</a></li>
+<li><a href="#multiple-trajectories">Learning from Multiple Trajectories</a></li>
+<li><a href="#pomdp-irl">Learning about POMDP Agents</a></li>
+<li><a href="#bandit-irl">Bandit IRL Examples</a></li>
+<li><a href="#exercises">Exercises</a></li>
+</ul>
+</div>
+
+<p>So far we have modeled agents &ldquo;from the inside&rdquo;&mdash;given a utility function and beliefs, we computed optimal behavior. This chapter takes the <strong>inverse</strong> perspective: given <em>observed behavior</em>, what can we infer about an agent&rsquo;s preferences and beliefs?</p>
+
+<p>This is the problem of <strong>inverse reinforcement learning</strong> (IRL) or <strong>inverse planning</strong>. It arises whenever we observe someone acting and want to understand <em>why</em>:</p>
+<ul>
+<li>A customer walks past three restaurants and enters one&mdash;what do they like to eat?</li>
+<li>A player pulls the same slot machine arm repeatedly&mdash;do they know something we don&rsquo;t?</li>
+<li>An animal takes a long detour through the forest&mdash;what is it avoiding?</li>
+</ul>
+
+<p>The key insight is that our forward models of agents (from Chapters 3.1&ndash;3.4) are <em>generative models</em> of behavior. We can invert them using Bayesian inference: place a prior over the agent&rsquo;s utility function and rationality, then condition on observed actions.</p>
+
+<h1 id="motivating-example"><a href="#motivating-example">Motivating Example: Bob&rsquo;s Restaurant Choice</a></h1>
+
+<p>Consider a gridworld with four restaurants. Bob starts at position [2, 1] (bottom center) and must choose where to eat. Different restaurants are different distances away:</p>
+
+<pre><code>;; Restaurant gridworld: 7 rows x 5 columns with two corridors
+(def restaurant-grid
+  [[{:name "Donut N" :terminal true} " " " " " " {:name "Veg" :terminal true}]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   [" " " " " " " " " "]
+   [{:name "Donut S" :terminal true} " " " " " " {:name "Noodle" :terminal true}]])
+
+(def mdp (make-gridworld-mdp {:grid restaurant-grid :start [2 1] :total-time 9}))
+(def world (:world mdp))
+
+;; Bob likes donuts: high utility for both donut shops
+(def donut-utility
+  (make-utility-function world
+    {"Donut N" 5 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}))
+(def bob (make-mdp-agent {:utility donut-utility :alpha 100} world))
+(def donut-south-traj (simulate-mdp (:start-state mdp) world bob))
+
+(draw-gridworld world {:trajectory donut-south-traj :label "Bob goes to Donut South"})</code></pre>
+
+<p>Bob goes to Donut South&mdash;the closest donut shop (3 steps). But <em>just from watching this trajectory</em>, can we tell if Bob likes donuts, or if he&rsquo;s simply going to the closest restaurant?</p>
+
+<p>Let&rsquo;s use Bayesian inference to answer this. We&rsquo;ll consider three hypotheses about Bob&rsquo;s favourite food and condition on his observed trajectory:</p>
+
+<pre><code>;; Simulate-and-compare IRL: what does Bob like?
+(def restaurant-grid
+  [[{:name "Donut N" :terminal true} " " " " " " {:name "Veg" :terminal true}]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   [" " " " " " " " " "]
+   [{:name "Donut S" :terminal true} " " " " " " {:name "Noodle" :terminal true}]])
+
+(def mdp (make-gridworld-mdp {:grid restaurant-grid :start [2 1] :total-time 9}))
+(def world (:world mdp))
+
+;; Generate Bob's observed trajectory (he likes donuts)
+(def donut-utility
+  (make-utility-function world
+    {"Donut N" 5 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}))
+(def bob (make-mdp-agent {:utility donut-utility :alpha 100} world))
+(def observed (simulate-mdp (:start-state mdp) world bob :state-action))
+(def observed-actions (mapv :action observed))
+
+;; Infer Bob's favourite food
+(def posterior
+  (enumeration-query
+    (let [favourite (uniform-draw ["donut" "veg" "noodle"])
+          table (case favourite
+                  "donut"  {"Donut N" 5 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}
+                  "veg"    {"Donut N" 1 "Donut S" 1 "Veg" 5 "Noodle" 1 :time-cost -0.01}
+                  "noodle" {"Donut N" 1 "Donut S" 1 "Veg" 1 "Noodle" 5 :time-cost -0.01})
+          agent (make-mdp-agent {:utility (make-utility-function world table) :alpha 100} world)
+          predicted (simulate-mdp (:start-state mdp) world agent :state-action)
+          predicted-actions (mapv :action predicted)]
+      (condition (= predicted-actions observed-actions))
+      favourite)))
+
+(barplot posterior "P(favourite | trajectory to Donut South)")</code></pre>
+
+<p>Since Donut South is the closest restaurant to the start, going there is consistent with <em>any</em> preference hypothesis combined with laziness. The posterior may not strongly favour donuts. To get stronger evidence, we need to see Bob make a more &ldquo;costly&rdquo; choice&mdash;like walking 5 steps to Donut North when Donut South was only 3 steps away.</p>
+
+<h1 id="formalization"><a href="#formalization">Formalization: Bayesian Inverse Planning</a></h1>
+
+<p>In general, the inverse planning problem has the form:</p>
+
+\[P(U, \alpha \mid (s,a)_{0:n}) \propto P(U,\alpha) \prod_{i=0}^{n} P(a_i \mid s_i, U, \alpha)\]
+
+<p>where \(U\) is the utility function, \(\alpha\) is the softmax rationality parameter, and \((s_i, a_i)\) are the observed state-action pairs. Each factor \(P(a_i \mid s_i, U, \alpha)\) comes from the agent&rsquo;s softmax policy&mdash;the same <code>act</code> function we defined in Chapter 3.1.</p>
+
+<p>The simulate-and-compare approach from Example 2 checks the <em>entire trajectory</em> at once, which only works for exact matches. The <strong>factored likelihood</strong> approach scores each observed action individually against the agent&rsquo;s policy. This is more flexible: it works with partial observations and gives graded scores rather than all-or-nothing.</p>
+
+<h1 id="factored-likelihood"><a href="#factored-likelihood">Factored Likelihood Approach</a></h1>
+
+<p>For each observed state-action pair, we compute the probability that the agent would choose that action in that state, then use <code>factor</code> to add the log-probability to the inference score. This implements the product in the equation above.</p>
+
+<p>First, let&rsquo;s visualize a single observed step&mdash;Bob at [2,1] moves &ldquo;down&rdquo; (toward Donut South):</p>
+
+<pre><code>;; Visualize a single observed step
+(def restaurant-grid
+  [[{:name "Donut N" :terminal true} " " " " " " {:name "Veg" :terminal true}]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   [" " " " " " " " " "]
+   [{:name "Donut S" :terminal true} " " " " " " {:name "Noodle" :terminal true}]])
+
+(def mdp (make-gridworld-mdp {:grid restaurant-grid :start [2 1] :total-time 9}))
+(def world (:world mdp))
+
+;; Generate trajectory to get proper state fields
+(def donut-utility
+  (make-utility-function world
+    {"Donut N" 5 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}))
+(def bob (make-mdp-agent {:utility donut-utility :alpha 100} world))
+(def full-sa (simulate-mdp (:start-state mdp) world bob :state-action))
+
+;; Show just the first observed step
+(display "Observed: Bob at [2,1] moves down")
+(display (str "Full trajectory actions: " (mapv :action full-sa)))
+
+;; Visualize the trajectory
+(draw-gridworld world {:trajectory (mapv :state full-sa)
+                       :label "Bob's trajectory (first step highlighted)"})</code></pre>
+
+<p>Now let&rsquo;s use the factored likelihood approach&mdash;scoring each observed action against the agent&rsquo;s policy distribution:</p>
+
+<pre><code>;; Factored likelihood IRL
+(def restaurant-grid
+  [[{:name "Donut N" :terminal true} " " " " " " {:name "Veg" :terminal true}]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   [" " " " " " " " " "]
+   [{:name "Donut S" :terminal true} " " " " " " {:name "Noodle" :terminal true}]])
+
+(def mdp (make-gridworld-mdp {:grid restaurant-grid :start [2 1] :total-time 9}))
+(def world (:world mdp))
+
+;; Generate observed trajectory (Bob likes donuts)
+(def donut-utility
+  (make-utility-function world
+    {"Donut N" 5 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}))
+(def bob (make-mdp-agent {:utility donut-utility :alpha 100} world))
+(def observed-sa (simulate-mdp (:start-state mdp) world bob :state-action))
+
+;; Only use first 2 observed actions (partial trajectory)
+(def partial-obs (vec (take 2 (filter :action observed-sa))))
+
+(display (str "Partial observations: "
+              (mapv (fn [sa] [(:loc (:state sa)) (:action sa)]) partial-obs)))
+
+;; Score each hypothesis using factored likelihood
+(def posterior
+  (enumeration-query
+    (let [favourite (uniform-draw ["donut" "veg" "noodle"])
+          table (case favourite
+                  "donut"  {"Donut N" 5 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}
+                  "veg"    {"Donut N" 1 "Donut S" 1 "Veg" 5 "Noodle" 1 :time-cost -0.01}
+                  "noodle" {"Donut N" 1 "Donut S" 1 "Veg" 1 "Noodle" 5 :time-cost -0.01})
+          agent (make-mdp-agent {:utility (make-utility-function world table) :alpha 100} world)]
+      ;; Score each observed (state, action) pair
+      (doseq [{:keys [state action]} partial-obs]
+        (let [[actions probs] ((:act agent) state)]
+          (factor (observe* (categorical-dist actions probs) action))))
+      favourite)))
+
+(barplot posterior "P(favourite | 2 observed actions)")</code></pre>
+
+<p>The factored approach is more principled than simulate-and-compare. It gives graded scores: an action that is <em>unlikely</em> under a hypothesis contributes a large negative score, rather than just failing a hard equality check.</p>
+
+<h1 id="multi-parameter"><a href="#multi-parameter">Multi-Parameter Inference</a></h1>
+
+<p>We can infer multiple parameters jointly&mdash;food preferences, time cost sensitivity, and rationality. The prior is over all combinations of parameter values. We then extract <strong>marginal posteriors</strong> for each parameter.</p>
+
+<pre><code>;; Multi-parameter IRL: infer preferences, time-cost, and rationality
+(def restaurant-grid
+  [[{:name "Donut N" :terminal true} " " " " " " {:name "Veg" :terminal true}]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   [" " " " " " " " " "]
+   [{:name "Donut S" :terminal true} " " " " " " {:name "Noodle" :terminal true}]])
+
+(def mdp (make-gridworld-mdp {:grid restaurant-grid :start [2 1] :total-time 9}))
+(def world (:world mdp))
+
+;; Generate observed trajectory (Bob goes to Donut South)
+(def donut-utility
+  (make-utility-function world
+    {"Donut N" 5 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}))
+(def bob (make-mdp-agent {:utility donut-utility :alpha 100} world))
+(def observed-sa (simulate-mdp (:start-state mdp) world bob :state-action))
+(def obs-with-actions (vec (filter :action observed-sa)))
+
+;; Helper to extract marginals from joint enumeration result
+(defn extract-marginal [enum-result key-fn]
+  (let [[values probs] enum-result
+        groups (reduce (fn [acc [v p]]
+                         (update acc (key-fn v) (fnil + 0.0) p))
+                       {} (map vector values probs))
+        ks (sort-by str (keys groups))
+        ps (mapv groups ks)]
+    [ks ps]))
+
+;; Joint inference over all parameter combinations
+(def joint-posterior
+  (enumeration-query
+    (let [donut-val (uniform-draw [1 5])
+          veg-val   (uniform-draw [1 5])
+          noodle-val (uniform-draw [1 5])
+          time-cost (uniform-draw [-0.01 -0.1])
+          alpha     (uniform-draw [1 100])
+          table {"Donut N" donut-val "Donut S" donut-val
+                 "Veg" veg-val "Noodle" noodle-val
+                 :time-cost time-cost}
+          agent (make-mdp-agent {:utility (make-utility-function world table) :alpha alpha} world)]
+      ;; Score each observed action
+      (doseq [{:keys [state action]} obs-with-actions]
+        (let [[actions probs] ((:act agent) state)]
+          (factor (observe* (categorical-dist actions probs) action))))
+      {:donut donut-val :veg veg-val :noodle noodle-val
+       :time-cost time-cost :alpha alpha})))
+
+;; Display marginal posteriors
+(barplot (extract-marginal joint-posterior #(str "donut=" (:donut %)))
+         "P(donut value | trajectory)")
+(barplot (extract-marginal joint-posterior #(str "alpha=" (:alpha %)))
+         "P(alpha | trajectory)")
+(barplot (extract-marginal joint-posterior #(str "time-cost=" (:time-cost %)))
+         "P(time-cost | trajectory)")</code></pre>
+
+<p>From a single trajectory to the nearest restaurant, the data is consistent with many hypotheses. The posterior may be broad. This is where <strong>multiple trajectories</strong> become powerful&mdash;seeing Bob make the same type of choice repeatedly narrows the posterior dramatically.</p>
+
+<h1 id="multiple-trajectories"><a href="#multiple-trajectories">Learning from Multiple Trajectories</a></h1>
+
+<p>If we observe Bob on two separate occasions&mdash;once going to Donut South and once to Donut North&mdash;we get much stronger evidence. Going to Donut North (5 steps) when Noodle was also 5 steps away, <em>and</em> going to Donut South (3 steps), strongly implies a preference for donuts.</p>
+
+<pre><code>;; Generate two trajectories: Donut South and Donut North
+(def restaurant-grid
+  [[{:name "Donut N" :terminal true} " " " " " " {:name "Veg" :terminal true}]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   [" " " " " " " " " "]
+   [{:name "Donut S" :terminal true} " " " " " " {:name "Noodle" :terminal true}]])
+
+(def mdp (make-gridworld-mdp {:grid restaurant-grid :start [2 1] :total-time 9}))
+(def world (:world mdp))
+
+;; Trajectory 1: Bob goes to Donut South (strong donut preference -> goes to nearest)
+(def donut-utility-1
+  (make-utility-function world
+    {"Donut N" 5 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}))
+(def bob1 (make-mdp-agent {:utility donut-utility-1 :alpha 100} world))
+(def traj1 (simulate-mdp (:start-state mdp) world bob1))
+
+;; Trajectory 2: Bob goes to Donut North (even stronger donut preference -> goes far for donuts)
+(def donut-utility-2
+  (make-utility-function world
+    {"Donut N" 10 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}))
+(def bob2 (make-mdp-agent {:utility donut-utility-2 :alpha 100} world))
+(def traj2 (simulate-mdp (:start-state mdp) world bob2))
+
+(draw-gridworld world {:trajectory traj1 :label "Trip 1: Bob goes to Donut South"})
+(draw-gridworld world {:trajectory traj2 :label "Trip 2: Bob goes to Donut North"})</code></pre>
+
+<p>Now let&rsquo;s condition on both trajectories to get a sharper posterior:</p>
+
+<pre><code>;; Multi-trajectory IRL: condition on both trips
+(def restaurant-grid
+  [[{:name "Donut N" :terminal true} " " " " " " {:name "Veg" :terminal true}]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   ["#" " " "#" " " "#"]
+   [" " " " " " " " " "]
+   [{:name "Donut S" :terminal true} " " " " " " {:name "Noodle" :terminal true}]])
+
+(def mdp (make-gridworld-mdp {:grid restaurant-grid :start [2 1] :total-time 9}))
+(def world (:world mdp))
+
+;; Generate observed trajectories
+(def donut-utility-1
+  (make-utility-function world
+    {"Donut N" 5 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}))
+(def bob1 (make-mdp-agent {:utility donut-utility-1 :alpha 100} world))
+(def obs-sa-1 (vec (filter :action (simulate-mdp (:start-state mdp) world bob1 :state-action))))
+
+(def donut-utility-2
+  (make-utility-function world
+    {"Donut N" 10 "Donut S" 5 "Veg" 1 "Noodle" 1 :time-cost -0.01}))
+(def bob2 (make-mdp-agent {:utility donut-utility-2 :alpha 100} world))
+(def obs-sa-2 (vec (filter :action (simulate-mdp (:start-state mdp) world bob2 :state-action))))
+
+;; Concatenate observations from both trips
+(def all-observations (into obs-sa-1 obs-sa-2))
+
+(display (str "Trip 1 actions: " (mapv :action obs-sa-1)))
+(display (str "Trip 2 actions: " (mapv :action obs-sa-2)))
+
+(defn extract-marginal [enum-result key-fn]
+  (let [[values probs] enum-result
+        groups (reduce (fn [acc [v p]]
+                         (update acc (key-fn v) (fnil + 0.0) p))
+                       {} (map vector values probs))
+        ks (sort-by str (keys groups))
+        ps (mapv groups ks)]
+    [ks ps]))
+
+;; Joint inference conditioned on both trajectories
+(def joint-posterior
+  (enumeration-query
+    (let [donut-val (uniform-draw [1 5])
+          veg-val   (uniform-draw [1 5])
+          noodle-val (uniform-draw [1 5])
+          time-cost (uniform-draw [-0.01 -0.1])
+          alpha     (uniform-draw [1 100])
+          table {"Donut N" donut-val "Donut S" donut-val
+                 "Veg" veg-val "Noodle" noodle-val
+                 :time-cost time-cost}
+          agent (make-mdp-agent {:utility (make-utility-function world table) :alpha alpha} world)]
+      ;; Score ALL observed actions from BOTH trajectories
+      (doseq [{:keys [state action]} all-observations]
+        (let [[actions probs] ((:act agent) state)]
+          (factor (observe* (categorical-dist actions probs) action))))
+      {:donut donut-val :veg veg-val :noodle noodle-val
+       :time-cost time-cost :alpha alpha})))
+
+(barplot (extract-marginal joint-posterior #(str "donut=" (:donut %)))
+         "P(donut value | both trips)")
+(barplot (extract-marginal joint-posterior #(str "alpha=" (:alpha %)))
+         "P(alpha | both trips)")</code></pre>
+
+<p>Two trips to donut shops&mdash;including the farther one&mdash;provides strong evidence that Bob likes donuts. This also constrains the rationality parameter: a very low \(\alpha\) agent wouldn&rsquo;t consistently choose donuts, and a high \(\alpha\) agent is consistent with the observed optimal-looking behavior.</p>
+
+<h1 id="pomdp-irl"><a href="#pomdp-irl">Learning about POMDP Agents</a></h1>
+
+<p>So far we&rsquo;ve done IRL for MDP agents, where the agent can fully observe the state. But what if the agent itself is uncertain about the world? Then we need to reason about both the agent&rsquo;s <strong>preferences</strong> and its <strong>beliefs</strong>.</p>
+
+<p>The extended inverse planning equation for POMDPs is:</p>
+
+\[P(U, \alpha, b_0 \mid (s,o,a)_{0:n}) \propto P(U,\alpha,b_0) \prod_{i=0}^{n} P(a_i \mid b_i, U, \alpha)\]
+
+<p>where \(b_i\) is the agent&rsquo;s belief at step \(i\), which evolves via Bayesian update. We must track the agent&rsquo;s belief evolution to compute the action likelihoods \(P(a_i \mid b_i)\).</p>
+
+<p>We&rsquo;ll use a <strong>deterministic prize bandit</strong>: each arm always gives the same prize (chocolate, champagne, or nothing). The agent&rsquo;s uncertainty is over which arm gives which prize. This is simpler than the stochastic bandit from Chapter 3.3 but creates interesting IRL problems: when we see an agent pull the same arm repeatedly, do they <em>prefer</em> that arm&rsquo;s prize, or do they simply not know what the other arm gives?</p>
+
+<h1 id="bandit-irl"><a href="#bandit-irl">Bandit IRL Examples</a></h1>
+
+<p>We&rsquo;ll build a general <code>infer-bandit-preferences</code> function that loops over observed (action, observation) pairs, tracks belief evolution, and scores each action against the agent&rsquo;s policy.</p>
+
+<pre><code>;; Core bandit IRL infrastructure
+;; The infer-bandit-preferences pattern:
+;; 1. Hypothesize utility function and prior belief
+;; 2. Build a POMDP agent
+;; 3. For each observed (action, observation):
+;;    a. Score the action against the agent's policy at current belief
+;;    b. Update the agent's belief with the observation
+;; 4. Return the hypothesis
+
+;; Helper: score an observed action sequence against a POMDP agent
+(defn score-bandit-observations [agent observed-seq initial-belief]
+  (let [act-fn (:act agent)
+        update-fn (:update-belief agent)]
+    (loop [i 0 belief initial-belief]
+      (when (< i (count observed-seq))
+        (let [{:keys [observation action]} (nth observed-seq i)
+              [actions probs] (act-fn belief)]
+          (factor (observe* (categorical-dist actions probs) action))
+          (recur (inc i) (update-fn belief observation action)))))))
+
+(display "Defined score-bandit-observations helper.")
+(display "This will be used by the IRL examples below.")</code></pre>
+
+<p>Now let&rsquo;s use it. First, a simple case: we know the agent&rsquo;s prior beliefs, and want to infer what prizes it values.</p>
+
+<pre><code>;; Example: Known prior, infer utilities
+;; Truth: arm 0 gives chocolate, arm 1 gives champagne
+;; Agent always pulls arm 1 -> infer that it likes champagne
+
+(def true-arm-to-prize {0 "chocolate" 1 "champagne"})
+
+(def bandit (make-prize-bandit-pomdp
+              {:arm-to-prize true-arm-to-prize
+               :num-trials 5
+               :prize-to-utility {"chocolate" 5 "champagne" 3 "nothing" 0}}))
+
+(def world (:world bandit))
+(def start (:start-state bandit))
+
+;; Generate observed trajectory: agent prefers champagne
+(def champagne-utility
+  (fn [state action] (get {"chocolate" 1 "champagne" 5 "nothing" 0} (:prize state) 0)))
+
+;; Agent knows which arm gives what (informed prior)
+(def informed-prior
+  (categorical-dist
+    [(make-prize-bandit-start-state 5 {0 "chocolate" 1 "champagne"})]
+    [1.0]))
+
+(def champagne-agent
+  (make-pomdp-agent {:utility champagne-utility :alpha 100 :prior-belief informed-prior} world))
+(def observed-traj (simulate-pomdp start world champagne-agent))
+
+;; Show what we observed
+(display "Observed trajectory:")
+(doseq [[i step] (map-indexed vector (butlast observed-traj))]
+  (display (str "  Trial " i ": pull arm " (:action step) " -> " (:observation step))))
+
+;; Now infer: does the agent like chocolate or champagne?
+(def observed-seq (vec (filter :action observed-traj)))
+
+(def preference-posterior
+  (enumeration-query
+    (let [likes (uniform-draw ["chocolate" "champagne"])
+          prize-utils (if (= likes "chocolate")
+                        {"chocolate" 5 "champagne" 1 "nothing" 0}
+                        {"chocolate" 1 "champagne" 5 "nothing" 0})
+          utility-fn (fn [state action] (get prize-utils (:prize state) 0))
+          agent (make-pomdp-agent
+                  {:utility utility-fn :alpha 100 :prior-belief informed-prior} world)]
+      (score-bandit-observations agent observed-seq informed-prior)
+      likes)))
+
+(barplot preference-posterior "P(preference | always pulls arm 1)")</code></pre>
+
+<p>When the agent knows which arm gives which prize and consistently pulls arm 1 (champagne), the posterior strongly favours &ldquo;likes champagne.&rdquo;</p>
+
+<p>Now comes the more interesting case: what if we don&rsquo;t know the agent&rsquo;s <em>beliefs</em>? An agent pulling arm 0 repeatedly could mean (a) it likes chocolate (arm 0&rsquo;s prize), or (b) it doesn&rsquo;t know that arm 1 gives champagne, which it might prefer.</p>
+
+<pre><code>;; Joint inference over preferences AND beliefs
+;; Agent always pulls arm 0. Why?
+;;   Hypothesis 1: likes chocolate (arm 0's prize), knows both arms
+;;   Hypothesis 2: likes chocolate, doesn't know arm 1 has champagne
+;;   Hypothesis 3: likes champagne, knows both arms (unlikely - would pull arm 1!)
+;;   Hypothesis 4: likes champagne, doesn't know arm 1 has champagne
+
+(def true-arm-to-prize {0 "chocolate" 1 "champagne"})
+
+(def bandit (make-prize-bandit-pomdp
+              {:arm-to-prize true-arm-to-prize
+               :num-trials 5
+               :prize-to-utility {"chocolate" 5 "champagne" 3 "nothing" 0}}))
+
+(def world (:world bandit))
+(def start (:start-state bandit))
+
+;; Generate observed trajectory: agent always pulls arm 0
+(def choc-utility
+  (fn [state action] (get {"chocolate" 5 "champagne" 1 "nothing" 0} (:prize state) 0)))
+
+(def informed-prior
+  (categorical-dist
+    [(make-prize-bandit-start-state 5 {0 "chocolate" 1 "champagne"})]
+    [1.0]))
+
+(def choc-agent
+  (make-pomdp-agent {:utility choc-utility :alpha 100 :prior-belief informed-prior} world))
+(def observed-traj (simulate-pomdp start world choc-agent))
+(def observed-seq (vec (filter :action observed-traj)))
+
+(display "Observed: agent always pulls arm 0")
+(doseq [[i step] (map-indexed vector (butlast observed-traj))]
+  (display (str "  Trial " i ": pull arm " (:action step) " -> " (:observation step))))
+
+;; Two possible prior beliefs for the agent:
+;; "informed" - knows arm 0=chocolate, arm 1=champagne
+;; "uninformed" - thinks arm 1 gives nothing (95% belief)
+(def uninformed-prior
+  (categorical-dist
+    [(make-prize-bandit-start-state 5 {0 "chocolate" 1 "champagne"})
+     (make-prize-bandit-start-state 5 {0 "chocolate" 1 "nothing"})]
+    [0.05 0.95]))
+
+;; Infer joint posterior over preferences and beliefs
+(def joint-posterior
+  (enumeration-query
+    (let [likes (uniform-draw ["chocolate" "champagne"])
+          is-informed (uniform-draw [true false])
+          prize-utils (if (= likes "chocolate")
+                        {"chocolate" 5 "champagne" 1 "nothing" 0}
+                        {"chocolate" 1 "champagne" 5 "nothing" 0})
+          utility-fn (fn [state action] (get prize-utils (:prize state) 0))
+          prior (if is-informed informed-prior uninformed-prior)
+          agent (make-pomdp-agent {:utility utility-fn :alpha 100 :prior-belief prior} world)]
+      (score-bandit-observations agent observed-seq prior)
+      (str (if (= likes "chocolate") "choc" "champ")
+           (if is-informed "+informed" "+uninformed")))))
+
+(barplot joint-posterior
+         "P(preference, belief | always pulls arm 0)")</code></pre>
+
+<p>The posterior shows an interesting pattern: &ldquo;likes chocolate + informed&rdquo; and &ldquo;likes champagne + uninformed&rdquo; are both plausible. An informed agent who likes champagne would pull arm 1, so that hypothesis gets near-zero probability. But an uninformed agent who likes champagne but doesn&rsquo;t know arm 1 has it&mdash;that&rsquo;s consistent with always pulling arm 0.</p>
+
+<p>How does the amount of data affect this ambiguity? With more trials, an informed champagne-lover would <em>surely</em> explore arm 1 at some point. So the longer the agent sticks to arm 0, the stronger the evidence that it&rsquo;s either (a) a chocolate lover, or (b) doesn&rsquo;t know about arm 1.</p>
+
+<pre><code>;; Effect of trial length on identifiability
+;; More trials of only pulling arm 0 -> stronger evidence
+
+(def true-arm-to-prize {0 "chocolate" 1 "champagne"})
+
+(defn run-trial-length-irl [n-trials]
+  (let [bandit (make-prize-bandit-pomdp
+                 {:arm-to-prize true-arm-to-prize
+                  :num-trials n-trials
+                  :prize-to-utility {"chocolate" 5 "champagne" 3 "nothing" 0}})
+        world (:world bandit)
+        start (:start-state bandit)
+        ;; Generate: agent always pulls arm 0 (likes chocolate, informed)
+        choc-utility (fn [state action]
+                       (get {"chocolate" 5 "champagne" 1 "nothing" 0} (:prize state) 0))
+        informed-prior (categorical-dist
+                         [(make-prize-bandit-start-state n-trials
+                            {0 "chocolate" 1 "champagne"})]
+                         [1.0])
+        agent (make-pomdp-agent
+                {:utility choc-utility :alpha 100 :prior-belief informed-prior} world)
+        traj (simulate-pomdp start world agent)
+        observed-seq (vec (filter :action traj))
+        ;; Two possible beliefs for IRL agent
+        uninformed-prior (categorical-dist
+                           [(make-prize-bandit-start-state n-trials
+                              {0 "chocolate" 1 "champagne"})
+                            (make-prize-bandit-start-state n-trials
+                              {0 "chocolate" 1 "nothing"})]
+                           [0.05 0.95])
+        ;; Infer
+        posterior (enumeration-query
+                    (let [likes (uniform-draw ["chocolate" "champagne"])
+                          is-informed (uniform-draw [true false])
+                          prize-utils (if (= likes "chocolate")
+                                        {"chocolate" 5 "champagne" 1 "nothing" 0}
+                                        {"chocolate" 1 "champagne" 5 "nothing" 0})
+                          utility-fn (fn [state action]
+                                       (get prize-utils (:prize state) 0))
+                          prior (if is-informed informed-prior uninformed-prior)
+                          irl-agent (make-pomdp-agent
+                                      {:utility utility-fn :alpha 100 :prior-belief prior}
+                                      world)]
+                      (score-bandit-observations irl-agent observed-seq prior)
+                      (str (if (= likes "chocolate") "choc" "champ")
+                           (if is-informed "+informed" "+uninformed"))))
+        [vals probs] posterior
+        p-choc-informed (reduce + 0.0
+                          (map (fn [v p] (if (= v "choc+informed") p 0.0))
+                               vals probs))]
+    p-choc-informed))
+
+;; Sweep trial lengths
+(def trial-counts [3 4 5 6 7])
+(def results (mapv (fn [n]
+                     (let [p (run-trial-length-irl n)]
+                       (display (str "Trials=" n
+                                     "  P(likes chocolate + informed)="
+                                     (.toFixed p 3)))
+                       [n p]))
+                   trial-counts))
+
+(lineplot results "P(chocolate + informed) vs number of trials")</code></pre>
+
+<p>As the number of trials increases, the posterior probability that the agent is an <em>informed chocolate-lover</em> should increase. An informed champagne-lover with many trials would eventually explore arm 1, making that hypothesis increasingly unlikely. This demonstrates how <strong>observation length improves identifiability</strong> in POMDP IRL.</p>
+
+<h1 id="exercises"><a href="#exercises">Exercises</a></h1>
+
+<h2>Exercise 1: Different restaurants</h2>
+<p>Modify the restaurant gridworld so that Bob goes to Veg (the farthest restaurant, 7 steps). Run the factored likelihood IRL. How strongly does the posterior favour &ldquo;veg&rdquo; compared to when Bob went to the closest restaurant?</p>
+
+<h2>Exercise 2: Noisy rationality</h2>
+<p>Change the IRL prior to include three alpha values: \(\alpha \in \{1, 10, 100\}\). Re-run the multi-parameter inference from Example 5. How does allowing for lower rationality affect the posterior over food preferences?</p>
+
+<h2>Exercise 3: Three-armed prize bandit</h2>
+<p>Create a 3-arm prize bandit with prizes chocolate, champagne, and pizza. Generate a trajectory where the agent explores two arms. How does exploration behavior affect the IRL posterior over preferences?</p>
+
+<h2>Exercise 4: Combining MDP and POMDP evidence</h2>
+<p>Suppose you observe the same person both in a restaurant choice (MDP) and a bandit task (POMDP). How would you combine evidence from both scenarios to get a unified estimate of their food preferences?</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="03d-reinforcement-learning.html">&larr; Chapter 3.4: Reinforcement Learning</a>
+    <span></span>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/cps_transform.cljc',
+    '../prob/cps.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs',
+    'agents/gridworld.cljs',
+    'agents/mdp.cljs',
+    'agents/pomdp.cljs',
+    'agents/bandit.cljs',
+    'viz-agents.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist delta-dist]])" +
+      "(require '[prob.builtins :refer [expt]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot lineplot display]])" +
+      "(require '[prob.agents.gridworld :refer [make-gridworld-mdp make-utility-function]])" +
+      "(require '[prob.agents.mdp :refer [make-mdp-agent simulate-mdp]])" +
+      "(require '[prob.agents.viz :refer [draw-gridworld]])" +
+      "(require '[prob.agents.pomdp :refer [make-pomdp-agent simulate-pomdp belief-to-key]])" +
+      "(require '[prob.agents.bandit :refer [make-bandit-pomdp make-bandit-prior-belief" +
+      "                                       make-prize-bandit-pomdp make-prize-bandit-start-state]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>

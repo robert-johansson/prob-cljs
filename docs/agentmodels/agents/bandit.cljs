@@ -76,3 +76,76 @@
                        (assoc start-state :arm-weights aw))
                      possible-arm-weights)]
     (dist/categorical-dist states probs)))
+
+(defn make-prize-bandit-pomdp
+  "Create a deterministic prize bandit as a POMDP.
+   Each arm deterministically gives a specific prize. The agent's uncertainty
+   is over which arm gives which prize.
+
+   options:
+     :arm-to-prize    - map from arm index to prize string,
+                        e.g. {0 \"chocolate\" 1 \"champagne\"}
+     :num-trials      - number of pulls allowed
+     :prize-to-utility - map from prize to utility value
+                         (default {\"chocolate\" 5 \"champagne\" 3 \"nothing\" 0})
+
+   Returns {:world world, :start-state start-state, :utility fn}"
+  [options]
+  (let [arm-to-prize (:arm-to-prize options)
+        num-trials (:num-trials options)
+        prize-to-utility (or (:prize-to-utility options)
+                             {"chocolate" 5 "champagne" 3 "nothing" 0})
+        all-prizes (vec (distinct (vals arm-to-prize)))
+        actions (vec (sort (keys arm-to-prize)))
+
+        enumerate-observations-fn
+        (fn [state action]
+          (let [prize (get (:arm-to-prize state) action "nothing")]
+            [[prize] [1.0]]))
+
+        transition-fn
+        (fn [state action observation]
+          (let [new-time (dec (:time-left state))]
+            {:arm-to-prize (:arm-to-prize state)
+             :prize observation
+             :time-left new-time
+             :terminate-after-action (<= new-time 0)}))
+
+        observe-fn
+        (fn [state]
+          (:prize state))
+
+        actions-fn
+        (fn [state]
+          (if (:terminate-after-action state)
+            []
+            actions))
+
+        utility-fn
+        (fn [state action]
+          (get prize-to-utility (:prize state) 0))
+
+        world {:transition-fn transition-fn
+               :enumerate-observations enumerate-observations-fn
+               :observe observe-fn
+               :state-to-actions actions-fn}
+
+        start-state {:arm-to-prize arm-to-prize
+                     :prize "start"
+                     :time-left num-trials
+                     :terminate-after-action false}]
+
+    {:world world
+     :start-state start-state
+     :utility utility-fn}))
+
+(defn make-prize-bandit-start-state
+  "Create a start state for a prize bandit with a given arm-to-prize mapping.
+   Used to construct prior beliefs over different arm-to-prize configurations.
+   num-trials: number of pulls
+   arm-to-prize: map from arm index to prize string"
+  [num-trials arm-to-prize]
+  {:arm-to-prize arm-to-prize
+   :prize "start"
+   :time-left num-trials
+   :terminate-after-action false})
