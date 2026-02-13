@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AgentModels: POMDPs and Bandits</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Modeling Agents with Probabilistic Programs</a></div>
+    <ul id="nav">
+      <li><a href="03b-mdp-gridworld.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+      <li><a href="03d-reinforcement-learning.html">Next &rarr;</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">3.3 POMDPs and Bandits</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#introduction">Introduction: From MDPs to POMDPs</a></li>
+<li><a href="#pomdp-definition">POMDP Formal Definition</a></li>
+<li><a href="#bandit">The Stochastic Multi-Armed Bandit</a></li>
+<li><a href="#belief-update">Belief Update as Bayesian Inference</a></li>
+<li><a href="#effect-of-priors">Effect of Priors</a></li>
+<li><a href="#complexity">Computational Complexity</a></li>
+<li><a href="#exercises">Exercises</a></li>
+</ul>
+</div>
+
+<p>In the <a href="03b-mdp-gridworld.html">previous chapter</a>, our MDP agents could observe the full state of the world&mdash;they always knew exactly where they were in the gridworld. But many real-world problems involve <strong>partial observability</strong>: the agent can&rsquo;t see the full state. A doctor prescribing treatment doesn&rsquo;t know the patient&rsquo;s exact biological state. A poker player doesn&rsquo;t know the opponent&rsquo;s cards. A forager doesn&rsquo;t know which berry patches are ripe.</p>
+
+<p>This chapter introduces the <strong>Partially Observable Markov Decision Process</strong> (POMDP), where the agent must maintain <em>beliefs</em>&mdash;probability distributions over hidden states&mdash;and plan based on those beliefs.</p>
+
+<h1 id="introduction"><a href="#introduction">Introduction: From MDPs to POMDPs</a></h1>
+
+<p>Recall the MDP framework: at each time step, the agent observes the state \(s\), takes action \(a\), and transitions to a new state \(s'\). The agent plans by computing expected utility over future state-action sequences.</p>
+
+<p>In a POMDP, the agent <em>cannot</em> directly observe the state. Instead, after each action, it receives an <strong>observation</strong> \(o\) that gives partial information about the true state. The agent must:</p>
+<ol>
+<li>Maintain a <strong>belief</strong> \(b\): a probability distribution over possible states</li>
+<li><strong>Update</strong> this belief when new observations arrive (Bayesian inference)</li>
+<li><strong>Plan</strong> by reasoning about future beliefs, not future states</li>
+</ol>
+
+<p>This creates a deep connection between decision-making and probabilistic inference: the agent is literally doing Bayesian inference to maintain its model of the world, then using that model to choose actions.</p>
+
+<h1 id="pomdp-definition"><a href="#pomdp-definition">POMDP Formal Definition</a></h1>
+
+<p>A POMDP is defined by a tuple \((S, A, T, U, \Omega, O)\):</p>
+<ul>
+<li>\(S\) &mdash; set of states</li>
+<li>\(A\) &mdash; set of actions</li>
+<li>\(T(s, a, s')\) &mdash; transition function: probability of reaching \(s'\) from \(s\) via action \(a\)</li>
+<li>\(U(s, a)\) &mdash; utility function</li>
+<li>\(\Omega\) &mdash; set of possible observations</li>
+<li>\(O(s', a, o)\) &mdash; observation function: probability of seeing \(o\) after taking action \(a\) and arriving in state \(s'\)</li>
+</ul>
+
+<p>The agent maintains a belief \(b_t\) at each time step. After taking action \(a\) and observing \(o\), the belief updates via Bayes&rsquo; rule:</p>
+
+\[b_{t+1}(s') \propto P(o \mid s', a) \cdot b_t(s')\]
+
+<p>Expected utility is computed recursively over <em>beliefs</em> rather than states:</p>
+
+\[EU(b, a) = \sum_s b(s) \sum_o P(o \mid s, a) \left[ U(s', a) + \sum_{a'} P(a' \mid b') \, EU(b', a') \right]\]
+
+<p>where \(b'\) is the updated belief after observing \(o\).</p>
+
+<h1 id="bandit"><a href="#bandit">The Stochastic Multi-Armed Bandit</a></h1>
+
+<p>The classic example of a POMDP is the <strong>multi-armed bandit</strong>. Imagine you&rsquo;re in front of two slot machines (arms). Each arm dispenses chocolate with some unknown probability. One arm is good (90% chance of chocolate) and the other is bad (10% chance). But you don&rsquo;t know which is which!</p>
+
+<p>Each time you pull an arm, you observe a <em>noisy</em> reward: you might get chocolate even from the bad arm, or nothing from the good arm. So a single observation doesn&rsquo;t tell you for certain which arm is better&mdash;you need to accumulate evidence.</p>
+
+<p>The key tension: should you <strong>exploit</strong> the arm you think is best, or <strong>explore</strong> the other arm to learn more? A POMDP agent plans ahead and reasons about the <em>information value</em> of exploration.</p>
+
+<pre><code>;; A stochastic 2-arm bandit as a POMDP
+;; Truth: arm 0 gives chocolate 90% of the time, arm 1 only 10%
+;; Agent doesn't know which arm is which
+
+(def bandit (make-bandit-pomdp
+              {:num-arms 2
+               :arm-weights {0 0.9 1 0.1}
+               :num-trials 5
+               :prize-to-utility {"chocolate" 5 "nothing" 0}}))
+
+(def world (:world bandit))
+(def start (:start-state bandit))
+(def utility (:utility bandit))
+
+;; Agent's prior: 50/50 over which arm is the good one
+(def prior-belief
+  (make-bandit-prior-belief
+    [{0 0.9 1 0.1}    ;; hypothesis 1: arm 0 is good
+     {0 0.1 1 0.9}]   ;; hypothesis 2: arm 1 is good
+    [0.5 0.5]
+    start))
+
+(def agent (make-pomdp-agent
+             {:utility utility :alpha 100 :prior-belief prior-belief}
+             world))
+
+(def trajectory (simulate-pomdp start world agent))
+
+(display "=== POMDP Bandit Trajectory ===")
+(display "Truth: arm 0 has 90% chocolate rate")
+(display "")
+(doseq [[i step] (map-indexed vector trajectory)]
+  (display (str "Step " i
+                ": pull arm " (:action step)
+                " -> " (:observation step))))</code></pre>
+
+<p>Because the observations are stochastic, the agent can&rsquo;t be certain which arm is better after just one pull. It must accumulate evidence over multiple trials. Run this example several times&mdash;you&rsquo;ll see different trajectories because the prizes are random, but the agent will tend to settle on arm 0 as it gathers evidence.</p>
+
+<h1 id="belief-update"><a href="#belief-update">Belief Update as Bayesian Inference</a></h1>
+
+<p>The heart of a POMDP agent is <strong>belief updating</strong>: after taking action \(a\) and observing \(o\), the agent updates its probability distribution over hidden states. This is exactly Bayesian inference.</p>
+
+<p>With our stochastic bandit, suppose the agent pulls arm 0 and gets chocolate. Under hypothesis 1 (arm 0 is good), this has probability 0.9. Under hypothesis 2 (arm 0 is bad), this has probability 0.1. By Bayes&rsquo; rule:</p>
+
+\[P(H_1 \mid \text{choc from arm 0}) = \frac{0.5 \times 0.9}{0.5 \times 0.9 + 0.5 \times 0.1} = 0.9\]
+
+<p>One observation shifts the belief from 50/50 to 90/10&mdash;strong evidence, but not certainty. A second chocolate from arm 0 shifts it further to about 99/1. Let&rsquo;s see this step by step:</p>
+
+<pre><code>;; Step-by-step belief update demonstration
+(def bandit (make-bandit-pomdp
+              {:num-arms 2
+               :arm-weights {0 0.9 1 0.1}
+               :num-trials 6
+               :prize-to-utility {"chocolate" 5 "nothing" 0}}))
+
+(def start (:start-state bandit))
+
+;; Prior: 50/50 over which arm is good
+(def prior
+  (make-bandit-prior-belief
+    [{0 0.9 1 0.1}
+     {0 0.1 1 0.9}]
+    [0.5 0.5]
+    start))
+
+(def agent (make-pomdp-agent
+             {:utility (:utility bandit) :alpha 100 :prior-belief prior}
+             (:world bandit)))
+
+(def update-belief (:update-belief agent))
+
+;; Helper: P(arm 0 is the good arm)
+(defn p-arm0-good [belief]
+  (reduce + 0.0
+    (map (fn [s]
+           (if (> (get (:arm-weights s) 0) 0.5)
+             (js/Math.exp (observe* belief s))
+             0.0))
+         (enumerate* belief))))
+
+(display "P(arm 0 is good):")
+(display (str "  Prior:                       " (.toFixed (p-arm0-good prior) 4)))
+
+;; After pulling arm 0 and seeing "chocolate":
+(def b1 (update-belief prior "chocolate" 0))
+(display (str "  After arm 0 -> chocolate:    " (.toFixed (p-arm0-good b1) 4)))
+
+;; After pulling arm 0 again and seeing "chocolate":
+(def b2 (update-belief b1 "chocolate" 0))
+(display (str "  After arm 0 -> chocolate x2: " (.toFixed (p-arm0-good b2) 4)))
+
+;; What if we saw "nothing" from arm 0?
+(def b3 (update-belief b2 "nothing" 0))
+(display (str "  After arm 0 -> nothing:      " (.toFixed (p-arm0-good b3) 4)))
+
+;; Pulling arm 1 and seeing "nothing" also helps:
+(def b4 (update-belief b3 "nothing" 1))
+(display (str "  After arm 1 -> nothing:      " (.toFixed (p-arm0-good b4) 4)))
+
+(display "")
+(display "Each observation shifts the belief gradually.")
+(display "Chocolate from arm 0 (or nothing from arm 1) supports H1.")
+(display "Nothing from arm 0 (or chocolate from arm 1) supports H2.")</code></pre>
+
+<p>Notice how each observation provides evidence but doesn&rsquo;t resolve uncertainty completely. Getting chocolate from arm 0 pushes belief toward H1 by a factor of 9:1, while getting nothing from arm 0 pushes it toward H2 by the same ratio. The agent must reason about this gradual evidence accumulation when choosing which arm to explore.</p>
+
+<p>We can visualize the belief trajectory during a full simulation:</p>
+
+<pre><code>;; Visualize belief evolution during a simulation
+(def bandit (make-bandit-pomdp
+              {:num-arms 2
+               :arm-weights {0 0.9 1 0.1}
+               :num-trials 5
+               :prize-to-utility {"chocolate" 5 "nothing" 0}}))
+
+(def start (:start-state bandit))
+(def prior
+  (make-bandit-prior-belief
+    [{0 0.9 1 0.1}
+     {0 0.1 1 0.9}]
+    [0.5 0.5]
+    start))
+
+(def agent (make-pomdp-agent
+             {:utility (:utility bandit) :alpha 100 :prior-belief prior}
+             (:world bandit)))
+
+;; Simulate and track belief at each step
+(def traj (simulate-pomdp start (:world bandit) agent))
+(def update-belief (:update-belief agent))
+
+(defn p-arm0-good [belief]
+  (reduce + 0.0
+    (map (fn [s]
+           (if (> (get (:arm-weights s) 0) 0.5)
+             (js/Math.exp (observe* belief s)) 0.0))
+         (enumerate* belief))))
+
+;; Reconstruct beliefs at each step
+(def beliefs
+  (loop [i 0 belief prior result [{:trial 0 :p (p-arm0-good prior)}]]
+    (if (>= i (dec (count traj)))
+      result
+      (let [step (nth traj i)
+            action (:action step)
+            obs (:observation step)
+            new-belief (update-belief belief obs action)]
+        (recur (inc i)
+               new-belief
+               (conj result {:trial (inc i)
+                             :p (p-arm0-good new-belief)}))))))
+
+(display "Trial | Action | Observation | P(arm 0 is good)")
+(display "------|--------|-------------|------------------")
+(doseq [[i step] (map-indexed vector (butlast traj))]
+  (let [b (nth beliefs (inc i))]
+    (display (str "  " i "   |   " (:action step)
+                  "    |  " (:observation step)
+                  (apply str (repeat (- 10 (count (:observation step))) " "))
+                  " |  " (.toFixed (:p b) 4)))))
+
+(lineplot (mapv (fn [b] [(:trial b) (:p b)]) beliefs)
+          "P(arm 0 is good) over time")</code></pre>
+
+<h1 id="effect-of-priors"><a href="#effect-of-priors">Effect of Priors</a></h1>
+
+<p>A POMDP agent&rsquo;s behavior depends heavily on its prior beliefs. An agent with a strong (but wrong) prior will initially exploit the wrong arm, then gradually learn from surprising observations. Let&rsquo;s compare agents with different priors:</p>
+
+<pre><code>;; Compare agents with different prior beliefs
+;; Truth: arm 0 is good (90% chocolate), arm 1 is bad (10%)
+
+(def bandit (make-bandit-pomdp
+              {:num-arms 2
+               :arm-weights {0 0.9 1 0.1}
+               :num-trials 5
+               :prize-to-utility {"chocolate" 5 "nothing" 0}}))
+
+(def world (:world bandit))
+(def start (:start-state bandit))
+(def utility (:utility bandit))
+
+;; Agent 1: Correct uniform prior (50/50)
+(def uniform-prior
+  (make-bandit-prior-belief
+    [{0 0.9 1 0.1} {0 0.1 1 0.9}]
+    [0.5 0.5]
+    start))
+
+;; Agent 2: Wrong strong prior (80% believes arm 1 is good)
+(def biased-prior
+  (make-bandit-prior-belief
+    [{0 0.9 1 0.1} {0 0.1 1 0.9}]
+    [0.2 0.8]
+    start))
+
+(def agent-uniform (make-pomdp-agent
+                     {:utility utility :alpha 100 :prior-belief uniform-prior}
+                     world))
+(def agent-biased (make-pomdp-agent
+                    {:utility utility :alpha 100 :prior-belief biased-prior}
+                    world))
+
+(defn p-arm0-good [belief]
+  (reduce + 0.0
+    (map (fn [s]
+           (if (> (get (:arm-weights s) 0) 0.5)
+             (js/Math.exp (observe* belief s)) 0.0))
+         (enumerate* belief))))
+
+(display "=== Agent with uniform prior (50/50) ===")
+(def traj1 (simulate-pomdp start world agent-uniform))
+(let [update1 (:update-belief agent-uniform)]
+  (loop [i 0 b uniform-prior]
+    (when (< i (dec (count traj1)))
+      (let [step (nth traj1 i)
+            nb (update1 b (:observation step) (:action step))]
+        (display (str "  Pull arm " (:action step)
+                      " -> " (:observation step)
+                      "  P(arm0 good)=" (.toFixed (p-arm0-good nb) 3)))
+        (recur (inc i) nb)))))
+
+(display "\n=== Agent with biased prior (80% arm 1) ===")
+(def traj2 (simulate-pomdp start world agent-biased))
+(let [update2 (:update-belief agent-biased)]
+  (loop [i 0 b biased-prior]
+    (when (< i (dec (count traj2)))
+      (let [step (nth traj2 i)
+            nb (update2 b (:observation step) (:action step))]
+        (display (str "  Pull arm " (:action step)
+                      " -> " (:observation step)
+                      "  P(arm0 good)=" (.toFixed (p-arm0-good nb) 3)))
+        (recur (inc i) nb)))))</code></pre>
+
+<p>The biased agent initially prefers arm 1 (which it incorrectly believes is better). When it gets &ldquo;nothing&rdquo; from arm 1 or &ldquo;chocolate&rdquo; from arm 0, it gradually shifts toward the truth. But with a strong wrong prior, it may waste several trials before correcting course. Run this multiple times to see how the stochastic outcomes affect each agent&rsquo;s learning trajectory.</p>
+
+<h1 id="complexity"><a href="#complexity">Computational Complexity</a></h1>
+
+<p>POMDP planning is computationally expensive. The agent must reason about a <em>tree</em> of possible future beliefs: each action can produce multiple observations, each leading to a different updated belief. With more possible observations and longer horizons, this tree grows exponentially.</p>
+
+<p>Let&rsquo;s see this by timing POMDP planning with different numbers of hypotheses and trial counts:</p>
+
+<pre><code>;; Timing POMDP planning at different scales
+(defn time-bandit [n-hypotheses n-trials]
+  (let [;; Create hypotheses: rotate arm weights
+        base-weights (mapv (fn [i] (/ (inc i) (+ n-hypotheses 1.0)))
+                           (range n-hypotheses))
+        hypotheses (vec (for [offset (range n-hypotheses)]
+                          (let [shifted (vec (concat (drop offset base-weights)
+                                                    (take offset base-weights)))]
+                            (into {} (map-indexed (fn [i w] [i w]) shifted)))))
+        bandit (make-bandit-pomdp
+                 {:num-arms n-hypotheses
+                  :arm-weights (first hypotheses)
+                  :num-trials n-trials
+                  :prize-to-utility {"chocolate" 5 "nothing" 0}})
+        start (:start-state bandit)
+        prior (make-bandit-prior-belief
+                hypotheses nil start)
+        t0 (js/Date.now)
+        agent (make-pomdp-agent
+                {:utility (:utility bandit) :alpha 100 :prior-belief prior}
+                (:world bandit))
+        _ (simulate-pomdp start (:world bandit) agent)
+        elapsed (- (js/Date.now) t0)]
+    elapsed))
+
+(display "POMDP planning time (ms):")
+(display "  2 hypotheses:")
+(doseq [n [3 4 5 6]]
+  (display (str "    " n " trials: " (time-bandit 2 n) "ms")))
+
+(display "  3 hypotheses:")
+(doseq [n [2 3 4]]
+  (display (str "    " n " trials: " (time-bandit 3 n) "ms")))
+
+(display "\nPlanning time grows exponentially with horizon!")
+(display "This motivates approximate methods (Chapter 3.4).")</code></pre>
+
+<p>The exponential blowup in planning time is a fundamental limitation of POMDP planning. For problems with long horizons or many possible observations, exact POMDP planning becomes intractable. This motivates the <strong>reinforcement learning</strong> approach in the <a href="03d-reinforcement-learning.html">next chapter</a>, where agents learn from experience rather than planning over all possible futures.</p>
+
+<h1 id="exercises"><a href="#exercises">Exercises</a></h1>
+
+<h2>Exercise 1: Three-armed bandit</h2>
+<p>Create a 3-arm bandit where arm weights are {0: 0.8, 1: 0.5, 2: 0.2}. Use 3 hypotheses corresponding to each permutation where a different arm is the best. With 4 trials, how does the agent&rsquo;s exploration strategy differ from the 2-arm case?</p>
+
+<h2>Exercise 2: Varying arm quality</h2>
+<p>In the standard 2-arm bandit, change the arm weights from {0.9, 0.1} to {0.6, 0.4}. How does this affect the agent&rsquo;s willingness to explore? When the arms are more similar, does the agent need more trials to distinguish them?</p>
+
+<h2>Exercise 3: Informed priors</h2>
+<p>Suppose the agent has strong prior evidence that arm 0 is good (e.g., 95% belief). With only 3 trials, does the agent ever bother exploring arm 1? What about with 6 trials? How does the horizon affect the value of information?</p>
+
+<h2>Exercise 4: Belief convergence</h2>
+<p>Write code that manually applies 8 consecutive observations of &ldquo;chocolate&rdquo; from arm 0, showing the belief after each step. How many observations does it take for the belief to exceed 99.9%?</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="03b-mdp-gridworld.html">&larr; Chapter 3.2: MDPs and Gridworld</a>
+    <a href="03d-reinforcement-learning.html">Chapter 3.4: Reinforcement Learning &rarr;</a>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/cps_transform.cljc',
+    '../prob/cps.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs',
+    'agents/gridworld.cljs',
+    'agents/mdp.cljs',
+    'agents/pomdp.cljs',
+    'agents/bandit.cljs',
+    'viz-agents.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot lineplot display]])" +
+      "(require '[prob.agents.gridworld :refer [make-gridworld-mdp make-utility-function]])" +
+      "(require '[prob.agents.mdp :refer [make-mdp-agent simulate-mdp]])" +
+      "(require '[prob.agents.viz :refer [draw-gridworld]])" +
+      "(require '[prob.agents.pomdp :refer [make-pomdp-agent simulate-pomdp belief-to-key]])" +
+      "(require '[prob.agents.bandit :refer [make-bandit-pomdp make-bandit-prior-belief]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>

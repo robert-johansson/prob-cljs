@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AgentModels: Reinforcement Learning</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+  <script src="../js/editor.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.7.28/dist/scittle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">Modeling Agents with Probabilistic Programs</a></div>
+    <ul id="nav">
+      <li><a href="03c-pomdp.html">&larr; Prev</a></li>
+      <li><a href="index.html">Index</a></li>
+    </ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">3.4 Reinforcement Learning</h1>
+
+<div class="toc">
+<div class="name">Contents:</div>
+<ul>
+<li><a href="#introduction">Introduction</a></li>
+<li><a href="#greedy-agent">Softmax-Greedy Bandit Agent</a></li>
+<li><a href="#thompson-sampling">Posterior Sampling (Thompson Sampling)</a></li>
+<li><a href="#exploration-exploitation">Exploration vs Exploitation</a></li>
+<li><a href="#discussion">Discussion: From Bandits to Full MDPs</a></li>
+<li><a href="#exercises">Exercises</a></li>
+</ul>
+</div>
+
+<p>In the <a href="03c-pomdp.html">previous chapter</a>, we saw that POMDP planning is computationally expensive&mdash;it grows exponentially with the planning horizon. For many real-world problems, exact POMDP planning is intractable.</p>
+
+<p><strong>Reinforcement learning</strong> (RL) offers a scalable alternative. Instead of planning over all possible futures, an RL agent <em>learns from experience</em>: it acts in the world, observes rewards, and updates its beliefs about which actions are good. The agent doesn&rsquo;t need to solve the full POMDP; it just needs a good strategy for balancing exploration (learning about the world) and exploitation (using what it knows).</p>
+
+<p>We&rsquo;ll explore RL in the context of the multi-armed bandit, where the core exploration/exploitation trade-off is clearest.</p>
+
+<h1 id="introduction"><a href="#introduction">Introduction</a></h1>
+
+<p>An RL bandit agent maintains a <strong>posterior belief</strong> over arm weights (the probability that each arm gives a reward). Unlike the POMDP agent, which plans ahead over a tree of possible future beliefs, the RL agent makes decisions based only on its <em>current</em> belief state.</p>
+
+<p>We consider two approaches:</p>
+<ul>
+<li><strong>Softmax-greedy</strong>: Compute expected reward for each arm under current belief, then choose via softmax (like our MDP agents).</li>
+<li><strong>Posterior sampling</strong> (Thompson sampling): Sample arm weights from the posterior, then pick the arm with highest sampled weight.</li>
+</ul>
+
+<p>Both approaches use a discretized prior over possible arm weight combinations. At each step, the agent pulls an arm, observes a win/lose reward, and updates its posterior via Bayes&rsquo; rule.</p>
+
+<h1 id="greedy-agent"><a href="#greedy-agent">Softmax-Greedy Bandit Agent</a></h1>
+
+<p>The greedy agent computes the expected reward for each arm \(a\) under its current belief \(b\):</p>
+
+\[E_b[R | a] = \sum_w b(w) \cdot w_a\]
+
+<p>where \(w\) ranges over possible arm-weight combinations and \(w_a\) is the weight (success probability) for arm \(a\). The agent then chooses an arm via softmax over these expected rewards.</p>
+
+<pre><code>;; Softmax-greedy bandit agent
+;; True weights: arm 0 has 30% chance of win, arm 1 has 80%
+(def true-weights {0 0.3 1 0.8})
+
+;; Discretized prior over arm weights
+;; We consider all combinations of {0.1, 0.3, 0.5, 0.7, 0.9} for each arm
+(def weight-options [0.1 0.3 0.5 0.7 0.9])
+(def possible-weights
+  (vec (for [w0 weight-options w1 weight-options]
+         {0 w0 1 w1})))
+
+;; Uniform prior over all combinations
+(def prior (categorical-dist
+             possible-weights
+             (vec (repeat (count possible-weights) 1.0))))
+
+(def greedy-agent
+  (make-greedy-bandit-agent
+    {:prior-belief prior
+     :alpha 5
+     :actions [0 1]}))
+
+(def trajectory
+  (simulate-greedy-bandit
+    {:true-arm-weights true-weights}
+    greedy-agent
+    20))
+
+(display "=== Greedy Agent (20 trials) ===")
+(display (str "True weights: arm 0 = 0.3, arm 1 = 0.8"))
+(display "")
+(doseq [[i step] (map-indexed vector trajectory)]
+  (display (str "Trial " (inc i)
+                ": arm " (:action step)
+                " -> " (:reward step)
+                "  (E[R]: "
+                (clojure.string/join ", "
+                  (map (fn [[a er]] (str "arm" a "=" (.toFixed er 2)))
+                       (sort (:expected-rewards step))))
+                ")")))
+
+(let [wins (count (filter #(= "win" (:reward %)) trajectory))]
+  (display (str "\nTotal wins: " wins "/20")))</code></pre>
+
+<p>The agent starts uncertain but quickly learns that arm 1 is better, as reflected in the expected reward estimates converging toward the true values.</p>
+
+<h1 id="thompson-sampling"><a href="#thompson-sampling">Posterior Sampling (Thompson Sampling)</a></h1>
+
+<p>Thompson sampling takes a different approach: instead of computing expected rewards and choosing via softmax, it <em>samples</em> one set of arm weights from the posterior and picks the arm with the highest sampled weight. This naturally balances exploration and exploitation&mdash;arms with uncertain rewards will occasionally be sampled as the best, leading the agent to try them.</p>
+
+<p>Let&rsquo;s compare both strategies via cumulative regret&mdash;the difference between the optimal strategy (always pulling the best arm) and what the agent actually achieves:</p>
+
+<pre><code>;; Compare greedy vs Thompson sampling via cumulative regret
+(def true-weights {0 0.3 1 0.8})
+(def n-trials 30)
+
+(def weight-options [0.1 0.3 0.5 0.7 0.9])
+(def possible-weights
+  (vec (for [w0 weight-options w1 weight-options]
+         {0 w0 1 w1})))
+(def prior (categorical-dist
+             possible-weights
+             (vec (repeat (count possible-weights) 1.0))))
+
+;; Greedy agent
+(def greedy (make-greedy-bandit-agent
+              {:prior-belief prior :alpha 5 :actions [0 1]}))
+(def greedy-traj (simulate-greedy-bandit
+                   {:true-arm-weights true-weights} greedy n-trials))
+(def greedy-regret (cumulative-regret greedy-traj true-weights))
+
+;; Thompson sampling agent
+(def thompson (make-posterior-sampling-agent
+                {:prior-belief prior :actions [0 1]}))
+(def thompson-traj (simulate-posterior-sampling
+                     {:true-arm-weights true-weights} thompson n-trials))
+(def thompson-regret (cumulative-regret thompson-traj true-weights))
+
+(lineplot [{:data greedy-regret :label "Greedy (alpha=5)"}
+           {:data thompson-regret :label "Thompson sampling"}]
+          "Cumulative Regret: Greedy vs Thompson Sampling")
+
+(display (str "Final regret - Greedy: "
+              (.toFixed (second (last greedy-regret)) 2)
+              ", Thompson: "
+              (.toFixed (second (last thompson-regret)) 2)))</code></pre>
+
+<p>Both agents learn over time (regret grows sublinearly rather than linearly, which would indicate no learning). Thompson sampling often shows faster convergence because its exploration is naturally targeted: it explores arms in proportion to the probability that they are optimal.</p>
+
+<h1 id="exploration-exploitation"><a href="#exploration-exploitation">Exploration vs Exploitation</a></h1>
+
+<p>The softmax temperature \(\alpha\) controls the exploration/exploitation trade-off for the greedy agent. Low \(\alpha\) means more random exploration; high \(\alpha\) means more greedy exploitation. Let&rsquo;s see how this affects total regret:</p>
+
+<pre><code>;; Effect of alpha on total regret
+(def true-weights {0 0.3 1 0.8})
+(def n-trials 25)
+
+(def weight-options [0.1 0.3 0.5 0.7 0.9])
+(def possible-weights
+  (vec (for [w0 weight-options w1 weight-options]
+         {0 w0 1 w1})))
+
+(defn run-greedy-with-alpha [alpha]
+  (let [prior (categorical-dist possible-weights
+                (vec (repeat (count possible-weights) 1.0)))
+        agent (make-greedy-bandit-agent
+                {:prior-belief prior :alpha alpha :actions [0 1]})
+        traj (simulate-greedy-bandit
+               {:true-arm-weights true-weights} agent n-trials)
+        regret (cumulative-regret traj true-weights)]
+    (second (last regret))))
+
+(def alphas [0.5 1 2 5 10 50])
+(def results (mapv (fn [a] [(double a) (run-greedy-with-alpha a)]) alphas))
+
+(lineplot results "Total Regret vs Alpha (softmax temperature)")
+
+(display "Alpha -> Total regret:")
+(doseq [[a r] results]
+  (display (str "  alpha=" (.toFixed a 1) " -> regret=" (.toFixed r 2))))</code></pre>
+
+<p>Very low \(\alpha\) leads to too much random exploration (high regret). Very high \(\alpha\) can lead to premature exploitation&mdash;the agent locks onto the first arm that looks good and stops exploring. A moderate \(\alpha\) balances the two. Note that the optimal \(\alpha\) depends on the problem: the number of arms, the horizon, and the difference between arm rewards.</p>
+
+<h1 id="discussion"><a href="#discussion">Discussion: From Bandits to Full MDPs</a></h1>
+
+<p>The bandit RL agents we&rsquo;ve built address a simplified version of the full RL problem: there&rsquo;s no state transition dynamics, just a repeated choice among arms. How would we scale these ideas to full MDPs?</p>
+
+<p>The key idea is <strong>Posterior Sampling for Reinforcement Learning</strong> (PSRL). The algorithm is elegant:</p>
+
+<ol>
+<li><strong>Maintain a posterior</strong> over possible MDP models (transition and reward functions)</li>
+<li><strong>Sample</strong> one MDP from the posterior</li>
+<li><strong>Plan optimally</strong> in the sampled MDP (using the MDP agent from <a href="03a-mdp.html">Chapter 3.1</a>)</li>
+<li><strong>Execute</strong> the resulting policy for one episode</li>
+<li><strong>Update</strong> the posterior based on observed transitions and rewards</li>
+<li>Repeat</li>
+</ol>
+
+<p>This directly reuses the MDP planning infrastructure from <a href="03a-mdp.html">Chapter 3.1</a>. Here&rsquo;s a working example on a small gridworld where the agent doesn&rsquo;t know which terminal feature gives high reward:</p>
+
+<pre><code>;; PSRL on a gridworld: the agent doesn't know which terminal is good
+;; It samples a utility function, plans with an MDP agent, executes,
+;; observes the actual reward, and updates its belief.
+
+(def grid
+  [[{:name "Donut" :terminal true} " " {:name "Noodle" :terminal true}]
+   [" " "#" " "]
+   [" " " " " "]])
+
+;; Two hypotheses about which feature is valuable
+(def utility-tables
+  [{"Donut" 10 "Noodle" 2 :time-cost -0.1}    ;; H1: Donut is great
+   {"Donut" 2  "Noodle" 10 :time-cost -0.1}])  ;; H2: Noodle is great
+
+;; Truth: Donut is the good feature
+(def true-utilities {"Donut" 10 "Noodle" 2 :time-cost -0.1})
+
+;; Prior: 50/50 over which feature is good
+(def prior (categorical-dist utility-tables [0.5 0.5]))
+
+;; Run 5 PSRL episodes
+(def results
+  (loop [episode 0
+         belief prior
+         log []]
+    (if (>= episode 5)
+      log
+      (let [;; Sample a utility table from belief
+            sampled-table (sample* belief)
+            ;; Build a fresh MDP with the sampled utilities
+            mdp (make-gridworld-mdp {:grid grid :start [1 0] :total-time 6})
+            world (:world mdp)
+            utility-fn (make-utility-function world sampled-table)
+            agent (make-mdp-agent {:utility utility-fn :alpha 100} world)
+            ;; Execute the policy
+            trajectory (simulate-mdp (:start-state mdp) world agent)
+            ;; What feature did we actually reach?
+            final-state (last trajectory)
+            feature ((:feature world) final-state)
+            feature-name (when (map? feature) (:name feature))
+            ;; Compute true reward
+            true-reward (get true-utilities feature-name 0)
+            ;; Update belief: which hypotheses predict this reward?
+            new-belief
+            (let [support (enumerate* belief)
+                  weighted (keep
+                             (fn [ut]
+                               (let [p (js/Math.exp (observe* belief ut))
+                                     predicted (get ut feature-name 0)]
+                                 (when (= predicted true-reward)
+                                   [ut p])))
+                             support)
+                  total (reduce + 0.0 (map second weighted))]
+              (if (pos? total)
+                (categorical-dist (mapv first weighted)
+                                  (mapv #(/ (second %) total) weighted))
+                belief))]
+        (recur (inc episode) new-belief
+               (conj log {:episode (inc episode)
+                          :sampled (if (= 10 (get sampled-table "Donut"))
+                                     "Donut=10" "Noodle=10")
+                          :reached feature-name
+                          :reward true-reward
+                          :p-donut-good
+                          (reduce + 0.0
+                            (map (fn [ut]
+                                   (if (= 10 (get ut "Donut"))
+                                     (js/Math.exp (observe* new-belief ut)) 0.0))
+                                 (enumerate* new-belief)))}))))))
+
+(display "=== PSRL on Gridworld ===")
+(display "Truth: Donut=10, Noodle=2\n")
+(doseq [r results]
+  (display (str "Episode " (:episode r)
+                ": sampled " (:sampled r)
+                " -> went to " (:reached r)
+                " (reward=" (:reward r) ")"
+                "  P(Donut good)=" (.toFixed (:p-donut-good r) 3))))
+
+(let [w (:world (make-gridworld-mdp {:grid grid :start [1 0] :total-time 6}))]
+  (draw-gridworld w {:label "PSRL Gridworld" :start [1 0]}))</code></pre>
+
+<p>Each episode, the PSRL agent samples a model from its posterior, plans optimally in that model using the MDP agent from Chapter 3.1, then executes the plan in the real world. After observing the actual reward, it updates its belief. When the agent happens to sample the wrong model (believing Noodle is better), it goes to Noodle, observes a low reward, and adjusts. This is exactly Thompson sampling generalized to sequential decision problems.</p>
+
+<p>The key insight from this chapter is that <strong>Bayesian reasoning provides a principled framework for balancing exploration and exploitation</strong>. Whether we use exact POMDP planning (Ch 3.3) or approximate RL methods (this chapter), the underlying idea is the same: maintain beliefs, update them with evidence, and use them to make good decisions.</p>
+
+<h1 id="exercises"><a href="#exercises">Exercises</a></h1>
+
+<h2>Exercise 1: Average regret</h2>
+<p>The regret curves above are for single runs and are therefore noisy. Write code that runs each strategy 10 times and plots the <em>average</em> cumulative regret. Which strategy performs better on average?</p>
+
+<h2>Exercise 2: Epsilon-greedy</h2>
+<p>Implement an epsilon-greedy agent: with probability \(\epsilon\), choose a random arm; otherwise, choose the arm with highest expected reward. Compare its regret to the softmax-greedy and Thompson sampling agents. Try \(\epsilon = 0.1\) and \(\epsilon = 0.3\).</p>
+
+<h2>Exercise 3: More arms</h2>
+<p>Extend the bandit to 3 arms with true weights {0: 0.2, 1: 0.5, 2: 0.9}. How does regret scale with the number of arms? Does Thompson sampling maintain its advantage?</p>
+
+<h2>Exercise 4: Non-stationary bandits</h2>
+<p>Modify the environment so that arm weights change after 15 trials (the best arm becomes the worst). How do the different strategies adapt? Can you modify the agent to &ldquo;forget&rdquo; old observations and adapt faster?</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="03c-pomdp.html">&larr; Chapter 3.3: POMDPs and Bandits</a>
+    <span></span>
+  </div>
+</div>
+
+<!-- Interactive runner: loads prob-cljs via fetch + eval_string -->
+<script>
+var _scittleReady = false;
+var _scittleLoading = null;
+
+function ensureScittleImports() {
+  if (_scittleReady) return Promise.resolve();
+  if (_scittleLoading) return _scittleLoading;
+
+  var files = [
+    '../prob/math.cljs',
+    '../prob/erp.cljs',
+    '../prob/dist.cljs',
+    '../prob/cps_transform.cljc',
+    '../prob/cps.cljs',
+    '../prob/inference.cljs',
+    '../prob/builtins.cljs',
+    '../prob/core.cljs',
+    'viz.cljs',
+    'agents/gridworld.cljs',
+    'agents/mdp.cljs',
+    'agents/pomdp.cljs',
+    'agents/bandit.cljs',
+    'agents/rl.cljs',
+    'viz-agents.cljs'
+  ];
+
+  _scittleLoading = Promise.all(files.map(function(f) {
+    return fetch(f).then(function(r) {
+      if (!r.ok) throw new Error('Failed to load ' + f + ': ' + r.status);
+      return r.text();
+    });
+  })).then(function(sources) {
+    sources.forEach(function(src) { scittle.core.eval_string(src); });
+
+    scittle.core.eval_string(
+      "(ns prob.macros)" +
+      "(defmacro rejection-query [& body] `(prob.core/rejection-query-fn (fn [] ~@body)))" +
+      "(defmacro mh-query [n lag & body] `(prob.core/mh-query-fn ~n ~lag (fn [] ~@body)))" +
+      "(defmacro enumeration-query [& body] `(prob.core/enumeration-query-fn (fn [] ~@body)))"
+    );
+
+    scittle.core.eval_string(
+      "(require '[prob.core :refer [flip gaussian uniform uniform-draw random-integer multinomial" +
+      "                              sample-discrete beta gamma dirichlet exponential" +
+      "                              binomial poisson categorical" +
+      "                              condition factor observe rejection-query-fn mh-query-fn" +
+      "                              enumeration-query-fn mem mean variance sum prod" +
+      "                              sample* observe* dist? enumerate*]])" +
+      "(require '[prob.dist :refer [observe* sample* dist? enumerate*" +
+      "                              gaussian-dist bernoulli-dist uniform-dist beta-dist gamma-dist" +
+      "                              exponential-dist dirichlet-dist uniform-draw-dist" +
+      "                              random-integer-dist multinomial-dist sample-discrete-dist" +
+      "                              binomial-dist poisson-dist categorical-dist]])" +
+      "(require '[prob.builtins :refer [expt]])" +
+      "(require '[prob.macros :refer [rejection-query mh-query enumeration-query]])" +
+      "(require '[prob.viz :refer [hist density scatter barplot lineplot display]])" +
+      "(require '[prob.agents.gridworld :refer [make-gridworld-mdp make-utility-function]])" +
+      "(require '[prob.agents.mdp :refer [make-mdp-agent simulate-mdp]])" +
+      "(require '[prob.agents.viz :refer [draw-gridworld]])" +
+      "(require '[prob.agents.pomdp :refer [make-pomdp-agent simulate-pomdp belief-to-key]])" +
+      "(require '[prob.agents.bandit :refer [make-bandit-pomdp make-bandit-prior-belief]])" +
+      "(require '[prob.agents.rl :refer [make-greedy-bandit-agent simulate-greedy-bandit" +
+      "                                   make-posterior-sampling-agent simulate-posterior-sampling" +
+      "                                   cumulative-regret]])"
+    );
+
+    _scittleReady = true;
+  });
+
+  return _scittleLoading;
+}
+
+function runCode(code, output) {
+  output.innerHTML = '';
+  window.__currentOutput = output;
+  window.__appendToOutput = function(el) { window.__currentOutput.appendChild(el); };
+  window.__appendTextToOutput = function(text) {
+    var span = document.createElement('span');
+    span.textContent = text + '\n';
+    window.__currentOutput.appendChild(span);
+  };
+  ensureScittleImports().then(function() {
+    window.__currentOutput = output;
+    try {
+      var result = scittle.core.eval_string(code);
+      if (result != null) {
+        var span = document.createElement('span');
+        span.textContent = '' + result;
+        output.appendChild(span);
+      }
+    } catch(e) {
+      var span = document.createElement('span');
+      span.className = 'error';
+      span.textContent = 'Error: ' + e.message;
+      output.appendChild(span);
+    }
+  }).catch(function(e) {
+    var span = document.createElement('span');
+    span.className = 'error';
+    span.textContent = 'Load error: ' + e.message;
+    output.appendChild(span);
+  });
+}
+
+document.querySelectorAll('#chapter pre').forEach(function(pre) {
+  var codeEl = pre.querySelector('code');
+  if (!codeEl) return;
+  var code = codeEl.textContent.trim();
+
+  var container = document.createElement('div');
+  container.className = 'code-example';
+
+  var editorDiv = document.createElement('div');
+
+  var toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Run';
+
+  var output = document.createElement('div');
+  output.className = 'output';
+
+  toolbar.appendChild(btn);
+  container.appendChild(editorDiv);
+  container.appendChild(toolbar);
+  container.appendChild(output);
+  pre.replaceWith(container);
+
+  var editor = ProbEditor.createEditor(editorDiv, code, {
+    onEval: function(code) { runCode(code, output); }
+  });
+
+  btn.addEventListener('click', function() {
+    runCode(editor.getCode(), output);
+  });
+});
+</script>
+</body>
+</html>
