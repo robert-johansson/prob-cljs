@@ -1344,4 +1344,6 @@
                         (-> (select-keys opts [:rejuv-steps :resample-threshold])
                             (assoc :burn burn :lag lag :callback callback))
                         thunk)
-      (throw (ex-info (str "infer: unknown method " method) {:method method})))))
+      (throw (ex-info (str "infer: unknown method " method
+                           ". For :hmc/:nuts, use prob.mlx.inference directly.")
+                      {:method method})))))
