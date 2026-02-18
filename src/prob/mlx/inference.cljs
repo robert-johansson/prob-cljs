@@ -2,6 +2,7 @@
   "Gradient-based inference algorithms using MLX autograd.
    - HMC (Hamiltonian Monte Carlo)
    - NUTS (No-U-Turn Sampler)
+   - VI (Variational Inference with ADVI / mean-field Gaussian)
 
    These operate on differentiable log-density functions:
    log-density-fn: (fn [params] ...) -> MLX scalar
@@ -428,3 +429,154 @@
                           :q025 (nth vals idx-025)
                           :q975 (nth vals idx-975)}))]
           (vec result))))))
+
+;; ---------------------------------------------------------------------------
+;; Variational Inference (ADVI with mean-field Gaussian guide)
+;; ---------------------------------------------------------------------------
+
+(defn- adam-state
+  "Initialize Adam optimizer state for a parameter array."
+  [params]
+  {:m (mx/zeros (mx/shape params))  ;; first moment
+   :v (mx/zeros (mx/shape params))  ;; second moment
+   :t 0})
+
+(defn- adam-step
+  "Single Adam optimizer step. Returns [updated-params updated-state]."
+  [params grad-arr state lr beta1 beta2 epsilon]
+  (let [{:keys [m v t]} state
+        t' (inc t)
+        m' (mx/add (mx/multiply (mx/scalar beta1) m)
+                   (mx/multiply (mx/scalar (- 1 beta1)) grad-arr))
+        v' (mx/add (mx/multiply (mx/scalar beta2) v)
+                   (mx/multiply (mx/scalar (- 1 beta2)) (mx/square grad-arr)))
+        m-hat (mx/divide m' (mx/scalar (- 1 (js/Math.pow beta1 t'))))
+        v-hat (mx/divide v' (mx/scalar (- 1 (js/Math.pow beta2 t'))))
+        update (mx/divide (mx/multiply (mx/scalar lr) m-hat)
+                          (mx/add (mx/sqrt v-hat) (mx/scalar epsilon)))
+        params' (mx/subtract params update)]
+    (mx/eval! params' m' v')
+    [params' {:m m' :v v' :t t'}]))
+
+(defn- elbo-estimate
+  "Estimate ELBO via Monte Carlo with reparameterized samples.
+   ELBO = E_q[log p(x) - log q(x)]
+   where q is a mean-field Gaussian with parameters [mu, log-sigma].
+
+   variational-params: MLX array of shape [2*d] = [mu_1..mu_d, log_sigma_1..log_sigma_d]
+   log-density: (fn [params]) -> MLX scalar (unnormalized log-posterior)
+   n-samples: number of MC samples for ELBO estimate
+   d: dimensionality
+   vmapped-log-density: pre-vmapped version of log-density for batch evaluation"
+  [variational-params log-density n-samples d vmapped-log-density]
+  (let [mu (mx/slice variational-params 0 d)
+        log-sigma (mx/slice variational-params d (* 2 d))
+        sigma (mx/exp log-sigma)
+        ;; Draw n-samples from q via reparameterization: z = mu + sigma * eps
+        eps (mx/random-normal [n-samples d])
+        samples (mx/add mu (mx/multiply sigma eps))
+        ;; log q(z) = sum_i[-0.5*log(2pi) - log_sigma_i - 0.5*((z_i - mu_i)/sigma_i)^2]
+        log-2pi-scalar (mx/scalar (js/Math.log (* 2 js/Math.PI)))
+        ;; For each sample, compute log q (vectorized over samples)
+        diff-norm (mx/divide (mx/subtract samples mu) sigma)  ;; [n, d]
+        log-q-per-dim (mx/multiply (mx/scalar -0.5)
+                                    (mx/add log-2pi-scalar
+                                            (mx/add (mx/multiply (mx/scalar 2.0) log-sigma)
+                                                    (mx/multiply diff-norm diff-norm))))
+        log-q (mx/sum log-q-per-dim [1])  ;; [n]
+        ;; For each sample, compute log p via vmap (correct gradient accumulation)
+        log-p-vals (vmapped-log-density samples)  ;; [n]
+        ;; ELBO = mean(log_p - log_q)
+        elbo (mx/mean (mx/subtract log-p-vals log-q))]
+    elbo))
+
+(defn vi
+  "Variational Inference via ADVI (Automatic Differentiation VI).
+   Uses a mean-field Gaussian guide (diagonal covariance) and optimizes
+   the ELBO via Adam with reparameterization gradients.
+
+   opts: {:iterations N       ;; number of optimization steps (default 1000)
+          :learning-rate lr   ;; Adam learning rate (default 0.01)
+          :elbo-samples N     ;; MC samples per ELBO estimate (default 10)
+          :beta1 b1           ;; Adam beta1 (default 0.9)
+          :beta2 b2           ;; Adam beta2 (default 0.999)
+          :epsilon eps        ;; Adam epsilon (default 1e-8)
+          :callback fn}       ;; (fn [{:iter i :elbo e :params p}])
+
+   log-density: (fn [params]) -> MLX scalar (unnormalized log-posterior)
+   init-params: MLX array of initial parameter values (determines dimensionality)
+
+   Returns map:
+     :mu          - variational mean (MLX array)
+     :sigma       - variational std dev (MLX array)
+     :elbo-history - vector of ELBO values
+     :sample-fn   - (fn [n]) draws n samples from the fitted guide"
+  [opts log-density init-params]
+  (let [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback]
+         :or {iterations 1000
+              learning-rate 0.01
+              elbo-samples 10
+              beta1 0.9
+              beta2 0.999
+              epsilon 1e-8}} opts
+        d (let [s (mx/shape init-params)] (if (empty? s) 1 (first s)))
+        ;; Initialize variational parameters: [mu_1..mu_d, log_sigma_1..log_sigma_d]
+        ;; mu initialized from init-params, log-sigma initialized to 0 (sigma=1)
+        init-mu (if (zero? (mx/ndim init-params))
+                  (mx/reshape init-params [1])
+                  init-params)
+        init-log-sigma (mx/zeros [d])
+        init-vp (mx/tidy
+                  (fn []
+                    (let [vp (mx/concat [init-mu init-log-sigma])]
+                      (mx/eval! vp)
+                      vp)))
+
+        ;; vmap the log-density for correct gradient accumulation over samples
+        vmapped-log-density (mx/vmap log-density)
+
+        ;; Negative ELBO for minimization (grad ascent on ELBO = grad descent on -ELBO)
+        neg-elbo-fn (fn [vp]
+                      (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density)))
+
+        ;; Gradient of negative ELBO
+        grad-neg-elbo (mx/grad neg-elbo-fn)]
+
+    (loop [i 0
+           vp init-vp
+           opt-state (adam-state init-vp)
+           elbo-history (transient [])]
+      (if (>= i iterations)
+        (let [final-mu (mx/slice vp 0 d)
+              final-log-sigma (mx/slice vp d (* 2 d))
+              final-sigma (mx/exp final-log-sigma)]
+          (mx/eval! final-mu final-sigma)
+          {:mu final-mu
+           :sigma final-sigma
+           :elbo-history (persistent! elbo-history)
+           :sample-fn (fn [n]
+                        (let [eps (mx/random-normal [n d])
+                              samples (mx/add final-mu (mx/multiply final-sigma eps))]
+                          (mx/eval! samples)
+                          (if (= d 1)
+                            (mapv #(mx/item (mx/index samples %)) (range n))
+                            (mx/->clj samples))))})
+        (let [;; Compute gradient and step
+              g (mx/tidy (fn [] (grad-neg-elbo vp)))
+              _ (mx/eval! g)
+              [vp' opt-state'] (adam-step vp g opt-state
+                                          learning-rate beta1 beta2 epsilon)
+              ;; Compute ELBO for monitoring (negate neg-elbo)
+              elbo-val (when (or callback (zero? (mod i 100)))
+                         (let [e (mx/tidy (fn [] (elbo-estimate vp' log-density elbo-samples d vmapped-log-density)))]
+                           (mx/eval! e)
+                           (mx/item e)))]
+          (mx/dispose! g)
+          (when (and callback elbo-val)
+            (callback {:iter i
+                       :elbo elbo-val
+                       :params (mx/->clj vp')}))
+          (recur (inc i) vp' opt-state'
+                 (if elbo-val
+                   (conj! elbo-history elbo-val)
+                   elbo-history)))))))

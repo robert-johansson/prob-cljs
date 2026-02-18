@@ -343,12 +343,13 @@
   (.take mx a (scalar i int32)))
 
 (defn slice
-  "Slice an array."
-  [a & start-stop-pairs]
-  ;; Use the low-level slice API
-  (let [starts (clj->js (take-nth 2 start-stop-pairs))
-        stops  (clj->js (take-nth 2 (rest start-stop-pairs)))]
-    (.slice mx a starts stops)))
+  "Slice an array along axis 0.
+   (slice a 0 3)       ;; a[0:3]
+   (slice a 0 3 2)     ;; a[0:3:2] (with step)"
+  ([a start stop]
+   (.index a (new (.-Slice mx) start stop)))
+  ([a start stop step]
+   (.index a (new (.-Slice mx) start stop step))))
 
 ;; ---------------------------------------------------------------------------
 ;; Matrix operations

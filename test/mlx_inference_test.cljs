@@ -144,4 +144,81 @@
     (pass "sample statistics")
     (fail "sample statistics" (str quantiles))))
 
+;; ── Test 7: VI on 1D Gaussian ──
+;; Find variational approximation to N(3, 1).
+(println "\n=== Test 7: VI on 1D Gaussian ===")
+(let [log-density (fn [params]
+                    (mx/multiply (mx/scalar -0.5)
+                                 (mx/square (mx/subtract params (mx/scalar 3.0)))))
+      result (infer/vi
+               {:iterations 500 :learning-rate 0.01 :elbo-samples 10}
+               log-density
+               (mx/scalar 0.0))]
+  (mx/eval! (:mu result) (:sigma result))
+  (let [mu (mx/item (:mu result))
+        sigma (mx/item (:sigma result))]
+    (println "  mu:" mu "(expected ~3)")
+    (println "  sigma:" sigma "(expected ~1)")
+    (if (and (approx= mu 3.0 0.5)
+             (approx= sigma 1.0 0.3))
+      (pass (str "VI 1D: mu=" mu " sigma=" sigma))
+      (fail "VI 1D" (str "mu=" mu " sigma=" sigma)))))
+
+;; ── Test 8: VI on 2D Gaussian ──
+(println "\n=== Test 8: VI on 2D Gaussian ===")
+(let [target-mean (mx/array [2 -1])
+      log-density (fn [params]
+                    (let [diff (mx/subtract params target-mean)]
+                      (mx/multiply (mx/scalar -0.5)
+                                   (mx/sum (mx/multiply diff diff)))))
+      result (infer/vi
+               {:iterations 1000 :learning-rate 0.02 :elbo-samples 10}
+               log-density
+               (mx/zeros [2]))]
+  (mx/eval! (:mu result) (:sigma result))
+  (let [mu (mx/->clj (:mu result))
+        sigma (mx/->clj (:sigma result))]
+    (println "  mu:" mu "(expected [2, -1])")
+    (println "  sigma:" sigma "(expected [1, 1])")
+    (if (and (approx= (first mu) 2.0 0.5)
+             (approx= (second mu) -1.0 0.5)
+             (approx= (first sigma) 1.0 0.3)
+             (approx= (second sigma) 1.0 0.3))
+      (pass (str "VI 2D: mu=" mu " sigma=" sigma))
+      (fail "VI 2D" (str "mu=" mu " sigma=" sigma)))))
+
+;; ── Test 9: VI sample-fn ──
+(println "\n=== Test 9: VI Sample Function ===")
+(let [log-density (fn [params]
+                    (mx/multiply (mx/scalar -0.5)
+                                 (mx/square (mx/subtract params (mx/scalar 5.0)))))
+      result (infer/vi
+               {:iterations 1000 :learning-rate 0.02 :elbo-samples 10}
+               log-density
+               (mx/scalar 0.0))
+      samples ((:sample-fn result) 100)
+      sample-mean (/ (reduce + samples) (count samples))]
+  (println "  sample mean:" sample-mean "(expected ~5)")
+  (if (approx= sample-mean 5.0 1.0)
+    (pass (str "VI sample-fn: mean=" sample-mean))
+    (fail "VI sample-fn" (str "mean=" sample-mean))))
+
+;; ── Test 10: VI ELBO history ──
+(println "\n=== Test 10: VI ELBO Convergence ===")
+(let [log-density (fn [params]
+                    (mx/multiply (mx/scalar -0.5)
+                                 (mx/square (mx/subtract params (mx/scalar 0.0)))))
+      result (infer/vi
+               {:iterations 500 :learning-rate 0.01 :elbo-samples 10}
+               log-density
+               (mx/scalar 0.0))
+      history (:elbo-history result)]
+  (println "  ELBO history length:" (count history))
+  (println "  First ELBO:" (first history))
+  (println "  Final ELBO:" (last history))
+  (if (and (pos? (count history))
+           (> (last history) (first history)))
+    (pass "ELBO improved over training")
+    (fail "ELBO convergence" (str "first=" (first history) " last=" (last history)))))
+
 (println "\n=== All MLX inference tests complete ===")

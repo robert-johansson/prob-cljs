@@ -55,7 +55,7 @@ Systematic comparison of prob-cljs against [webchurch](https://github.com/probmo
 |---|---|---|---|---|---|
 | **multivariate-bernoulli** | — | `MultivariateBernoulli({ps})` | — | not implemented | Low (vector of independent Bernoulli) |
 | **diag-cov-gaussian** | — | `DiagCovGaussian({mu, sigma})` | — | not implemented | Low (needs vector abstraction) |
-| **multivariate normal** | — | `MultivariateGaussian({mu, cov})` | `(mvn mean cov)` with Cholesky | not implemented | Low (needs linear algebra) |
+| **multivariate normal** | — | `MultivariateGaussian({mu, cov})` | `(mvn mean cov)` with Cholesky | `MLXMultivariateNormal` (Cholesky, GPU) via prob.mlx.dist | **Done** (MLX) |
 | **logistic-normal** | — | `LogisticNormal({mu, sigma})` | — | not implemented | Low (softmax of multivariate Gaussian) |
 | **multivariate-t** | — | — | `(multivariate-t nu mu sigma)` | not implemented | Low (needs linear algebra) |
 | **wishart** | — | — | `(wishart n V)` with Bartlett decomp | not implemented | Low (needs linear algebra) |
@@ -78,7 +78,7 @@ All existing distributions implement `IDistribution`. Discrete distributions imp
 | `isContinuous` / `isDiscrete` flag | Yes | Via type check | `(discrete? d)` / `(continuous? d)` via protocol check | **Done** |
 | KL divergence | — | — | Yes | `(kl-divergence p q)` for discrete distributions | **Done** |
 | Distribution serialization (JSON round-trip) | Yes | — | not implemented | Low |
-| Reparameterization (`base`/`transform`) | Yes (for variational inference) | — | not implemented | Low (only useful with VI) |
+| Reparameterization (`base`/`transform`) | Yes (for variational inference) | — | `sample-reparam` in `IDifferentiable` protocol (prob.mlx.dist) | **Done** (MLX) |
 
 ---
 
@@ -132,7 +132,7 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 | SMC / Particle filtering | — | `method: 'SMC'` with particles, rejuvSteps | SMC, conditional SMC | `smc-query` macro with CPS transform, multinomial resampling, optional MH rejuvenation | **Done** |
 | Particle Gibbs (PMCMC) | — | `method: 'PMCMC'` | Conditional SMC | `particle-gibbs-query` macro with retained particle, burn-in/lag/rejuvenation | **Done** |
 | AIS (Annealed Importance Sampling) | — | `method: 'AIS'` | `annealed` | `ais-query` macro / `ais-query-fn` with geometric/linear schedules | **Done** |
-| Unified inference entry | — | `Infer(options, model)` dispatches to all methods | — | `(infer {:method :mh :samples 1000 :burn 100} thunk)` | **Done** |
+| Unified inference entry | — | `Infer(options, model)` dispatches to all methods | — | `(infer {:method :mh :samples 1000 :burn 100} thunk)` + GPU methods via `prob.mlx.inference` | **Done** |
 | Incremental rejection | — | Reject at factor statements with `maxScore` bound | — | not implemented | Medium |
 
 ### prob-cljs MH implementation
@@ -167,8 +167,8 @@ This works in both rejection mode (probabilistic rejection) and MH mode (exact s
 | **IncrementalMH** | WebPPL | MCMC | C3 algorithm with adaptive caching, incremental re-execution | Hard (requires CPS + caching transforms) |
 | ~~**PMCMC / Particle Gibbs**~~ | WebPPL, Anglican | PMCMC | ~~Conditional SMC with retained particle~~ | **Done** via `particle-gibbs-query` with burn-in, lag, rejuvenation |
 | **PGAS** | Anglican | PMCMC | Particle Gibbs with ancestor sampling | Medium (requires Particle Gibbs — now available) |
-| **HMC** | WebPPL | MCMC | Hamiltonian Monte Carlo for continuous variables | Hard (requires automatic differentiation) |
-| **Variational (ELBO)** | WebPPL, Anglican | Optimization | Guide programs with gradient-based ELBO optimization | Hard (requires AD + tensor ops) |
+| ~~**HMC**~~ | WebPPL | MCMC | ~~Hamiltonian Monte Carlo for continuous variables~~ | **Done** via `prob.mlx.inference/hmc` (MLX autograd on Metal GPU) |
+| ~~**Variational (ELBO)**~~ | WebPPL, Anglican | Optimization | ~~Guide programs with gradient-based ELBO optimization~~ | **Done** via `prob.mlx.inference/vi` (ADVI with mean-field Gaussian, Adam optimizer, reparameterization gradients) |
 | **LARJ** | webchurch | MCMC | Locally Annealed Reversible Jump MCMC for trans-dimensional models | Hard |
 | ~~**Marginalization**~~ | webchurch | Nested | ~~Nested inference as ERP via `marginalize()`~~ | **Done** via `marginal-dist` |
 
@@ -257,18 +257,22 @@ prob-cljs's `mem` is now **trace-aware**: during inference, the cache is stored 
 
 ## Gradient Infrastructure
 
-Present in both **WebPPL** and **Anglican**. Not present in webchurch or prob-cljs.
+Present in **WebPPL**, **Anglican**, and now **prob-cljs** (via MLX).
 
 **WebPPL** uses the `adnn` library for automatic differentiation, enabling HMC and variational inference (ELBO optimization with reparameterization gradients or score function estimator). Many continuous distributions implement `base()`/`transform()` for the reparameterization trick.
 
 **Anglican's** `DistGradient` protocol provides `grad-log` and `grad-step` for 9 distribution types, enabling BBVB to automatically learn variational proposal distributions.
 
-Required for: HMC, variational inference (BBVB/ELBO). Not needed for MCMC or SMC.
+**prob-cljs** provides full gradient infrastructure via the optional `prob.mlx` module (Apple Silicon, nbb only):
+- **Autograd**: `mx/grad`, `mx/value-and-grad`, `mx/jvp`, `mx/vjp` — composable, GPU-accelerated via MLX on Metal
+- **IDifferentiable protocol**: `log-prob` (differentiable) and `sample-reparam` (reparameterized sampling) for MLX-backed distributions
+- **HMC**: `prob.mlx.inference/hmc` — leapfrog integration with compiled Metal kernels, burn-in/thinning
+- **NUTS**: `prob.mlx.inference/nuts` — No-U-Turn Sampler with adaptive tree depth
+- **VI (ADVI)**: `prob.mlx.inference/vi` — mean-field Gaussian guide, ELBO optimization with Adam and reparameterization gradients
+- **JIT compilation**: `mx/compile-fn` caches Metal programs for repeated execution
+- **Linear algebra**: Cholesky, solve, inverse, QR, SVD, eigendecomposition (for multivariate distributions)
 
-**Feasibility for prob-cljs:** Full AD in pure ClojureScript is a large effort. Simpler alternatives:
-- Score function estimator (REINFORCE) for VI without reparameterization (high variance but feasible)
-- Finite-difference gradients (slow but zero-dep)
-- A ClojureScript AD library if one emerges
+The core `prob.*` library remains zero-dependency. MLX is an optional add-on for gradient-based inference on Apple Silicon.
 
 ---
 
@@ -282,8 +286,8 @@ Required for: HMC, variational inference (BBVB/ELBO). Not needed for MCMC or SMC
 | `erf` | Error function | Gaussian CDF | — | — | — | **Yes** |
 | `trigamma` | Trigamma function | Second derivative of log-Gamma | — | Yes | — | No |
 | `log-mv-gamma-fn` | Multivariate log-Gamma | Wishart log-prob | — | — | Yes | No |
-| `cholesky` | Cholesky decomposition | Multivariate Normal sampling + scoring | — | Via `adnn` | Yes | No |
-| `inverse` / `det` | Matrix inverse, determinant | Wishart, MVN | — | Via `adnn` | Yes | No |
+| `cholesky` | Cholesky decomposition | Multivariate Normal sampling + scoring | — | Via `adnn` | Yes | **Yes** (via `prob.mlx.core/cholesky`) |
+| `inverse` / `det` | Matrix inverse, determinant | Wishart, MVN | — | Via `adnn` | Yes | **Yes** (via `prob.mlx.core/inv`, `prob.mlx.core/det`) |
 
 ---
 
@@ -344,7 +348,7 @@ WebPPL uses Vega/Vega-Lite (heavy npm dep). prob-cljs uses hand-rolled SVG/HTML 
 | `read-file` / `read-csv` / `write-csv` | Implemented | Via packages | — | not implemented | Minor (users have `js/require "fs"`) |
 | `set-seed` | PRNG seeding | Via `seedrandom` | Via runtime config | `set-seed!` with xoshiro128** PRNG | **Done** |
 | Visualization | — | Full Vega-based viz suite (`webppl-viz`) | — (external tools) | SVG-based: hist, density, scatter, barplot, lineplot, table | **Done** (browser only) |
-| Tensor ops | — | Full via `adnn` tensors: `Vector`, `Matrix`, `T.add/mul/dot/transpose/softmax/...` | Via `core.matrix` | not implemented | Low (only needed for multivariate dists / VI) |
+| Tensor ops | — | Full via `adnn` tensors: `Vector`, `Matrix`, `T.add/mul/dot/transpose/softmax/...` | Via `core.matrix` | **Yes** via `prob.mlx.core` (GPU-accelerated, MLX arrays with full arithmetic, linalg, autograd) | **Done** (MLX) |
 | Neural net layers | — | `affine`, `rnn`, `gru`, `lstm`, `sigmoid`, `relu`, `softmax`, `stack` | — | not implemented | Out of scope |
 
 The effective gap for builtins is small because ClojureScript's standard library (`map`, `filter`, `reduce`, `sort`, `group-by`, etc.) covers most of what WebPPL reimplements in `header.wppl`.
@@ -420,18 +424,18 @@ The effective gap for builtins is small because ClojureScript's standard library
     - ~~Uniform-discrete, Chi-squared, LogitNormal~~ -- **Done.** All three implemented in `dist.cljs`.
 
 23. **Multivariate distributions** (requires linear algebra):
-    - DiagCovGaussian, MultivariateGaussian, LogisticNormal, Wishart, multivariate-t
-    - Needs: Cholesky decomposition, matrix inverse/determinant in pure ClojureScript
+    - ~~MultivariateGaussian~~ -- **Done** via `MLXMultivariateNormal` in `prob.mlx.dist` (Cholesky-based, GPU)
+    - Remaining: DiagCovGaussian, LogisticNormal, Wishart, multivariate-t (feasible with existing MLX linear algebra)
 
 ### Phase 6: Advanced Algorithms (hard)
 
 24. **IncrementalMH** -- WebPPL's C3 algorithm with adaptive caching. Requires CPS + caching transforms.
 
-25. **HMC** -- Hamiltonian Monte Carlo. Requires automatic differentiation.
+25. ~~**HMC**~~ -- **Done.** `prob.mlx.inference/hmc` with leapfrog integration, compiled Metal kernels, burn-in/thinning, and NUTS variant. Requires MLX (Apple Silicon).
 
-26. **Variational inference (ELBO)** -- Guide programs with gradient-based optimization. Requires AD + tensor ops. WebPPL supports Adam, SGD, Adagrad, RMSprop optimizers.
+26. ~~**Variational inference (ELBO)**~~ -- **Done.** `prob.mlx.inference/vi` with ADVI (mean-field Gaussian guide), Adam optimizer, reparameterization gradients. Requires MLX (Apple Silicon).
 
-27. **Gradient protocol** -- `grad-log` and `grad-step` for distributions. Required for VI.
+27. ~~**Gradient protocol**~~ -- **Done.** `IDifferentiable` protocol in `prob.mlx.dist` with `log-prob` (differentiable) and `sample-reparam` (reparameterized sampling). Six distributions implemented: Gaussian, Beta, Gamma, Uniform, Exponential, MultivariateNormal.
 
 ### Phase 7: Ecosystem
 
@@ -445,7 +449,7 @@ The effective gap for builtins is small because ClojureScript's standard library
 
 32. ~~**Additional visualizations**~~ -- ~~`viz.auto` (smart chart selection), heat map, marginals display.~~ **Done.** `auto`, `heatmap`, `marginals` in `viz.cljs`.
 
-33. **Matrix operations** -- Cholesky, inverse, determinant (pure ClojureScript or optional dep).
+33. ~~**Matrix operations**~~ -- **Done.** Cholesky, inverse, determinant, QR, SVD, eigendecomposition via `prob.mlx.core` (GPU-accelerated, Apple Silicon).
 
 ---
 

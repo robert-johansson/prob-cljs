@@ -1313,7 +1313,9 @@
      :smc          - Sequential Monte Carlo, returns vector of samples
                      opts: :particles (required), :rejuv-steps, thunk must be CPS-transformed
      :particle-gibbs - Particle Gibbs (PMCMC), returns vector of samples
-                     opts: :particles (required), :samples (required), :burn, :lag, :rejuv-steps"
+                     opts: :particles (required), :samples (required), :burn, :lag, :rejuv-steps
+     :hmc/:nuts/:vi - GPU-accelerated gradient-based methods (Apple Silicon only).
+                     These use a different API -- see prob.mlx.inference directly."
   [opts thunk]
   (let [{:keys [method samples lag burn callback strategy max-executions]
          :or {lag 1 burn 0}} opts]
@@ -1344,6 +1346,17 @@
                         (-> (select-keys opts [:rejuv-steps :resample-threshold])
                             (assoc :burn burn :lag lag :callback callback))
                         thunk)
-      (throw (ex-info (str "infer: unknown method " method
-                           ". For :hmc/:nuts, use prob.mlx.inference directly.")
+      (:hmc :nuts :vi)
+      (throw (ex-info
+               (str "infer: method " method " requires prob.mlx.inference (Apple Silicon + MLX).\n"
+                    "These methods use a different API: (log-density-fn params -> scalar) instead of a model thunk.\n"
+                    "Usage:\n"
+                    "  (require '[prob.mlx.inference :as mlx-infer])\n"
+                    "  (require '[prob.mlx.core :as mx])\n"
+                    (case method
+                      :hmc  "  (mlx-infer/hmc {:samples 1000 :step-size 0.01 :leapfrog-steps 20} log-density (mx/zeros [d]))"
+                      :nuts "  (mlx-infer/nuts {:samples 1000 :step-size 0.01 :max-depth 10} log-density (mx/zeros [d]))"
+                      :vi   "  (mlx-infer/vi {:iterations 1000 :learning-rate 0.01} log-density (mx/zeros [d]))"))
+               {:method method}))
+      (throw (ex-info (str "infer: unknown method " method)
                       {:method method})))))
