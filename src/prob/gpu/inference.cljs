@@ -13,20 +13,21 @@
   "H(q,p) = -log_density(q) + 0.5 * sum(p^2)"
   [log-density q p]
   (t/add (t/negative (log-density q))
-         (t/multiply (t/scalar 0.5) (t/sum (t/square p)))))
+         (t/multiply (t/scalar-cached 0.5) (t/sum (t/square p)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Leapfrog integrator
 ;; ---------------------------------------------------------------------------
 
 (defn- leapfrog-step
-  "One leapfrog step: half-momentum, full-position, half-momentum."
+  "One leapfrog step: half-momentum, full-position, half-momentum.
+   Uses fused scaled-add: a + alpha * b in one dispatch."
   [grad-fn q p step-size-t half-step-t]
   (let [g       (grad-fn q)
-        p-half  (t/add p (t/multiply half-step-t g))
-        q-new   (t/add q (t/multiply step-size-t p-half))
+        p-half  (t/scaled-add half-step-t p g)
+        q-new   (t/scaled-add step-size-t q p-half)
         g-new   (grad-fn q-new)
-        p-new   (t/add p-half (t/multiply half-step-t g-new))]
+        p-new   (t/scaled-add half-step-t p-half g-new)]
     [q-new p-new]))
 
 (defn- leapfrog
@@ -66,19 +67,20 @@
    init-params: GPU tensor
    Returns Promise<{:samples [...] :acceptance-rate float}>"
   [opts log-density init-params]
-  (let [{:keys [samples step-size leapfrog-steps burn callback]
+  (let [{:keys [samples step-size leapfrog-steps burn callback grad-fn]
          :or   {burn 0}} opts
         total       (+ samples burn)
-        grad-fn     (ag/grad log-density)
-        step-size-t (t/scalar step-size)
-        half-step-t (t/scalar (* 0.5 step-size))
+        grad-fn     (or grad-fn (ag/grad log-density))
+        step-size-t (t/scalar-cached step-size)
+        half-step-t (t/scalar-cached (* 0.5 step-size))
         q-shape     (t/shape init-params)
-        result      (loop [i 0, q init-params, acc (transient []), accept-sum (t/scalar 0)]
+        result      (loop [i 0, q init-params, acc (transient []), accept-sum (t/scalar-cached 0)]
                       (if (>= i total)
                         {:raw-samples (persistent! acc) :accept-sum accept-sum}
-                        (let [[q' accept?] (hmc-step log-density grad-fn q
-                                                      step-size-t half-step-t
-                                                      leapfrog-steps q-shape)
+                        (let [[q' accept?] (t/with-command-batch*
+                                            (fn [] (hmc-step log-density grad-fn q
+                                                             step-size-t half-step-t
+                                                             leapfrog-steps q-shape)))
                               acc' (if (>= i burn) (conj! acc q') acc)
                               asum (t/add accept-sum accept?)]
                           (when (and callback (zero? (mod i 100)))

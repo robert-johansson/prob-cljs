@@ -149,6 +149,30 @@
              (str "expected -1.0, got " (second g-clj))))))
 
 ;; ---------------------------------------------------------------------------
+;; Test 6: HMC with user-provided gradient (no autograd)
+;; ---------------------------------------------------------------------------
+
+(defn- test-hmc-user-gradient []
+  (println "\n--- HMC: User-Provided Gradient ---")
+  (t/set-rng-seed! 999)
+  (let [mu          (t/scalar-cached 3.0)
+        log-density (fn [x]
+                      (t/multiply (t/scalar-cached -0.5)
+                                  (t/square (t/subtract x mu))))
+        grad-fn     (fn [x] (t/negative (t/subtract x mu)))
+        init        (t/scalar 0.0)]
+    (p/let [result (infer/hmc {:samples 500 :step-size 0.1
+                                :leapfrog-steps 10 :burn 100
+                                :grad-fn grad-fn}
+                               log-density init)
+            samples (:samples result)
+            mean-val (/ (reduce + samples) (count samples))]
+      (check "user-grad sample count" (= (count samples) 500)
+             (str "expected 500, got " (count samples)))
+      (check "user-grad mean ≈ 3.0" (approx= mean-val 3.0 0.5)
+             (str "expected ~3.0, got " mean-val)))))
+
+;; ---------------------------------------------------------------------------
 ;; Main
 ;; ---------------------------------------------------------------------------
 
@@ -159,7 +183,7 @@
         _ (test-leapfrog-conservation)
         _ (test-acceptance-rate)
         _ (test-hmc-1d-gaussian)
-        _ (test-hmc-2d-gaussian)]
+        _ (test-hmc-2d-gaussian)
+        _ (test-hmc-user-gradient)]
   (println (str "\n" @passed " passed, " @failed " failed"))
-  (when (pos? @failed)
-    (js/process.exit 1)))
+  (js/process.exit (if (pos? @failed) 1 0)))

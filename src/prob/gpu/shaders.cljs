@@ -92,6 +92,24 @@
    }")
 
 ;; ---------------------------------------------------------------------------
+;; Fused scaled-add: output = a + alpha * b
+;; ---------------------------------------------------------------------------
+
+(def scaled-add-shader
+  "@group(0) @binding(0) var<storage, read> alpha: array<f32>;
+   @group(0) @binding(1) var<storage, read> a: array<f32>;
+   @group(0) @binding(2) var<storage, read> b: array<f32>;
+   @group(0) @binding(3) var<storage, read_write> output: array<f32>;
+   @compute @workgroup_size(64)
+   fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+     let idx = gid.x;
+     if (idx >= arrayLength(&output)) { return; }
+     let va = a[idx % arrayLength(&a)];
+     let vb = b[idx % arrayLength(&b)];
+     output[idx] = va + alpha[0] * vb;
+   }")
+
+;; ---------------------------------------------------------------------------
 ;; Sum reduction shader — tree reduction with workgroup shared memory
 ;; ---------------------------------------------------------------------------
 

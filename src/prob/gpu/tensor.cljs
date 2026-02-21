@@ -20,6 +20,12 @@
   "When non-nil (a volatile! holding a vector), ops record backward closures."
   nil)
 
+(def ^:dynamic *encoder*
+  "When non-nil, a map {:encoder GPUCommandEncoder :device GPUDevice
+   :deferred (volatile! [])}.  Ops append to this shared encoder instead
+   of creating their own.  Temp buffers are deferred-destroyed after submit."
+  nil)
+
 (defrecord TrackedTensor [tensor id])
 
 (defn tracked? [x] (instance? TrackedTensor x))
@@ -53,6 +59,45 @@
           js/GPUBufferUsage.COPY_DST))
 
 ;; ---------------------------------------------------------------------------
+;; Scalar cache — avoids re-allocating identical scalar GPU buffers
+;; ---------------------------------------------------------------------------
+
+(defonce ^:private scalar-cache (volatile! {}))
+(defonce ^:private cached-buffers (volatile! #{}))
+
+;; ---------------------------------------------------------------------------
+;; Buffer pool — recycles GPU buffers by exact byte size
+;; ---------------------------------------------------------------------------
+
+(def ^:private ^:const MAX-POOL-DEPTH 32)
+(defonce ^:private buffer-pool (volatile! {}))
+
+(defn- acquire-storage-buffer!
+  "Get a buffer from the pool or create a new one."
+  [device byte-size]
+  (let [available (get @buffer-pool byte-size)]
+    (if (and available (pos? (count available)))
+      (let [buf (peek available)]
+        (vswap! buffer-pool update byte-size pop)
+        buf)
+      (.createBuffer device #js {:size byte-size :usage (storage-usage)}))))
+
+(defn- release-storage-buffer!
+  "Return a buffer to the pool, or destroy it if pool is full."
+  [buf byte-size]
+  (let [available (get @buffer-pool byte-size [])]
+    (if (< (count available) MAX-POOL-DEPTH)
+      (vswap! buffer-pool update byte-size (fnil conj []) buf)
+      (.destroy buf))))
+
+(defn clear-buffer-pool!
+  "Destroy all pooled buffers. Call on cleanup."
+  []
+  (doseq [[_ bufs] @buffer-pool]
+    (doseq [buf bufs] (.destroy buf)))
+  (vreset! buffer-pool {}))
+
+;; ---------------------------------------------------------------------------
 ;; Pipeline cache
 ;; ---------------------------------------------------------------------------
 
@@ -72,15 +117,37 @@
       pipeline)))
 
 ;; ---------------------------------------------------------------------------
+;; Command batching helpers
+;; ---------------------------------------------------------------------------
+
+(defn- get-encoder
+  "Return [encoder submit?]. Reuses *encoder* if inside a batch."
+  [device]
+  (if *encoder*
+    [(:encoder *encoder*) false]
+    [(.createCommandEncoder device) true]))
+
+(defn- submit-if-needed!
+  "Submit the command encoder only if we own it (not inside a batch)."
+  [device enc submit?]
+  (when submit?
+    (.submit (.-queue device) #js [(.finish enc)])))
+
+(defn- destroy-or-defer!
+  "Destroy a temporary buffer now if unbatched, or defer until batch submit."
+  [buf]
+  (if *encoder*
+    (vswap! (:deferred *encoder*) conj buf)
+    (.destroy buf)))
+
+;; ---------------------------------------------------------------------------
 ;; Buffer helpers
 ;; ---------------------------------------------------------------------------
 
 (defn- create-storage-buffer!
-  "Create a storage buffer of given byte size."
+  "Acquire a storage buffer of given byte size (from pool or new)."
   [device byte-size]
-  (.createBuffer device
-    #js {:size  byte-size
-         :usage (storage-usage)}))
+  (acquire-storage-buffer! device byte-size))
 
 (defn- create-staging-buffer!
   "Create a staging buffer for MAP_READ readback."
@@ -92,9 +159,9 @@
 (defn- copy-buffer-to-buffer!
   "Encode + submit a buffer-to-buffer copy."
   [device src dst byte-size]
-  (let [encoder (.createCommandEncoder device)]
-    (.copyBufferToBuffer encoder src 0 dst 0 byte-size)
-    (.submit (.-queue device) #js [(.finish encoder)])))
+  (let [[enc submit?] (get-encoder device)]
+    (.copyBufferToBuffer enc src 0 dst 0 byte-size)
+    (submit-if-needed! device enc submit?)))
 
 (defn- uniform-usage []
   (bit-or js/GPUBufferUsage.UNIFORM
@@ -180,13 +247,13 @@
                  #js {:layout  (.getBindGroupLayout pl 0)
                       :entries #js [#js {:binding 0 :resource #js {:buffer (:buffer t)}}
                                     #js {:binding 1 :resource #js {:buffer out}}]})
-        enc    (.createCommandEncoder device)
+        [enc submit?] (get-encoder device)
         pass   (.beginComputePass enc)]
     (.setPipeline pass pl)
     (.setBindGroup pass 0 bg)
     (.dispatchWorkgroups pass (workgroup-count n))
     (.end pass)
-    (.submit (.-queue device) #js [(.finish enc)])
+    (submit-if-needed! device enc submit?)
     (->Tensor out (:shape t) (:strides t) n :f32 device)))
 
 (defn- dispatch-binary!
@@ -204,13 +271,13 @@
                         :entries #js [#js {:binding 0 :resource #js {:buffer (:buffer a)}}
                                       #js {:binding 1 :resource #js {:buffer (:buffer b)}}
                                       #js {:binding 2 :resource #js {:buffer out}}]})
-        enc      (.createCommandEncoder device)
+        [enc submit?] (get-encoder device)
         pass     (.beginComputePass enc)]
     (.setPipeline pass pl)
     (.setBindGroup pass 0 bg)
     (.dispatchWorkgroups pass (workgroup-count out-size))
     (.end pass)
-    (.submit (.-queue device) #js [(.finish enc)])
+    (submit-if-needed! device enc submit?)
     (->Tensor out out-shape out-strides out-size :f32 device)))
 
 (defn- dispatch-ternary!
@@ -232,20 +299,21 @@
                                       #js {:binding 1 :resource #js {:buffer (:buffer a)}}
                                       #js {:binding 2 :resource #js {:buffer (:buffer b)}}
                                       #js {:binding 3 :resource #js {:buffer out}}]})
-        enc      (.createCommandEncoder device)
+        [enc submit?] (get-encoder device)
         pass     (.beginComputePass enc)]
     (.setPipeline pass pl)
     (.setBindGroup pass 0 bg)
     (.dispatchWorkgroups pass (workgroup-count out-size))
     (.end pass)
-    (.submit (.-queue device) #js [(.finish enc)])
+    (submit-if-needed! device enc submit?)
     (->Tensor out out-shape out-strides out-size :f32 device)))
 
 (defn- dispatch-reduction!
   "Multi-pass sum reduction. Each pass reduces by factor 64.
    Returns scalar tensor (shape [], size 1)."
   [t]
-  (let [device (:device t)]
+  (let [device (:device t)
+        [enc submit?] (get-encoder device)]
     (loop [input-buf (:buffer t)
            n         (:size t)
            temps     []]
@@ -257,19 +325,21 @@
                          #js {:layout  (.getBindGroupLayout pl 0)
                               :entries #js [#js {:binding 0 :resource #js {:buffer input-buf}}
                                             #js {:binding 1 :resource #js {:buffer out-buf}}]})
-            enc        (.createCommandEncoder device)
             pass       (.beginComputePass enc)]
         (.setPipeline pass pl)
         (.setBindGroup pass 0 bg)
         (.dispatchWorkgroups pass num-groups)
         (.end pass)
-        (.submit (.-queue device) #js [(.finish enc)])
         (if (<= num-groups 1)
           (do
-            ;; Destroy intermediate buffers (not the original input)
-            (doseq [tmp temps] (.destroy tmp))
+            (submit-if-needed! device enc submit?)
+            ;; Return intermediate buffers to pool (not the original input)
+            ;; Inside a batch, defer to avoid aliasing in the command buffer
+            (if *encoder*
+              (doseq [[buf _] temps] (vswap! (:deferred *encoder*) conj buf))
+              (doseq [[buf sz] temps] (release-storage-buffer! buf sz)))
             (->Tensor out-buf [] [] 1 :f32 device))
-          (recur out-buf num-groups (conj temps out-buf)))))))
+          (recur out-buf num-groups (conj temps [out-buf out-bytes])))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Autograd gradient helpers
@@ -286,13 +356,13 @@
                  #js {:layout  (.getBindGroupLayout pl 0)
                       :entries #js [#js {:binding 0 :resource #js {:buffer (:buffer scalar-t)}}
                                     #js {:binding 1 :resource #js {:buffer out}}]})
-        enc    (.createCommandEncoder device)
+        [enc submit?] (get-encoder device)
         pass   (.beginComputePass enc)]
     (.setPipeline pass pl)
     (.setBindGroup pass 0 bg)
     (.dispatchWorkgroups pass (workgroup-count target-size))
     (.end pass)
-    (.submit (.-queue device) #js [(.finish enc)])
+    (submit-if-needed! device enc submit?)
     (->Tensor out target-shape (compute-strides target-shape) target-size :f32 device)))
 
 (defn- dispatch-reduction-to-scalar!
@@ -344,6 +414,16 @@
         buf (create-storage-buffer! device 4)]
     (.writeBuffer (.-queue device) buf 0 arr)
     (->Tensor buf [] [] 1 :f32 device)))
+
+(defn scalar-cached
+  "Return a cached scalar tensor. The buffer is never destroyed by dispose!."
+  [x]
+  (if-let [t (get @scalar-cache x)]
+    t
+    (let [t (scalar x)]
+      (vswap! cached-buffers conj (:buffer t))
+      (vswap! scalar-cache assoc x t)
+      t)))
 
 (defn zeros
   "Create a zero-filled tensor of given shape."
@@ -538,7 +618,7 @@
             ;; d(sqrt(x))/dx = 1/(2*sqrt(x)) = 1/(2*out)
             (update grads t-id
               (fn [ex]
-                (let [two  (->Tensor (:buffer (scalar 2.0)) [] [] 1 :f32 (:device out))
+                (let [two   (scalar-cached 2.0)
                       denom (dispatch-binary! shaders/multiply-shader two out)
                       raw   (dispatch-binary! shaders/divide-shader g denom)]
                   (if ex (dispatch-binary! shaders/add-shader ex raw) raw)))))))
@@ -557,7 +637,7 @@
             ;; d(x^2)/dx = 2x => grad = g * 2 * input
             (update grads t-id
               (fn [ex]
-                (let [two (scalar 2.0)
+                (let [two (scalar-cached 2.0)
                       dx  (dispatch-binary! shaders/multiply-shader two t-raw)
                       raw (dispatch-binary! shaders/multiply-shader g dx)]
                   (if ex (dispatch-binary! shaders/add-shader ex raw) raw)))))))
@@ -670,6 +750,36 @@
     (divide (sum t) (scalar (:size raw)))))
 
 ;; ---------------------------------------------------------------------------
+;; Fused scaled-add: output = a + alpha * b
+;; ---------------------------------------------------------------------------
+
+(defn scaled-add
+  "Compute a + alpha * b in a single dispatch. No autograd tracking.
+   alpha must be a scalar tensor, a and b same-shaped tensors."
+  [alpha a b]
+  (let [device   (:device a)
+        out-size (max (:size a) (:size b))
+        out-shape (if (>= (:size a) (:size b)) (:shape a) (:shape b))
+        out-strides (compute-strides out-shape)
+        bytes    (* 4 out-size)
+        out      (create-storage-buffer! device bytes)
+        pl       (get-pipeline! device shaders/scaled-add-shader)
+        bg       (.createBindGroup device
+                   #js {:layout  (.getBindGroupLayout pl 0)
+                        :entries #js [#js {:binding 0 :resource #js {:buffer (:buffer alpha)}}
+                                      #js {:binding 1 :resource #js {:buffer (:buffer a)}}
+                                      #js {:binding 2 :resource #js {:buffer (:buffer b)}}
+                                      #js {:binding 3 :resource #js {:buffer out}}]})
+        [enc submit?] (get-encoder device)
+        pass     (.beginComputePass enc)]
+    (.setPipeline pass pl)
+    (.setBindGroup pass 0 bg)
+    (.dispatchWorkgroups pass (workgroup-count out-size))
+    (.end pass)
+    (submit-if-needed! device enc submit?)
+    (->Tensor out out-shape out-strides out-size :f32 device)))
+
+;; ---------------------------------------------------------------------------
 ;; Shape (with TrackedTensor support)
 ;; ---------------------------------------------------------------------------
 
@@ -724,7 +834,7 @@
                                       #js {:binding 1 :resource #js {:buffer (:buffer b-raw)}}
                                       #js {:binding 2 :resource #js {:buffer out-buf}}
                                       #js {:binding 3 :resource #js {:buffer dims-buf}}]})
-        enc      (.createCommandEncoder device)
+        [enc submit?] (get-encoder device)
         pass     (.beginComputePass enc)
         wg-x     (js/Math.ceil (/ N 16))
         wg-y     (js/Math.ceil (/ M 16))]
@@ -732,8 +842,8 @@
     (.setBindGroup pass 0 bg)
     (.dispatchWorkgroups pass wg-x wg-y)
     (.end pass)
-    (.submit (.-queue device) #js [(.finish enc)])
-    (.destroy dims-buf)
+    (submit-if-needed! device enc submit?)
+    (destroy-or-defer! dims-buf)
     (->Tensor out-buf [M N] (compute-strides [M N]) out-size :f32 device)))
 
 (defn- dispatch-transpose!
@@ -752,14 +862,14 @@
                        :entries #js [#js {:binding 0 :resource #js {:buffer (:buffer t-raw)}}
                                      #js {:binding 1 :resource #js {:buffer out-buf}}
                                      #js {:binding 2 :resource #js {:buffer dims-buf}}]})
-        enc     (.createCommandEncoder device)
+        [enc submit?] (get-encoder device)
         pass    (.beginComputePass enc)]
     (.setPipeline pass pl)
     (.setBindGroup pass 0 bg)
     (.dispatchWorkgroups pass (workgroup-count n))
     (.end pass)
-    (.submit (.-queue device) #js [(.finish enc)])
-    (.destroy dims-buf)
+    (submit-if-needed! device enc submit?)
+    (destroy-or-defer! dims-buf)
     (let [out-shape [cols rows]]
       (->Tensor out-buf out-shape (compute-strides out-shape) n :f32 device))))
 
@@ -917,9 +1027,9 @@
             out-size   (* slice-len inner-size)
             out-bytes  (* 4 out-size)
             out-buf    (create-storage-buffer! device out-bytes)
-            enc        (.createCommandEncoder device)]
+            [enc submit?] (get-encoder device)]
         (.copyBufferToBuffer enc (:buffer t) src-offset out-buf 0 out-bytes)
-        (.submit (.-queue device) #js [(.finish enc)])
+        (submit-if-needed! device enc submit?)
         (let [out-shape (assoc sh 0 slice-len)]
           (->Tensor out-buf out-shape (compute-strides out-shape) out-size :f32 device)))
       ;; General case: shader for inner-dim slices
@@ -935,14 +1045,14 @@
                                :entries #js [#js {:binding 0 :resource #js {:buffer (:buffer t)}}
                                              #js {:binding 1 :resource #js {:buffer out-buf}}
                                              #js {:binding 2 :resource #js {:buffer params-buf}}]})
-            enc         (.createCommandEncoder device)
+            [enc submit?] (get-encoder device)
             pass        (.beginComputePass enc)]
         (.setPipeline pass pl)
         (.setBindGroup pass 0 bg)
         (.dispatchWorkgroups pass (workgroup-count out-size))
         (.end pass)
-        (.submit (.-queue device) #js [(.finish enc)])
-        (.destroy params-buf)
+        (submit-if-needed! device enc submit?)
+        (destroy-or-defer! params-buf)
         (let [out-shape (assoc sh dim slice-len)]
           (->Tensor out-buf out-shape (compute-strides out-shape) out-size :f32 device))))))
 
@@ -979,20 +1089,20 @@
         out-buf   (create-storage-buffer! device (* 4 out-size))]
     (if (zero? dim)
       ;; Fast path: dim-0 concat is sequential memory blocks
-      (let [enc (.createCommandEncoder device)]
+      (let [[enc submit?] (get-encoder device)]
         (loop [ts tensors, offset 0]
           (when (seq ts)
             (let [t     (first ts)
                   bytes (* 4 (:size t))]
               (.copyBufferToBuffer enc (:buffer t) 0 out-buf offset bytes)
               (recur (rest ts) (+ offset bytes)))))
-        (.submit (.-queue device) #js [(.finish enc)])
+        (submit-if-needed! device enc submit?)
         (->Tensor out-buf out-shape (compute-strides out-shape) out-size :f32 device))
       ;; General case: one shader dispatch per input
       (let [inner-size (apply * (subvec sh0 (inc dim)))
             outer-size (apply * (subvec sh0 0 dim))
             dst-dim-size total-dim
-            enc (.createCommandEncoder device)
+            [enc submit?] (get-encoder device)
             temp-bufs (volatile! [])]
         (loop [ts tensors, dim-offset 0]
           (when (seq ts)
@@ -1014,8 +1124,8 @@
               (.dispatchWorkgroups pass (workgroup-count src-total))
               (.end pass)
               (recur (rest ts) (+ dim-offset src-dim-sz)))))
-        (.submit (.-queue device) #js [(.finish enc)])
-        (doseq [buf @temp-bufs] (.destroy buf))
+        (submit-if-needed! device enc submit?)
+        (doseq [buf @temp-bufs] (destroy-or-defer! buf))
         (->Tensor out-buf out-shape (compute-strides out-shape) out-size :f32 device)))))
 
 ;; ---------------------------------------------------------------------------
@@ -1054,9 +1164,16 @@
 ;; ---------------------------------------------------------------------------
 
 (defn dispose!
-  "Destroy the GPU buffer backing this tensor."
+  "Return the GPU buffer to the pool (or skip if cached scalar).
+   Inside a command batch, defers release until after submit."
   [t]
-  (.destroy (:buffer (unwrap t)))
+  (let [raw (unwrap t)
+        buf (:buffer raw)]
+    (when-not (contains? @cached-buffers buf)
+      (if *encoder*
+        ;; Defer: buffer may still be referenced in the pending command buffer
+        (vswap! (:deferred *encoder*) conj buf)
+        (release-storage-buffer! buf (* 4 (:size raw))))))
   nil)
 
 ;; ---------------------------------------------------------------------------
@@ -1090,14 +1207,14 @@
                    #js {:layout  (.getBindGroupLayout pl 0)
                         :entries #js [#js {:binding 0 :resource #js {:buffer seed-buf}}
                                       #js {:binding 1 :resource #js {:buffer out-buf}}]})
-        enc      (.createCommandEncoder device)
+        [enc submit?] (get-encoder device)
         pass     (.beginComputePass enc)]
     (.setPipeline pass pl)
     (.setBindGroup pass 0 bg)
     (.dispatchWorkgroups pass (workgroup-count size))
     (.end pass)
-    (.submit (.-queue device) #js [(.finish enc)])
-    (.destroy seed-buf)
+    (submit-if-needed! device enc submit?)
+    (destroy-or-defer! seed-buf)
     (->Tensor out-buf shape-vec strides size :f32 device)))
 
 (defn randn
@@ -1115,15 +1232,34 @@
                      #js {:layout  (.getBindGroupLayout pl 0)
                           :entries #js [#js {:binding 0 :resource #js {:buffer (:buffer uniform-t)}}
                                         #js {:binding 1 :resource #js {:buffer out-buf}}]})
-        enc        (.createCommandEncoder device)
+        [enc submit?] (get-encoder device)
         pass       (.beginComputePass enc)]
     (.setPipeline pass pl)
     (.setBindGroup pass 0 bg)
     (.dispatchWorkgroups pass (workgroup-count size))
     (.end pass)
-    (.submit (.-queue device) #js [(.finish enc)])
+    (submit-if-needed! device enc submit?)
     (dispose! uniform-t)
     (->Tensor out-buf shape-vec strides size :f32 device)))
+
+;; ---------------------------------------------------------------------------
+;; Command batching — batch all GPU ops into a single queue.submit()
+;; ---------------------------------------------------------------------------
+
+(defn with-command-batch*
+  "Execute f with a shared command encoder. All GPU dispatches within f
+   are recorded into one command buffer and submitted once at the end.
+   Do NOT call to-number or to-clj inside the batch (readback requires submit)."
+  [f]
+  (let [{:keys [device]} (dev/ctx)
+        enc (.createCommandEncoder device)
+        deferred (volatile! [])]
+    (binding [*encoder* {:encoder enc :device device :deferred deferred}]
+      (let [result (f)]
+        (.submit (.-queue device) #js [(.finish enc)])
+        ;; Clean up deferred buffers after submit
+        (doseq [buf @deferred] (.destroy buf))
+        result))))
 
 ;; ---------------------------------------------------------------------------
 ;; Readback (async)

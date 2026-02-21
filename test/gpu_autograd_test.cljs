@@ -409,5 +409,4 @@
         _ (test-value-and-grad)
         _ (test-finite-diff)]
   (println (str "\n" @passed " passed, " @failed " failed"))
-  (when (pos? @failed)
-    (js/process.exit 1)))
+  (js/process.exit (if (pos? @failed) 1 0)))

@@ -26,7 +26,7 @@
           (when-not (t/tracked? result)
             (throw (ex-info "value-and-grad: f must return a tracked tensor" {})))
           (let [loss-raw (:tensor result)
-                grads   (backward! (:id result) (t/scalar 1.0) @tape)]
+                grads   (backward! (:id result) (t/scalar-cached 1.0) @tape)]
             [loss-raw (get grads pid)]))))))
 
 (defn grad

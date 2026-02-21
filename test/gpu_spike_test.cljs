@@ -232,5 +232,4 @@
         latency (test-4-latency ctx)
         _       (test-5-large ctx)]
   (println (str "\n" @passed " passed, " @failed " failed"))
-  (when (pos? @failed)
-    (js/process.exit 1)))
+  (js/process.exit (if (pos? @failed) 1 0)))
