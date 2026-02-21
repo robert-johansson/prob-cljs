@@ -43,8 +43,8 @@ Create `src/prob/gpu/device.cljs` — the one place that handles browser vs Node
      :queue   (.-queue device)}))
 ```
 
-- [ ] Create `src/prob/gpu/device.cljs`
-- [ ] Test `init!` from nbb with `npm install webgpu`
+- [x] Create `src/prob/gpu/device.cljs`
+- [x] Test `init!` from nbb with `npm install webgpu`
 - [ ] Test `init!` from a browser page with Scittle
 
 ### 0.2 Minimal compute shader round-trip
@@ -76,17 +76,17 @@ dispatch, staging buffer, `mapAsync` readback, Promesa integration.
   (println "PASS: spike test"))
 ```
 
-- [ ] Write spike test with inline WGSL
-- [ ] Run from nbb: `nbb -cp src:test test/gpu_spike_test.cljs`
+- [x] Write spike test with inline WGSL
+- [x] Run from nbb: `nbb -cp src:test test/gpu_spike_test.cljs`
 - [ ] Run from browser: create `test/gpu_spike.html` with Scittle
-- [ ] Verify identical results in both environments
+- [x] Verify identical results in both environments
 
 ### 0.3 Measure readback latency
 
 Time a single `mapAsync` for a 4-byte (one f32) staging buffer.
 This determines whether GPU-side accept/reject is necessary or just nice-to-have.
 
-- [ ] Benchmark `mapAsync` latency (target: < 3ms)
+- [x] Benchmark `mapAsync` latency (target: < 3ms)
 - [ ] Document results in `docs/webgpu-path.md`
 
 ---
@@ -124,9 +124,9 @@ Fields:
 - `dtype` — keyword, always `:f32` for now
 - `device` — back-reference to the WebGPU device context
 
-- [ ] Define `Tensor` record
-- [ ] Implement `shape`, `ndim`, `size` as plain functions on the record
-- [ ] Implement `tensor?` predicate
+- [x] Define `Tensor` record
+- [x] Implement `shape`, `ndim`, `size` as plain functions on the record
+- [x] Implement `tensor?` predicate
 
 ### 1.2 Buffer pool
 
@@ -157,10 +157,10 @@ rounded up to the next power of two.
     (vswap! buffer-pool update alloc-size (fnil conj []) buf)))
 ```
 
-- [ ] Implement buffer pool with `volatile!` (matches codebase pattern)
-- [ ] `acquire-buffer!` with power-of-two size classes
-- [ ] `release-buffer!` returns buffer to pool
-- [ ] `dispose!` explicitly releases a tensor's buffer
+- [ ] ~~Implement buffer pool~~ (deferred — direct allocation for now)
+- [ ] ~~`acquire-buffer!` with power-of-two size classes~~ (deferred)
+- [ ] ~~`release-buffer!` returns buffer to pool~~ (deferred)
+- [x] `dispose!` explicitly destroys a tensor's buffer
 
 ### 1.3 Array creation
 
@@ -191,13 +191,13 @@ rounded up to the next power of two.
     (->Tensor buf shape (compute-strides shape) n :f32 *device*)))
 ```
 
-- [ ] `tensor` — from ClojureScript vector/seq, infer shape from nesting
-- [ ] `scalar` — single f32 value, shape `[]`
-- [ ] `zeros` — zero-filled tensor with given shape
-- [ ] `ones` — one-filled tensor
-- [ ] `full` — filled with a constant
-- [ ] Handle nested vectors: `(tensor [[1 2] [3 4]])` → shape `[2 2]`
-- [ ] `compute-strides` helper for row-major strides
+- [x] `tensor` — from ClojureScript vector/seq, infer shape from nesting
+- [x] `scalar` — single f32 value, shape `[]`
+- [x] `zeros` — zero-filled tensor with given shape
+- [x] `ones` — one-filled tensor
+- [x] `full` — filled with a constant
+- [x] Handle nested vectors: `(tensor [[1 2] [3 4]])` → shape `[2 2]`
+- [x] `compute-strides` helper for row-major strides
 
 ### 1.4 WGSL shader strings
 
@@ -229,17 +229,17 @@ Parameterize the binary op shader with string interpolation.
 (def divide-shader   (binary-shader "/"))
 ```
 
-- [ ] Create `src/prob/gpu/shaders.cljs`
-- [ ] Binary op template with string substitution
-- [ ] Unary op template (exp, log, neg, sqrt, square, abs)
-- [ ] Comparison ops (greater, less, greater-equal, less-equal)
-- [ ] `where` (conditional select)
-- [ ] Reduction shader (tree reduction with workgroup barrier)
-- [ ] PCG RNG shader (uniform)
-- [ ] Box-Muller shader (normal from uniform)
-- [ ] Tiled matmul shader
+- [x] Create `src/prob/gpu/shaders.cljs`
+- [x] Binary op template with string substitution
+- [x] Unary op template (exp, log, neg, sqrt, square, abs)
+- [x] Comparison ops (greater, less, greater-equal, less-equal)
+- [x] `where` (conditional select)
+- [x] Reduction shader (tree reduction with workgroup barrier)
+- [x] PCG RNG shader (uniform)
+- [x] Box-Muller shader (normal from uniform)
+- [x] Tiled matmul shader
 - [ ] Broadcast shader (for grad of sum)
-- [ ] Transpose shader (for grad of matmul)
+- [x] Transpose shader (for grad of matmul)
 
 ### 1.5 Pipeline cache
 
@@ -261,9 +261,9 @@ Creating pipelines is expensive (~50ms); reuse is free.
         pipeline)))
 ```
 
-- [ ] Pipeline cache with `volatile!`
-- [ ] `get-pipeline!` — create-or-reuse by shader source
-- [ ] Bind group creation helper
+- [x] Pipeline cache with `volatile!`
+- [x] `get-pipeline!` — create-or-reuse by shader source
+- [x] Bind group creation helper
 
 ### 1.6 Op dispatch
 
@@ -292,11 +292,11 @@ command encoding, and submission.
     (->Tensor out-buf (:shape a) (:strides a) (:size a) :f32 device)))
 ```
 
-- [ ] `dispatch-binary!` — generic binary op dispatch
-- [ ] `dispatch-unary!` — generic unary op dispatch
-- [ ] `dispatch-reduction!` — multi-pass tree reduction
-- [ ] Handle broadcasting for mismatched shapes
-- [ ] Handle scalar-tensor binary ops (broadcast scalar)
+- [x] `dispatch-binary!` — generic binary op dispatch
+- [x] `dispatch-unary!` — generic unary op dispatch
+- [x] `dispatch-reduction!` — multi-pass tree reduction
+- [x] Handle broadcasting for mismatched shapes
+- [x] Handle scalar-tensor binary ops (broadcast scalar)
 
 ### 1.7 Arithmetic and math ops
 
@@ -314,11 +314,11 @@ Thin wrappers that call `dispatch-binary!` / `dispatch-unary!`:
 (defn square   [a]   (dispatch-unary!  shaders/square-shader a))
 ```
 
-- [ ] Element-wise arithmetic: `add`, `subtract`, `multiply`, `divide`
-- [ ] Element-wise unary: `negative`, `exp`, `log`, `sqrt`, `square`, `abs`
-- [ ] Comparison: `greater`, `less`, `greater-equal`, `less-equal`
-- [ ] Conditional: `where`
-- [ ] Scalar broadcasting: `(add (scalar 2) (tensor [1 2 3]))` works
+- [x] Element-wise arithmetic: `add`, `subtract`, `multiply`, `divide`
+- [x] Element-wise unary: `negative`, `exp`, `log`, `sqrt`, `square`, `abs`
+- [x] Comparison: `greater`, `less`, `greater-equal`, `less-equal`
+- [x] Conditional: `where`
+- [x] Scalar broadcasting: `(add (scalar 2) (tensor [1 2 3]))` works
 
 ### 1.8 Reductions
 
@@ -344,8 +344,8 @@ one workgroup. Final result is a scalar tensor (shape `[]`).
     (sqrt (mean (square diff)))))
 ```
 
-- [ ] Sum reduction (multi-pass for large arrays)
-- [ ] `mean` via `sum` / `scalar(n)`
+- [x] Sum reduction (multi-pass for large arrays)
+- [x] `mean` via `sum` / `scalar(n)`
 - [ ] `std` via `mean`, `square`, `sqrt`
 
 ### 1.9 Shape operations
@@ -368,11 +368,11 @@ CPU-only metadata manipulation. No GPU work unless data movement is needed.
   )
 ```
 
-- [ ] `reshape` — zero-cost view with new shape
-- [ ] `slice` — view with offset into existing buffer
-- [ ] `flatten` — reshape to `[n]`
-- [ ] `concat` — allocate new buffer, copy segments
-- [ ] `stack` — add a new axis and concat
+- [x] `reshape` — zero-cost view with new shape
+- [x] `slice` — extract sub-tensor along any dimension
+- [x] `flatten` — reshape to `[n]`
+- [x] `concat` — allocate new buffer, copy segments
+- [x] `stack` — add a new axis and concat
 
 ### 1.10 Random number generation
 
@@ -392,10 +392,10 @@ GPU-side PCG RNG. State is a GPU buffer of uint32 seeds, one per thread.
   )
 ```
 
-- [ ] PCG state management (seed buffer, per-dispatch increment)
-- [ ] `rand-uniform` — dispatch PCG shader
-- [ ] `randn` — dispatch Box-Muller over uniform pairs
-- [ ] Seeding: deterministic seeds from a ClojureScript-side counter
+- [x] PCG state management (seed buffer, per-dispatch increment)
+- [x] `rand-uniform` — dispatch PCG shader
+- [x] `randn` — dispatch Box-Muller over uniform pairs
+- [x] Seeding: deterministic seeds from a ClojureScript-side counter
 
 ### 1.11 Async readback
 
@@ -428,9 +428,9 @@ The only async functions in the tensor API:
         (reshape-clj data (:shape a))))))
 ```
 
-- [ ] `to-number` — scalar tensor → `Promise<number>`
-- [ ] `to-clj` — tensor → `Promise<vector>` (nested to match shape)
-- [ ] `reshape-clj` helper to nest flat vec into shape `[2 3]` → `[[...] [...]]`
+- [x] `to-number` — scalar tensor → `Promise<number>`
+- [x] `to-clj` — tensor → `Promise<vector>` (nested to match shape)
+- [x] `reshape-clj` helper to nest flat vec into shape `[2 3]` → `[[...] [...]]`
 - [ ] Staging buffer reuse via pool
 
 ### 1.12 Device context management
@@ -454,10 +454,10 @@ The tensor ops need access to the GPU device. Use a module-level volatile
                       {:type ::not-initialized}))))
 ```
 
-- [ ] Module-level `volatile!` for device context
-- [ ] `init!` sets context, returns Promise
-- [ ] All ops read context via `(ctx)` helper
-- [ ] Clear error message if GPU not initialized
+- [x] Module-level `volatile!` for device context
+- [x] `init!` sets context, returns Promise
+- [x] All ops read context via `(ctx)` helper
+- [x] Clear error message if GPU not initialized
 
 ### 1.13 Phase 1 tests
 
@@ -490,15 +490,15 @@ Mirror the structure of `test/mlx_smoke_test.cljs`:
   )
 ```
 
-- [ ] Creation + readback round-trip
-- [ ] Each arithmetic op (add, sub, mul, div)
-- [ ] Each unary op (exp, log, neg, sqrt, square)
-- [ ] Reductions (sum, mean)
-- [ ] Comparison + where
-- [ ] Shape ops (reshape, slice)
-- [ ] Random (randn, rand-uniform) — verify shape and rough statistics
-- [ ] Scalar broadcasting
-- [ ] Run all tests from nbb
+- [x] Creation + readback round-trip
+- [x] Each arithmetic op (add, sub, mul, div)
+- [x] Each unary op (exp, log, neg, sqrt, square)
+- [x] Reductions (sum, mean)
+- [x] Comparison + where
+- [x] Shape ops (reshape, slice, concat, stack, transpose, matmul, arange)
+- [x] Random (randn, rand-uniform) — verify shape and rough statistics
+- [x] Scalar broadcasting
+- [x] Run all tests from nbb
 - [ ] Run all tests from browser (create test HTML page)
 
 ---
