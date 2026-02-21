@@ -584,3 +584,53 @@ nbb -cp src my-inference.cljs
 - Linalg beyond matmul (add Cholesky when multivariate normal is needed)
 - Kernel fusion (record + replay model evaluation — optimization for later)
 - Deno / Bun support (WebGPU exists in both but is less mature)
+
+## Phase 0 Spike Results (2026-02-21)
+
+Validated the full WebGPU toolchain from ClojureScript via nbb.
+
+### nbb (Dawn via `webgpu` npm package)
+
+All 5 tests pass:
+
+| Test | Result |
+|---|---|
+| WebGPU init (`device.cljs` env detection + `init!`) | PASS |
+| Unary shader (double `[1 2 3 4]` → `[2 4 6 8]`) | PASS |
+| Binary shader (add `[1 2 3] + [10 20 30]` → `[11 22 33]`) | PASS |
+| Readback latency (100x single f32 `mapAsync`) | PASS |
+| Large array (1024 elements doubled) | PASS |
+
+### Readback latency
+
+| Metric | Value |
+|---|---|
+| Mean | 0.20 ms |
+| Min | 0.18 ms |
+| Max | 0.28 ms |
+
+Well under the 3ms threshold. GPU-side accept/reject is still valuable for eliminating cumulative overhead across thousands of HMC iterations, but individual readback latency is not a bottleneck. NUTS per-iteration readback (~0.2ms) is negligible.
+
+### Browser (Safari iPadOS 26.3, iPad Pro M4)
+
+All 5 tests pass via Scittle + Promesa:
+
+| Test | Result |
+|---|---|
+| WebGPU init (via `navigator.gpu`) | PASS |
+| Unary shader (double) | PASS |
+| Binary shader (add) | PASS |
+| Readback latency (100x single f32) | PASS — mean=0.33ms, min=0.00ms, max=1.00ms |
+| Large array (1024 elements) | PASS |
+
+**Secure context required:** WebGPU requires HTTPS (or localhost). Serving over plain HTTP on a LAN IP hides `navigator.gpu`. This is a W3C spec requirement, not Safari-specific. For development, use `npx http-server -S` with a self-signed cert.
+
+### SCI/Scittle compatibility
+
+SCI's `exists?` does **not** work for checking `js/navigator.gpu` — it checks for var bindings, not JS property chains. Use `(.-gpu js/navigator)` or pass detection results from plain JS via `window.__webgpu_available`. The `device.cljs` module's browser path uses `(.-gpu js/navigator)` for the property check.
+
+All other constructs work in SCI: `defonce`, `volatile!`, `vreset!`, `if-let`, `p/let`, `p/resolved`, `p/loop`, `p/recur`, `ex-info`, `bit-or`, `.createBuffer`, `.createComputePipeline`, `.mapAsync`, `js/Float32Array`, `js/GPUBufferUsage.STORAGE`, `clj->js`.
+
+### Confidence level
+
+**High confidence to proceed to Phase 1.** The toolchain works cleanly. WGSL shaders compile, dispatch correctly, and readback is fast. Promesa `p/let` and `p/loop`/`p/recur` handle all async naturally.

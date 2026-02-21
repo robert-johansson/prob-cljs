@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>prob-cljs WebGPU Spike Test</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 700px; margin: 2em auto; padding: 0 1em; }
+    h1 { font-size: 1.3em; }
+    #diag { background: #222; color: #8cf; padding: 1em; border-radius: 6px; font-size: 0.85em; white-space: pre-wrap; margin-bottom: 1em; }
+    pre { background: #111; color: #0f0; padding: 1em; border-radius: 6px; overflow-x: auto;
+          font-size: 0.9em; line-height: 1.5; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>WebGPU Spike Test</h1>
+  <pre id="diag">Checking WebGPU...</pre>
+  <pre id="output"></pre>
+
+  <!-- Plain JS diagnostic — runs before any Scittle -->
+  <script>
+    var diag = document.getElementById("diag");
+    var lines = [];
+    lines.push("navigator type: " + typeof navigator);
+    lines.push("navigator.gpu type: " + typeof navigator.gpu);
+    lines.push("navigator.gpu value: " + navigator.gpu);
+    lines.push("!!navigator.gpu: " + (!!navigator.gpu));
+    if (navigator.gpu) {
+      lines.push("navigator.gpu.requestAdapter type: " + typeof navigator.gpu.requestAdapter);
+    }
+    lines.push("userAgent: " + navigator.userAgent);
+    // Store result for Scittle to read
+    window.__webgpu_available = !!navigator.gpu;
+    window.__webgpu_gpu = navigator.gpu;
+    diag.textContent = lines.join("\n");
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.6.17/dist/scittle.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.6.17/dist/scittle.promesa.js"></script>
+
+  <script type="application/x-scittle">
+(require '[promesa.core :as p])
+
+(def out-el (js/document.getElementById "output"))
+
+(defn log! [& args]
+  (let [msg (apply str args)]
+    (set! (.-textContent out-el) (str (.-textContent out-el) msg "\n"))))
+
+(defn pass [name] (log! "  PASS: " name))
+(defn fail [name msg] (log! "  FAIL: " name " - " msg))
+
+(defn approx= [a b tol] (< (js/Math.abs (- a b)) tol))
+(defn arr-approx= [xs ys tol]
+  (and (= (count xs) (count ys))
+       (every? true? (map #(approx= %1 %2 tol) xs ys))))
+
+;; --- WGSL shaders ---
+
+(def double-shader
+  "@group(0) @binding(0) var<storage, read> input: array<f32>;
+   @group(0) @binding(1) var<storage, read_write> output: array<f32>;
+   @compute @workgroup_size(64)
+   fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+     let idx = gid.x;
+     if (idx >= arrayLength(&output)) { return; }
+     output[idx] = input[idx] * 2.0;
+   }")
+
+(def add-shader
+  "@group(0) @binding(0) var<storage, read> a: array<f32>;
+   @group(0) @binding(1) var<storage, read> b: array<f32>;
+   @group(0) @binding(2) var<storage, read_write> result: array<f32>;
+   @compute @workgroup_size(64)
+   fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+     let idx = gid.x;
+     if (idx >= arrayLength(&result)) { return; }
+     result[idx] = a[idx] + b[idx];
+   }")
+
+;; --- Helpers ---
+
+(defn create-buffer-with-data [device data]
+  (let [arr (js/Float32Array. (clj->js data))
+        buf (.createBuffer device
+              #js {:size (.-byteLength arr)
+                   :usage (bit-or js/GPUBufferUsage.STORAGE
+                                  js/GPUBufferUsage.COPY_SRC
+                                  js/GPUBufferUsage.COPY_DST)
+                   :mappedAtCreation false})]
+    (.writeBuffer (.-queue device) buf 0 arr)
+    buf))
+
+(defn create-output-buffer [device byte-size]
+  (.createBuffer device
+    #js {:size byte-size
+         :usage (bit-or js/GPUBufferUsage.STORAGE
+                        js/GPUBufferUsage.COPY_SRC)}))
+
+(defn create-staging-buffer [device byte-size]
+  (.createBuffer device
+    #js {:size byte-size
+         :usage (bit-or js/GPUBufferUsage.MAP_READ
+                        js/GPUBufferUsage.COPY_DST)}))
+
+(defn readback [device buf byte-size]
+  (let [staging (create-staging-buffer device byte-size)
+        encoder (.createCommandEncoder device)]
+    (.copyBufferToBuffer encoder buf 0 staging 0 byte-size)
+    (.submit (.-queue device) #js [(.finish encoder)])
+    (p/let [_ (.mapAsync staging js/GPUMapMode.READ)]
+      (let [result (js/Float32Array. (.slice (.getMappedRange staging) 0))]
+        (.unmap staging)
+        (.destroy staging)
+        result))))
+
+(defn dispatch-unary! [device shader-source input-data]
+  (let [n (count input-data)
+        byte-size (* 4 n)
+        in-buf (create-buffer-with-data device input-data)
+        out-buf (create-output-buffer device byte-size)
+        module (.createShaderModule device #js {:code shader-source})
+        pipeline (.createComputePipeline device
+                   #js {:layout "auto"
+                        :compute #js {:module module :entryPoint "main"}})
+        bg (.createBindGroup device
+             #js {:layout (.getBindGroupLayout pipeline 0)
+                  :entries #js [#js {:binding 0 :resource #js {:buffer in-buf}}
+                                #js {:binding 1 :resource #js {:buffer out-buf}}]})
+        encoder (.createCommandEncoder device)
+        cpass (.beginComputePass encoder)]
+    (.setPipeline cpass pipeline)
+    (.setBindGroup cpass 0 bg)
+    (.dispatchWorkgroups cpass (js/Math.ceil (/ n 64)))
+    (.end cpass)
+    (.submit (.-queue device) #js [(.finish encoder)])
+    (p/let [arr (readback device out-buf byte-size)]
+      (.destroy in-buf)
+      (.destroy out-buf)
+      (vec arr))))
+
+(defn dispatch-binary! [device shader-source data-a data-b]
+  (let [n (count data-a)
+        byte-size (* 4 n)
+        buf-a (create-buffer-with-data device data-a)
+        buf-b (create-buffer-with-data device data-b)
+        out-buf (create-output-buffer device byte-size)
+        module (.createShaderModule device #js {:code shader-source})
+        pipeline (.createComputePipeline device
+                   #js {:layout "auto"
+                        :compute #js {:module module :entryPoint "main"}})
+        bg (.createBindGroup device
+             #js {:layout (.getBindGroupLayout pipeline 0)
+                  :entries #js [#js {:binding 0 :resource #js {:buffer buf-a}}
+                                #js {:binding 1 :resource #js {:buffer buf-b}}
+                                #js {:binding 2 :resource #js {:buffer out-buf}}]})
+        encoder (.createCommandEncoder device)
+        cpass (.beginComputePass encoder)]
+    (.setPipeline cpass pipeline)
+    (.setBindGroup cpass 0 bg)
+    (.dispatchWorkgroups cpass (js/Math.ceil (/ n 64)))
+    (.end cpass)
+    (.submit (.-queue device) #js [(.finish encoder)])
+    (p/let [arr (readback device out-buf byte-size)]
+      (.destroy buf-a)
+      (.destroy buf-b)
+      (.destroy out-buf)
+      (vec arr))))
+
+;; --- Tests ---
+
+(log! "=== WebGPU Spike Test ===\n")
+
+;; Use the JS-side detection instead of exists? (SCI may not support exists? for js/ globals)
+(def gpu-available js/window.__webgpu_available)
+(def gpu-obj js/window.__webgpu_gpu)
+
+(log! "Scittle sees gpu-available = " gpu-available)
+
+(if-not gpu-available
+  (log! "FAIL: WebGPU not available in this browser")
+  (p/let [adapter (.requestAdapter gpu-obj)
+          _ (when-not adapter (log! "FAIL: No WebGPU adapter found"))
+          device (.requestDevice adapter)]
+
+    ;; Test 1: Init
+    (if (and adapter device)
+      (pass "WebGPU init")
+      (fail "WebGPU init" "missing adapter or device"))
+
+    ;; Test 2: Unary shader
+    (p/let [result (dispatch-unary! device double-shader [1 2 3 4])]
+      (if (arr-approx= result [2 4 6 8] 0.001)
+        (pass (str "unary shader (double): " result))
+        (fail "unary shader (double)" (str "expected [2 4 6 8], got " result))))
+
+    ;; Test 3: Binary shader
+    (p/let [result (dispatch-binary! device add-shader [1 2 3] [10 20 30])]
+      (if (arr-approx= result [11 22 33] 0.001)
+        (pass (str "binary shader (add): " result))
+        (fail "binary shader (add)" (str "expected [11 22 33], got " result))))
+
+    ;; Test 4: Readback latency
+    (p/let [buf (create-buffer-with-data device [42.0])]
+      (p/loop [i 0, times []]
+        (if (>= i 100)
+          (let [total (apply + times)
+                mn (apply min times)
+                mx (apply max times)
+                avg (/ total (count times))]
+            (.destroy buf)
+            (pass (str "readback latency (100x): "
+                       "mean=" (.toFixed avg 2) "ms, "
+                       "min=" (.toFixed mn 2) "ms, "
+                       "max=" (.toFixed mx 2) "ms")))
+          (let [t0 (js/performance.now)]
+            (p/let [_ (readback device buf 4)]
+              (p/recur (inc i) (conj times (- (js/performance.now) t0))))))))
+
+    ;; Test 5: Larger array (1024 elements)
+    (p/let [input (vec (range 1024))
+            expected (mapv #(* 2.0 %) input)
+            result (dispatch-unary! device double-shader input)]
+      (if (arr-approx= result expected 0.001)
+        (pass "large array (1024 elements doubled)")
+        (fail "large array" "mismatch")))
+
+    (log! "\nDone.")))
+  </script>
+</body>
+</html>
