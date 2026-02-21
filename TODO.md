@@ -724,8 +724,8 @@ All synchronous GPU ops — no readback within the trajectory:
         (recur (inc i) q' p')))))
 ```
 
-- [ ] `leapfrog-step` — half-step momentum, full-step position, half-step momentum
-- [ ] `leapfrog` — loop of leapfrog steps (synchronous, no readback)
+- [x] `leapfrog-step` — half-step momentum, full-step position, half-step momentum
+- [x] `leapfrog` — loop of leapfrog steps (synchronous, no readback)
 
 ### 3.2 HMC with GPU-side accept/reject
 
@@ -750,9 +750,9 @@ All synchronous GPU ops — no readback within the trajectory:
     next-q))
 ```
 
-- [ ] `hamiltonian` — kinetic + potential energy as GPU tensor
-- [ ] `hmc-step` — propose + accept/reject entirely on GPU
-- [ ] No `mapAsync` calls within the step
+- [x] `hamiltonian` — kinetic + potential energy as GPU tensor
+- [x] `hmc-step` — propose + accept/reject entirely on GPU
+- [x] No `mapAsync` calls within the step
 
 ### 3.3 Sample collection loop
 
@@ -784,13 +784,13 @@ Synchronous loop collecting samples on GPU. Single bulk readback at end:
            :acceptance-rate nil})))))  ;; TODO: track on GPU
 ```
 
-- [ ] `hmc` main entry point
-- [ ] Burn-in: discard first `burn` samples
-- [ ] Progress callback every N iterations
-- [ ] Bulk readback via `p/all` + `t/to-clj`
-- [ ] Return plain ClojureScript map
+- [x] `hmc` main entry point
+- [x] Burn-in: discard first `burn` samples
+- [x] Progress callback every N iterations
+- [x] Bulk readback via `p/all` + `t/to-clj`
+- [x] Return plain ClojureScript map
 - [ ] Dispose intermediate GPU tensors to prevent OOM
-- [ ] Track acceptance rate on GPU (count via where + sum)
+- [x] Track acceptance rate on GPU (count via where + sum)
 
 ### 3.4 Phase 3 tests
 
@@ -807,10 +807,10 @@ Synchronous loop collecting samples on GPU. Single bulk readback at end:
       (fail "HMC 1D" (str "mean=" m)))))
 ```
 
-- [ ] 1D Gaussian: recover mean ~3.0
-- [ ] 2D Gaussian: recover mean `[2, -1]`
+- [x] 1D Gaussian: recover mean ~3.0
+- [x] 2D Gaussian: recover mean `[2, -1]`
 - [ ] Bayesian linear regression: recover `w ~2, b ~1`
-- [ ] Acceptance rate > 0.5 for well-tuned step size
+- [x] Acceptance rate > 0.5 for well-tuned step size
 - [ ] Run from nbb and browser
 - [ ] Compare results to MLX version (statistical equivalence)
 
