@@ -238,7 +238,7 @@ Parameterize the binary op shader with string interpolation.
 - [x] PCG RNG shader (uniform)
 - [x] Box-Muller shader (normal from uniform)
 - [x] Tiled matmul shader
-- [ ] Broadcast shader (for grad of sum)
+- [x] Broadcast shader (for grad of sum)
 - [x] Transpose shader (for grad of matmul)
 
 ### 1.5 Pipeline cache
@@ -534,9 +534,9 @@ The tape is a `volatile!` holding a persistent vector of op records.
   (vswap! tape conj {:op op :inputs inputs :output output}))
 ```
 
-- [ ] `TrackedTensor` record
-- [ ] `track` helper to wrap tensors
-- [ ] `record-op!` appends to tape
+- [x] `TrackedTensor` record
+- [x] `track` helper to wrap tensors
+- [x] `record-op!` appends to tape
 
 ### 2.2 Tracked arithmetic ops
 
@@ -572,17 +572,17 @@ Each tracked op:
     out))
 ```
 
-- [ ] `tracked-add` with backward: identity
-- [ ] `tracked-subtract` with backward: identity, negate
-- [ ] `tracked-multiply` with backward: swap inputs
-- [ ] `tracked-divide` with backward: quotient rule
-- [ ] `tracked-negative` with backward: negate
-- [ ] `tracked-exp` with backward: multiply by output
-- [ ] `tracked-log` with backward: reciprocal
-- [ ] `tracked-sqrt` with backward: `1 / (2 * sqrt(x))`
-- [ ] `tracked-square` with backward: `2 * x`
-- [ ] `tracked-sum` with backward: broadcast scalar grad
-- [ ] `tracked-matmul` with backward: transposed matmuls
+- [x] `tracked-add` with backward: identity
+- [x] `tracked-subtract` with backward: identity, negate
+- [x] `tracked-multiply` with backward: swap inputs
+- [x] `tracked-divide` with backward: quotient rule
+- [x] `tracked-negative` with backward: negate
+- [x] `tracked-exp` with backward: multiply by output
+- [x] `tracked-log` with backward: reciprocal
+- [x] `tracked-sqrt` with backward: `1 / (2 * sqrt(x))`
+- [x] `tracked-square` with backward: `2 * x`
+- [x] `tracked-sum` with backward: broadcast scalar grad
+- [x] `tracked-matmul` with backward: transposed matmuls
 
 ### 2.3 Backward pass
 
@@ -605,9 +605,9 @@ Walk the tape in reverse, accumulate gradients, dispatch GPU kernels:
                         (if existing (t/add existing g) g))))))))))
 ```
 
-- [ ] Reverse tape traversal
-- [ ] Gradient accumulation (handles fan-out correctly)
-- [ ] Seed gradient with ones for loss tensor
+- [x] Reverse tape traversal
+- [x] Gradient accumulation (handles fan-out correctly)
+- [x] Seed gradient with ones for loss tensor
 - [ ] Handle `stop-gradient` (skip in backward)
 
 ### 2.4 Public API: `grad` and `value-and-grad`
@@ -635,9 +635,9 @@ Walk the tape in reverse, accumulate gradients, dispatch GPU kernels:
        (get @(:grad-map loss) (:id tracked))])))
 ```
 
-- [ ] `grad` — returns gradient function
-- [ ] `value-and-grad` — returns `[value gradient]`
-- [ ] Make tracked ops transparent: detect tracked vs raw tensor, dispatch accordingly
+- [x] `grad` — returns gradient function
+- [x] `value-and-grad` — returns `[value gradient]`
+- [x] Make tracked ops transparent: detect tracked vs raw tensor, dispatch accordingly
 - [ ] Nested `grad` calls (second derivative) — not required for Phase 2
 
 ### 2.5 Transparent dispatch
@@ -653,9 +653,9 @@ user's model function works unchanged with or without autograd:
     (dispatch-binary! shaders/add-shader a b)))
 ```
 
-- [ ] Every op in `prob.gpu.tensor` checks for TrackedTensor
-- [ ] Autograd module only needs to be loaded if `grad` is called
-- [ ] Model functions work identically with raw tensors and tracked tensors
+- [x] Every op in `prob.gpu.tensor` checks for TrackedTensor
+- [x] Autograd module only needs to be loaded if `grad` is called
+- [x] Model functions work identically with raw tensors and tracked tensors
 
 ### 2.6 Phase 2 tests
 
@@ -676,13 +676,13 @@ Verify gradients against finite differences:
       (vec grads))))
 ```
 
-- [ ] `f(x) = x^2`, gradient at x=3 should be 6
-- [ ] `f(x) = sum(x^2)` for vector x, gradient should be `2x`
-- [ ] `f(x) = exp(x)`, gradient should be `exp(x)`
-- [ ] `f(x) = log(x)`, gradient should be `1/x`
-- [ ] `f(x) = sum(a * x)` where a is constant, gradient should be `a`
-- [ ] Composition: `f(x) = sum(exp(x * 2))`, verify chain rule
-- [ ] Finite difference comparison for all ops within tolerance 1e-3
+- [x] `f(x) = x^2`, gradient at x=3 should be 6
+- [x] `f(x) = sum(x^2)` for vector x, gradient should be `2x`
+- [x] `f(x) = exp(x)`, gradient should be `exp(x)`
+- [x] `f(x) = log(x)`, gradient should be `1/x`
+- [x] `f(x) = sum(a * x)` where a is constant, gradient should be `a`
+- [x] Composition: `f(x) = sum(exp(x * 2))`, verify chain rule
+- [x] Finite difference comparison for all ops within tolerance 1e-3
 - [ ] Run from nbb and browser
 
 ---
