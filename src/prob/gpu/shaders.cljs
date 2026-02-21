@@ -187,3 +187,149 @@
      let theta = 6.283185307179586 * u2;
      output[idx] = r * cos(theta);
    }")
+
+;; ---------------------------------------------------------------------------
+;; Matmul shader — tiled 16×16 workgroups
+;; ---------------------------------------------------------------------------
+
+(def matmul-shader
+  "// Tiled matmul: A[M,K] × B[K,N] → C[M,N]
+   // dims uniform: (M, K, N, pad)
+   @group(0) @binding(0) var<storage, read> a: array<f32>;
+   @group(0) @binding(1) var<storage, read> b: array<f32>;
+   @group(0) @binding(2) var<storage, read_write> output: array<f32>;
+   @group(0) @binding(3) var<uniform> dims: vec4<u32>;
+
+   var<workgroup> tile_a: array<array<f32, 16>, 16>;
+   var<workgroup> tile_b: array<array<f32, 16>, 16>;
+
+   @compute @workgroup_size(16, 16)
+   fn main(@builtin(global_invocation_id) gid: vec3<u32>,
+           @builtin(local_invocation_id) lid: vec3<u32>) {
+     let M = dims.x;
+     let K = dims.y;
+     let N = dims.z;
+     let row = gid.y;
+     let col = gid.x;
+     let lr = lid.y;
+     let lc = lid.x;
+     let num_tiles = (K + 15u) / 16u;
+     var acc: f32 = 0.0;
+
+     for (var t: u32 = 0u; t < num_tiles; t = t + 1u) {
+       // Load tile from A
+       let a_col = t * 16u + lc;
+       if (row < M && a_col < K) {
+         tile_a[lr][lc] = a[row * K + a_col];
+       } else {
+         tile_a[lr][lc] = 0.0;
+       }
+       // Load tile from B
+       let b_row = t * 16u + lr;
+       if (b_row < K && col < N) {
+         tile_b[lr][lc] = b[b_row * N + col];
+       } else {
+         tile_b[lr][lc] = 0.0;
+       }
+       workgroupBarrier();
+
+       // Accumulate dot product for this tile
+       for (var k: u32 = 0u; k < 16u; k = k + 1u) {
+         acc = acc + tile_a[lr][k] * tile_b[k][lc];
+       }
+       workgroupBarrier();
+     }
+
+     // Write result
+     if (row < M && col < N) {
+       output[row * N + col] = acc;
+     }
+   }")
+
+;; ---------------------------------------------------------------------------
+;; Transpose shader — linear 1D dispatch
+;; ---------------------------------------------------------------------------
+
+(def transpose-shader
+  "// Physical transpose: input[rows, cols] → output[cols, rows]
+   // dims uniform: (rows, cols, pad, pad)
+   @group(0) @binding(0) var<storage, read> input: array<f32>;
+   @group(0) @binding(1) var<storage, read_write> output: array<f32>;
+   @group(0) @binding(2) var<uniform> dims: vec4<u32>;
+
+   @compute @workgroup_size(64)
+   fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+     let idx = gid.x;
+     let rows = dims.x;
+     let cols = dims.y;
+     let total = rows * cols;
+     if (idx >= total) { return; }
+     let row = idx / cols;
+     let col = idx % cols;
+     output[col * rows + row] = input[idx];
+   }")
+
+;; ---------------------------------------------------------------------------
+;; Slice shader — inner-dimension slicing
+;; ---------------------------------------------------------------------------
+
+(def slice-shader
+  "// Slice along arbitrary dimension (non-contiguous case)
+   // params[0]: (slice_start, inner_size, outer_size, slice_len)
+   // params[1]: (src_dim_size, pad, pad, pad)
+   @group(0) @binding(0) var<storage, read> input: array<f32>;
+   @group(0) @binding(1) var<storage, read_write> output: array<f32>;
+   @group(0) @binding(2) var<uniform> params: array<vec4<u32>, 2>;
+
+   @compute @workgroup_size(64)
+   fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+     let idx = gid.x;
+     let slice_start = params[0].x;
+     let inner_size = params[0].y;
+     let outer_size = params[0].z;
+     let slice_len = params[0].w;
+     let src_dim_size = params[1].x;
+     let out_total = outer_size * slice_len * inner_size;
+     if (idx >= out_total) { return; }
+     // Decompose output index into (outer, slice_dim, inner)
+     let inner_idx = idx % inner_size;
+     let tmp = idx / inner_size;
+     let slice_idx = tmp % slice_len;
+     let outer_idx = tmp / slice_len;
+     // Compute source index
+     let src_dim_idx = slice_start + slice_idx;
+     let src_idx = outer_idx * (src_dim_size * inner_size) + src_dim_idx * inner_size + inner_idx;
+     output[idx] = input[src_idx];
+   }")
+
+;; ---------------------------------------------------------------------------
+;; Concat shader — copy-with-offset into shared output
+;; ---------------------------------------------------------------------------
+
+(def concat-shader
+  "// Copy one input tensor into the correct region of the output buffer
+   // params[0]: (dst_offset, src_total, inner_size, src_dim_size)
+   // params[1]: (dst_dim_size, outer_size, pad, pad)
+   @group(0) @binding(0) var<storage, read> input: array<f32>;
+   @group(0) @binding(1) var<storage, read_write> output: array<f32>;
+   @group(0) @binding(2) var<uniform> params: array<vec4<u32>, 2>;
+
+   @compute @workgroup_size(64)
+   fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+     let idx = gid.x;
+     let dst_offset = params[0].x;
+     let src_total = params[0].y;
+     let inner_size = params[0].z;
+     let src_dim_size = params[0].w;
+     let dst_dim_size = params[1].x;
+     let outer_size = params[1].y;
+     if (idx >= src_total) { return; }
+     // Decompose source index into (outer, dim, inner)
+     let inner_idx = idx % inner_size;
+     let tmp = idx / inner_size;
+     let dim_idx = tmp % src_dim_size;
+     let outer_idx = tmp / src_dim_size;
+     // Map to destination with offset
+     let dst_idx = outer_idx * (dst_dim_size * inner_size) + (dst_offset + dim_idx) * inner_size + inner_idx;
+     output[dst_idx] = input[idx];
+   }")

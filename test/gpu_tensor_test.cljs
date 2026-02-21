@@ -380,6 +380,236 @@
         (fail "dispose no-throw" (str e))))))
 
 ;; ---------------------------------------------------------------------------
+;; 10. Matmul
+;; ---------------------------------------------------------------------------
+
+(defn- test-matmul []
+  (println "\n--- Matmul ---")
+  (p/let [;; 2x2 matmul
+          a (t/tensor [[1 2] [3 4]])
+          b (t/tensor [[5 6] [7 8]])
+          r (t/matmul a b)
+          vr (t/to-clj r)
+          _ (check "matmul 2x2 shape" (= (t/shape r) [2 2]) (str "got " (t/shape r)))
+          _ (check "matmul 2x2 row0" (arr-approx= (first vr) [19 22] 0.01)
+                   (str "expected [19 22], got " (first vr)))
+          _ (check "matmul 2x2 row1" (arr-approx= (second vr) [43 50] 0.01)
+                   (str "expected [43 50], got " (second vr)))
+
+          ;; Non-square [2,3] × [3,2]
+          c (t/tensor [[1 2 3] [4 5 6]])
+          d (t/tensor [[7 8] [9 10] [11 12]])
+          r2 (t/matmul c d)
+          vr2 (t/to-clj r2)
+          _ (check "matmul non-square shape" (= (t/shape r2) [2 2]) (str "got " (t/shape r2)))
+          _ (check "matmul non-square row0" (arr-approx= (first vr2) [58 64] 0.01)
+                   (str "expected [58 64], got " (first vr2)))
+          _ (check "matmul non-square row1" (arr-approx= (second vr2) [139 154] 0.01)
+                   (str "expected [139 154], got " (second vr2)))
+
+          ;; Identity multiply
+          eye (t/tensor [[1 0] [0 1]])
+          r3 (t/matmul a eye)
+          vr3 (t/to-clj r3)
+          _ (check "matmul identity row0" (arr-approx= (first vr3) [1 2] 0.01)
+                   (str "expected [1 2], got " (first vr3)))
+          _ (check "matmul identity row1" (arr-approx= (second vr3) [3 4] 0.01)
+                   (str "expected [3 4], got " (second vr3)))
+
+          ;; 1D dot product → scalar
+          v1 (t/tensor [1 2 3])
+          v2 (t/tensor [4 5 6])
+          r4 (t/matmul v1 v2)
+          vr4 (t/to-number r4)
+          _ (check "matmul dot product" (approx= vr4 32 0.01)
+                   (str "expected 32, got " vr4))
+          _ (check "matmul dot shape" (= (t/shape r4) []) (str "got " (t/shape r4)))
+
+          ;; Matrix-vector [2,3] × [3] → [2]
+          r5 (t/matmul c v1)
+          vr5 (t/to-clj r5)
+          _ (check "matmul mat-vec" (arr-approx= vr5 [14 32] 0.01)
+                   (str "expected [14 32], got " vr5))
+          _ (check "matmul mat-vec shape" (= (t/shape r5) [2]) (str "got " (t/shape r5)))
+
+          ;; Vector-matrix [3] × [3,2] → [2]
+          r6 (t/matmul v1 d)
+          vr6 (t/to-clj r6)
+          _ (check "matmul vec-mat" (arr-approx= vr6 [58 64] 0.01)
+                   (str "expected [58 64], got " vr6))
+
+          ;; Non-tile-aligned [7,5] × [5,3]
+          big-a (t/tensor [[1 0 0 0 0] [0 1 0 0 0] [0 0 1 0 0] [0 0 0 1 0]
+                           [0 0 0 0 1] [1 1 0 0 0] [0 0 1 1 1]])
+          big-b (t/tensor [[1 2 3] [4 5 6] [7 8 9] [10 11 12] [13 14 15]])
+          r7 (t/matmul big-a big-b)
+          vr7 (t/to-clj r7)
+          _ (check "matmul non-aligned shape" (= (t/shape r7) [7 3]) (str "got " (t/shape r7)))
+          _ (check "matmul non-aligned row0" (arr-approx= (first vr7) [1 2 3] 0.01)
+                   (str "expected [1 2 3], got " (first vr7)))
+          _ (check "matmul non-aligned row5" (arr-approx= (nth vr7 5) [5 7 9] 0.01)
+                   (str "expected [5 7 9], got " (nth vr7 5)))
+          _ (check "matmul non-aligned row6" (arr-approx= (nth vr7 6) [30 33 36] 0.01)
+                   (str "expected [30 33 36], got " (nth vr7 6)))]
+
+    (doseq [x [a b r c d r2 eye r3 v1 v2 r4 r5 r6 big-a big-b r7]]
+      (t/dispose! x))))
+
+;; ---------------------------------------------------------------------------
+;; 11. Transpose
+;; ---------------------------------------------------------------------------
+
+(defn- test-transpose []
+  (println "\n--- Transpose ---")
+  (p/let [;; 2x3 → 3x2
+          a (t/tensor [[1 2 3] [4 5 6]])
+          r (t/transpose a)
+          vr (t/to-clj r)
+          _ (check "transpose shape" (= (t/shape r) [3 2]) (str "got " (t/shape r)))
+          _ (check "transpose row0" (arr-approx= (first vr) [1 4] 0.01)
+                   (str "expected [1 4], got " (first vr)))
+          _ (check "transpose row1" (arr-approx= (second vr) [2 5] 0.01)
+                   (str "expected [2 5], got " (second vr)))
+          _ (check "transpose row2" (arr-approx= (nth vr 2) [3 6] 0.01)
+                   (str "expected [3 6], got " (nth vr 2)))
+
+          ;; 1x4 → 4x1
+          b (t/tensor [[1 2 3 4]])
+          rb (t/transpose b)
+          vrb (t/to-clj rb)
+          _ (check "transpose 1x4 shape" (= (t/shape rb) [4 1]) (str "got " (t/shape rb)))
+          _ (check "transpose 1x4 vals" (arr-approx= (map first vrb) [1 2 3 4] 0.01)
+                   (str "got " vrb))
+
+          ;; 1D no-op
+          c (t/tensor [1 2 3])
+          rc (t/transpose c)
+          vrc (t/to-clj rc)
+          _ (check "transpose 1D no-op" (arr-approx= vrc [1 2 3] 0.01)
+                   (str "got " vrc))
+          _ (check "transpose 1D shape" (= (t/shape rc) [3]) (str "got " (t/shape rc)))
+
+          ;; Scalar no-op
+          s (t/scalar 42)
+          rs (t/transpose s)
+          vrs (t/to-number rs)
+          _ (check "transpose scalar" (approx= vrs 42 0.01) (str "got " vrs))]
+
+    (doseq [x [a r b rb c rc s rs]]
+      (t/dispose! x))))
+
+;; ---------------------------------------------------------------------------
+;; 12. Slice
+;; ---------------------------------------------------------------------------
+
+(defn- test-slice []
+  (println "\n--- Slice ---")
+  (p/let [;; 1D sub-range
+          a (t/tensor [10 20 30 40 50])
+          r (t/slice a 0 1 4)
+          vr (t/to-clj r)
+          _ (check "slice 1D" (arr-approx= vr [20 30 40] 0.01)
+                   (str "expected [20 30 40], got " vr))
+          _ (check "slice 1D shape" (= (t/shape r) [3]) (str "got " (t/shape r)))
+
+          ;; 2D row slice (dim-0 fast path)
+          b (t/tensor [[1 2 3] [4 5 6] [7 8 9]])
+          rb (t/slice b 0 1 3)
+          vrb (t/to-clj rb)
+          _ (check "slice 2D rows shape" (= (t/shape rb) [2 3]) (str "got " (t/shape rb)))
+          _ (check "slice 2D rows row0" (arr-approx= (first vrb) [4 5 6] 0.01)
+                   (str "expected [4 5 6], got " (first vrb)))
+          _ (check "slice 2D rows row1" (arr-approx= (second vrb) [7 8 9] 0.01)
+                   (str "expected [7 8 9], got " (second vrb)))
+
+          ;; 2D column slice (dim-1, shader path)
+          rc (t/slice b 1 0 2)
+          vrc (t/to-clj rc)
+          _ (check "slice 2D cols shape" (= (t/shape rc) [3 2]) (str "got " (t/shape rc)))
+          _ (check "slice 2D cols row0" (arr-approx= (first vrc) [1 2] 0.01)
+                   (str "expected [1 2], got " (first vrc)))
+          _ (check "slice 2D cols row1" (arr-approx= (second vrc) [4 5] 0.01)
+                   (str "expected [4 5], got " (second vrc)))
+          _ (check "slice 2D cols row2" (arr-approx= (nth vrc 2) [7 8] 0.01)
+                   (str "expected [7 8], got " (nth vrc 2)))
+
+          ;; Invalid bounds error
+          _ (check "slice invalid bounds"
+                   (try (t/slice a 0 3 1) false
+                        (catch :default e true))
+                   "expected error for start > end")]
+
+    (doseq [x [a r b rb rc]]
+      (t/dispose! x))))
+
+;; ---------------------------------------------------------------------------
+;; 13. Concat + Stack
+;; ---------------------------------------------------------------------------
+
+(defn- test-concat-stack []
+  (println "\n--- Concat + Stack ---")
+  (p/let [;; 1D concat
+          a (t/tensor [1 2 3])
+          b (t/tensor [4 5 6])
+          r (t/concat-tensors 0 [a b])
+          vr (t/to-clj r)
+          _ (check "concat 1D" (arr-approx= vr [1 2 3 4 5 6] 0.01)
+                   (str "expected [1 2 3 4 5 6], got " vr))
+          _ (check "concat 1D shape" (= (t/shape r) [6]) (str "got " (t/shape r)))
+
+          ;; 2D row concat (dim-0 fast path)
+          c (t/tensor [[1 2] [3 4]])
+          d (t/tensor [[5 6] [7 8]])
+          r2 (t/concat-tensors 0 [c d])
+          vr2 (t/to-clj r2)
+          _ (check "concat 2D rows shape" (= (t/shape r2) [4 2]) (str "got " (t/shape r2)))
+          _ (check "concat 2D rows row0" (arr-approx= (first vr2) [1 2] 0.01)
+                   (str "expected [1 2], got " (first vr2)))
+          _ (check "concat 2D rows row2" (arr-approx= (nth vr2 2) [5 6] 0.01)
+                   (str "expected [5 6], got " (nth vr2 2)))
+
+          ;; 2D column concat (dim-1, shader path)
+          r3 (t/concat-tensors 1 [c d])
+          vr3 (t/to-clj r3)
+          _ (check "concat 2D cols shape" (= (t/shape r3) [2 4]) (str "got " (t/shape r3)))
+          _ (check "concat 2D cols row0" (arr-approx= (first vr3) [1 2 5 6] 0.01)
+                   (str "expected [1 2 5 6], got " (first vr3)))
+          _ (check "concat 2D cols row1" (arr-approx= (second vr3) [3 4 7 8] 0.01)
+                   (str "expected [3 4 7 8], got " (second vr3)))
+
+          ;; 3-tensor concat
+          e (t/tensor [7 8 9])
+          r4 (t/concat-tensors 0 [a b e])
+          vr4 (t/to-clj r4)
+          _ (check "concat 3-tensor" (arr-approx= vr4 [1 2 3 4 5 6 7 8 9] 0.01)
+                   (str "expected [1..9], got " vr4))
+
+          ;; Stack 1D → 2D
+          r5 (t/stack 0 [a b])
+          vr5 (t/to-clj r5)
+          _ (check "stack shape" (= (t/shape r5) [2 3]) (str "got " (t/shape r5)))
+          _ (check "stack row0" (arr-approx= (first vr5) [1 2 3] 0.01)
+                   (str "expected [1 2 3], got " (first vr5)))
+          _ (check "stack row1" (arr-approx= (second vr5) [4 5 6] 0.01)
+                   (str "expected [4 5 6], got " (second vr5)))]
+
+    (doseq [x [a b r c d r2 r3 e r4 r5]]
+      (t/dispose! x))))
+
+;; ---------------------------------------------------------------------------
+;; 14. Arange
+;; ---------------------------------------------------------------------------
+
+(defn- test-arange []
+  (println "\n--- Arange ---")
+  (p/let [r (t/arange 5)
+          vr (t/to-clj r)
+          _ (check "arange values" (arr-approx= vr [0 1 2 3 4] 0.01)
+                   (str "expected [0 1 2 3 4], got " vr))
+          _ (check "arange shape" (= (t/shape r) [5]) (str "got " (t/shape r)))]
+    (t/dispose! r)))
+
+;; ---------------------------------------------------------------------------
 ;; Main
 ;; ---------------------------------------------------------------------------
 
@@ -394,7 +624,12 @@
         _ (test-shape-ops)
         _ (test-rng)
         _ (test-larger-arrays)
-        _ (test-dispose)]
+        _ (test-dispose)
+        _ (test-matmul)
+        _ (test-transpose)
+        _ (test-slice)
+        _ (test-concat-stack)
+        _ (test-arange)]
   (println (str "\n" @passed " passed, " @failed " failed"))
   (when (pos? @failed)
     (js/process.exit 1)))

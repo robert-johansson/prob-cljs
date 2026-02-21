@@ -71,6 +71,20 @@
     (.copyBufferToBuffer encoder src 0 dst 0 byte-size)
     (.submit (.-queue device) #js [(.finish encoder)])))
 
+(defn- uniform-usage []
+  (bit-or js/GPUBufferUsage.UNIFORM
+          js/GPUBufferUsage.COPY_DST))
+
+(defn- create-uniform-buffer!
+  "Create a small uniform buffer from a vec of u32 values."
+  [device values]
+  (let [arr (js/Uint32Array. (clj->js values))
+        buf (.createBuffer device
+              #js {:size  (.-byteLength arr)
+                   :usage (uniform-usage)})]
+    (.writeBuffer (.-queue device) buf 0 arr)
+    buf))
+
 ;; ---------------------------------------------------------------------------
 ;; Shape utilities
 ;; ---------------------------------------------------------------------------
@@ -353,6 +367,259 @@
       (throw (ex-info "Reshape size mismatch"
                       {:current-size (:size t) :new-size new-size :new-shape new-shape})))
     (->Tensor (:buffer t) new-shape (compute-strides new-shape) (:size t) :f32 (:device t))))
+
+;; ---------------------------------------------------------------------------
+;; Matmul
+;; ---------------------------------------------------------------------------
+
+(defn matmul
+  "Matrix multiply A[M,K] × B[K,N] → C[M,N].
+   1D inputs: [K] treated as [1,K] (left) or [K,1] (right), result squeezed."
+  [a b]
+  (let [device (:device a)
+        a-shape (:shape a)
+        b-shape (:shape b)
+        a-ndim  (count a-shape)
+        b-ndim  (count b-shape)
+        ;; Promote 1D to 2D
+        squeeze-left  (= a-ndim 1)
+        squeeze-right (= b-ndim 1)
+        [M K-a] (cond
+                  (= a-ndim 0) (throw (ex-info "matmul: scalar input not supported" {:shape a-shape}))
+                  squeeze-left  [1 (first a-shape)]
+                  :else         [(first a-shape) (second a-shape)])
+        [K-b N]  (cond
+                   (= b-ndim 0) (throw (ex-info "matmul: scalar input not supported" {:shape b-shape}))
+                   squeeze-right [(first b-shape) 1]
+                   :else         [(first b-shape) (second b-shape)])
+        _       (when (not= K-a K-b)
+                  (throw (ex-info "matmul: inner dimensions mismatch"
+                                  {:a-shape a-shape :b-shape b-shape :K-a K-a :K-b K-b})))
+        K       K-a
+        out-size (* M N)
+        out-buf  (create-storage-buffer! device (* 4 out-size))
+        dims-buf (create-uniform-buffer! device [M K N 0])
+        pl       (get-pipeline! device shaders/matmul-shader)
+        bg       (.createBindGroup device
+                   #js {:layout  (.getBindGroupLayout pl 0)
+                        :entries #js [#js {:binding 0 :resource #js {:buffer (:buffer a)}}
+                                      #js {:binding 1 :resource #js {:buffer (:buffer b)}}
+                                      #js {:binding 2 :resource #js {:buffer out-buf}}
+                                      #js {:binding 3 :resource #js {:buffer dims-buf}}]})
+        enc      (.createCommandEncoder device)
+        pass     (.beginComputePass enc)
+        wg-x     (js/Math.ceil (/ N 16))
+        wg-y     (js/Math.ceil (/ M 16))]
+    (.setPipeline pass pl)
+    (.setBindGroup pass 0 bg)
+    (.dispatchWorkgroups pass wg-x wg-y)
+    (.end pass)
+    (.submit (.-queue device) #js [(.finish enc)])
+    (.destroy dims-buf)
+    ;; Determine output shape with squeeze
+    (let [out-shape (cond
+                      (and squeeze-left squeeze-right) []      ;; dot product → scalar
+                      squeeze-left                     [N]     ;; [K]×[K,N] → [N]
+                      squeeze-right                    [M]     ;; [M,K]×[K] → [M]
+                      :else                            [M N])
+          out-strides (compute-strides out-shape)]
+      (->Tensor out-buf out-shape out-strides out-size :f32 device))))
+
+;; ---------------------------------------------------------------------------
+;; Transpose
+;; ---------------------------------------------------------------------------
+
+(defn transpose
+  "Physical transpose of 2D tensor [rows,cols] → [cols,rows].
+   Scalar/1D → returned as-is (no-op)."
+  [t]
+  (let [sh (:shape t)]
+    (if (<= (count sh) 1)
+      ;; Scalar or 1D — no-op, return copy
+      (let [device (:device t)
+            bytes  (* 4 (:size t))
+            buf    (create-storage-buffer! device bytes)]
+        (copy-buffer-to-buffer! device (:buffer t) buf bytes)
+        (->Tensor buf sh (:strides t) (:size t) :f32 device))
+      ;; 2D transpose via shader
+      (let [device  (:device t)
+            rows    (first sh)
+            cols    (second sh)
+            n       (:size t)
+            out-buf (create-storage-buffer! device (* 4 n))
+            dims-buf (create-uniform-buffer! device [rows cols 0 0])
+            pl      (get-pipeline! device shaders/transpose-shader)
+            bg      (.createBindGroup device
+                      #js {:layout  (.getBindGroupLayout pl 0)
+                           :entries #js [#js {:binding 0 :resource #js {:buffer (:buffer t)}}
+                                         #js {:binding 1 :resource #js {:buffer out-buf}}
+                                         #js {:binding 2 :resource #js {:buffer dims-buf}}]})
+            enc     (.createCommandEncoder device)
+            pass    (.beginComputePass enc)]
+        (.setPipeline pass pl)
+        (.setBindGroup pass 0 bg)
+        (.dispatchWorkgroups pass (workgroup-count n))
+        (.end pass)
+        (.submit (.-queue device) #js [(.finish enc)])
+        (.destroy dims-buf)
+        (let [out-shape [cols rows]]
+          (->Tensor out-buf out-shape (compute-strides out-shape) n :f32 device))))))
+
+;; ---------------------------------------------------------------------------
+;; Slice
+;; ---------------------------------------------------------------------------
+
+(defn slice
+  "Extract sub-tensor along dimension `dim`, indices [start, end).
+   Fast path: dim-0 slices use copyBufferToBuffer (contiguous)."
+  [t dim start end]
+  (let [sh     (:shape t)
+        ndims  (count sh)
+        _      (when (or (< dim 0) (>= dim ndims))
+                 (throw (ex-info "slice: dim out of range" {:dim dim :ndims ndims})))
+        dim-sz (nth sh dim)
+        _      (when (or (< start 0) (> end dim-sz) (> start end))
+                 (throw (ex-info "slice: invalid bounds" {:dim dim :start start :end end :dim-size dim-sz})))
+        slice-len (- end start)
+        device    (:device t)]
+    (if (zero? dim)
+      ;; Fast path: first-dim slice is a contiguous block
+      (let [inner-size (apply * (rest sh))
+            src-offset (* start inner-size 4)
+            out-size   (* slice-len inner-size)
+            out-bytes  (* 4 out-size)
+            out-buf    (create-storage-buffer! device out-bytes)
+            enc        (.createCommandEncoder device)]
+        (.copyBufferToBuffer enc (:buffer t) src-offset out-buf 0 out-bytes)
+        (.submit (.-queue device) #js [(.finish enc)])
+        (let [out-shape (assoc sh 0 slice-len)]
+          (->Tensor out-buf out-shape (compute-strides out-shape) out-size :f32 device)))
+      ;; General case: shader for inner-dim slices
+      (let [inner-size  (apply * (subvec sh (inc dim)))
+            outer-size  (apply * (subvec sh 0 dim))
+            out-size    (* outer-size slice-len inner-size)
+            out-buf     (create-storage-buffer! device (* 4 out-size))
+            params-buf  (create-uniform-buffer! device [start inner-size outer-size slice-len
+                                                        dim-sz 0 0 0])
+            pl          (get-pipeline! device shaders/slice-shader)
+            bg          (.createBindGroup device
+                          #js {:layout  (.getBindGroupLayout pl 0)
+                               :entries #js [#js {:binding 0 :resource #js {:buffer (:buffer t)}}
+                                             #js {:binding 1 :resource #js {:buffer out-buf}}
+                                             #js {:binding 2 :resource #js {:buffer params-buf}}]})
+            enc         (.createCommandEncoder device)
+            pass        (.beginComputePass enc)]
+        (.setPipeline pass pl)
+        (.setBindGroup pass 0 bg)
+        (.dispatchWorkgroups pass (workgroup-count out-size))
+        (.end pass)
+        (.submit (.-queue device) #js [(.finish enc)])
+        (.destroy params-buf)
+        (let [out-shape (assoc sh dim slice-len)]
+          (->Tensor out-buf out-shape (compute-strides out-shape) out-size :f32 device))))))
+
+;; ---------------------------------------------------------------------------
+;; Concat
+;; ---------------------------------------------------------------------------
+
+(defn concat-tensors
+  "Join tensors along existing dimension `dim`.
+   Fast path: dim-0 concat uses sequential buffer copies."
+  [dim tensors]
+  (let [tensors (vec tensors)
+        _       (when (< (count tensors) 2)
+                  (throw (ex-info "concat-tensors: need at least 2 tensors" {})))
+        device  (:device (first tensors))
+        sh0     (:shape (first tensors))
+        ndims   (count sh0)
+        _       (when (or (< dim 0) (>= dim ndims))
+                  (throw (ex-info "concat-tensors: dim out of range" {:dim dim :ndims ndims})))
+        ;; Validate all shapes match except along concat dim
+        _       (doseq [t (rest tensors)]
+                  (let [sh (:shape t)]
+                    (when (not= (count sh) ndims)
+                      (throw (ex-info "concat-tensors: rank mismatch"
+                                      {:expected ndims :got (count sh)})))
+                    (doseq [d (range ndims)]
+                      (when (and (not= d dim) (not= (nth sh d) (nth sh0 d)))
+                        (throw (ex-info "concat-tensors: shape mismatch"
+                                        {:dim d :expected (nth sh0 d) :got (nth sh d)}))))))
+        ;; Compute output shape
+        total-dim (reduce + (map #(nth (:shape %) dim) tensors))
+        out-shape (assoc sh0 dim total-dim)
+        out-size  (apply * out-shape)
+        out-buf   (create-storage-buffer! device (* 4 out-size))]
+    (if (zero? dim)
+      ;; Fast path: dim-0 concat is sequential memory blocks
+      (let [enc (.createCommandEncoder device)]
+        (loop [ts tensors, offset 0]
+          (when (seq ts)
+            (let [t     (first ts)
+                  bytes (* 4 (:size t))]
+              (.copyBufferToBuffer enc (:buffer t) 0 out-buf offset bytes)
+              (recur (rest ts) (+ offset bytes)))))
+        (.submit (.-queue device) #js [(.finish enc)])
+        (->Tensor out-buf out-shape (compute-strides out-shape) out-size :f32 device))
+      ;; General case: one shader dispatch per input
+      (let [inner-size (apply * (subvec sh0 (inc dim)))
+            outer-size (apply * (subvec sh0 0 dim))
+            dst-dim-size total-dim
+            enc (.createCommandEncoder device)
+            temp-bufs (volatile! [])]
+        (loop [ts tensors, dim-offset 0]
+          (when (seq ts)
+            (let [t          (first ts)
+                  src-dim-sz (nth (:shape t) dim)
+                  src-total  (:size t)
+                  params-buf (create-uniform-buffer! device [dim-offset src-total inner-size src-dim-sz
+                                                            dst-dim-size outer-size 0 0])
+                  pl         (get-pipeline! device shaders/concat-shader)
+                  bg         (.createBindGroup device
+                               #js {:layout  (.getBindGroupLayout pl 0)
+                                    :entries #js [#js {:binding 0 :resource #js {:buffer (:buffer t)}}
+                                                  #js {:binding 1 :resource #js {:buffer out-buf}}
+                                                  #js {:binding 2 :resource #js {:buffer params-buf}}]})
+                  pass       (.beginComputePass enc)]
+              (vswap! temp-bufs conj params-buf)
+              (.setPipeline pass pl)
+              (.setBindGroup pass 0 bg)
+              (.dispatchWorkgroups pass (workgroup-count src-total))
+              (.end pass)
+              (recur (rest ts) (+ dim-offset src-dim-sz)))))
+        (.submit (.-queue device) #js [(.finish enc)])
+        (doseq [buf @temp-bufs] (.destroy buf))
+        (->Tensor out-buf out-shape (compute-strides out-shape) out-size :f32 device)))))
+
+;; ---------------------------------------------------------------------------
+;; Stack
+;; ---------------------------------------------------------------------------
+
+(defn stack
+  "Stack tensors along a new dimension `dim`.
+   Inserts a size-1 dim at `dim` in each tensor, then concatenates."
+  [dim tensors]
+  (let [tensors (vec tensors)
+        ;; Insert size-1 dim at position `dim` in each tensor's shape
+        reshaped (mapv (fn [t]
+                         (let [sh (:shape t)
+                               new-sh (vec (concat (subvec sh 0 dim) [1] (subvec sh dim)))]
+                           (reshape t new-sh)))
+                       tensors)]
+    (concat-tensors dim reshaped)))
+
+;; ---------------------------------------------------------------------------
+;; Arange
+;; ---------------------------------------------------------------------------
+
+(defn arange
+  "Create 1D tensor [0 1 2 ... n-1]."
+  [n]
+  (let [{:keys [device]} (dev/ctx)
+        arr (js/Float32Array. n)
+        _   (dotimes [i n] (aset arr i i))
+        buf (create-storage-buffer! device (.-byteLength arr))]
+    (.writeBuffer (.-queue device) buf 0 arr)
+    (->Tensor buf [n] [1] n :f32 device)))
 
 ;; ---------------------------------------------------------------------------
 ;; Cleanup
